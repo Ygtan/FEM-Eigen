@@ -1215,6 +1215,8 @@ inline Model2D readModel2D(const std::string& path) {
                     e.conn = {ni, nj};
                     if (e.type == "BEAM" && e.I <= 0.0)
                         throw std::runtime_error("梁单元缺少实常数 I");
+                    if (e.type == "BEAM" && (e.Wt <= 0.0 || e.Wb <= 0.0))
+                        throw std::runtime_error("梁单元缺少 WT/WB（截面抵抗矩，应力计算必需）");
                     if (isAxial(e.type) && e.A <= 0.0)
                         throw std::runtime_error("桁架/索/压杆单元缺少实常数 A");
                     m.elements.push_back(e);
@@ -1404,6 +1406,12 @@ inline Model2D readModel2D(const std::string& path) {
             Model2D::Element e = legacyTemplate;
             e.id = eid;
             e.conn = {a, b};
+            if (e.type == "BEAM" && e.I <= 0.0)
+                throw std::runtime_error("旧式 *ELEMENT：梁单元缺少 I");
+            if (e.type == "BEAM" && (e.Wt <= 0.0 || e.Wb <= 0.0))
+                throw std::runtime_error("旧式 *ELEMENT：梁单元缺少 WT/WB（截面抵抗矩，应力计算必需）");
+            if (isAxial(e.type) && e.A <= 0.0)
+                throw std::runtime_error("旧式 *ELEMENT：桁架/索/压杆单元缺少 A");
             m.elements.push_back(e);
         } else if (section == "*ET") {
             int id = 0;
@@ -1509,7 +1517,9 @@ inline Model2D readModel2D(const std::string& path) {
             it = p.find("F"); if (it != p.end()) ps.F = std::stod(it->second);
             it = p.find("E1"); if (it != p.end()) ps.E1 = std::stod(it->second);
             it = p.find("E2"); if (it != p.end()) ps.E2 = std::stod(it->second);
-            it = p.find("LOSS"); if (it != p.end()) ps.loss = std::stod(it->second);
+            it = p.find("LOSS");
+            if (it == p.end()) throw std::runtime_error("*PRESTRESS / *STAGE_PRESTRESS 缺少 LOSS（损失系数，必须显式指定）");
+            ps.loss = std::stod(it->second);
             it = p.find("EPS"); if (it != p.end()) ps.Ep = std::stod(it->second);
             it = p.find("AP"); if (it != p.end()) ps.Ap = std::stod(it->second);
             it = p.find("APS"); if (it != p.end()) ps.Ap = std::stod(it->second);
@@ -1690,7 +1700,9 @@ inline Model2D readModel2D(const std::string& path) {
             it = p.find("F"); if (it != p.end()) ps.F = std::stod(it->second);
             it = p.find("E1"); if (it != p.end()) ps.E1 = std::stod(it->second);
             it = p.find("E2"); if (it != p.end()) ps.E2 = std::stod(it->second);
-            it = p.find("LOSS"); if (it != p.end()) ps.loss = std::stod(it->second);
+            it = p.find("LOSS");
+            if (it == p.end()) throw std::runtime_error("*PRESTRESS / *STAGE_PRESTRESS 缺少 LOSS（损失系数，必须显式指定）");
+            ps.loss = std::stod(it->second);
             it = p.find("EPS"); if (it != p.end()) ps.Ep = std::stod(it->second);
             it = p.find("APS"); if (it != p.end()) ps.Ap = std::stod(it->second);
             ps.method = "EQUIV"; // 施工阶段第一版只使用等效荷载法
@@ -1915,6 +1927,18 @@ inline Model2D readModel2D(const std::string& path) {
     // 之后每一次徐变处理都从这个基准重算，保证幂等。
     snapshotBaseModulus(m);
     processTimeEffects(m);
+
+    // 危险默认值检查：若存在重力/自重荷载但单元密度为 0，给出警告。
+    const bool hasGravity = (m.gx != 0.0 || m.gy != 0.0 || !m.selfWeights.empty());
+    if (hasGravity) {
+        for (const auto& e : m.elements) {
+            if (e.dens <= 0.0 && e.addmass <= 0.0 && !isRigid(e.type)) {
+                std::cerr << "[警告] 单元 " << e.id << " 的密度 dens=0 且 addmass=0，"
+                          << "但模型存在 *GRAVITY 或 *SELF_WEIGHT，该单元将不产生自重。"
+                          << "若需自重，请在 *MAT 或 *ELEMENT 中指定 DENS。\n";
+            }
+        }
+    }
     return m;
 }
 
@@ -2007,6 +2031,20 @@ inline void appendConstraintPenaltyTriplets(const Model2D& m,
             }
         }
     }
+}
+
+// 若用户未显式指定罚系数（<=0），按单元刚度最大对角元的 1e8 倍自适应取值，
+// 避免固定 1e12 在细长杆/小刚度模型中条件数恶化。
+inline double effectiveCePenalty(const std::vector<Eigen::Triplet<double>>& triplets,
+                                 double userPenalty) {
+    if (userPenalty > 0.0) return userPenalty;
+    double maxDiag = 0.0;
+    for (const auto& t : triplets) {
+        if (t.row() == t.col())
+            maxDiag = std::max(maxDiag, std::abs(t.value()));
+    }
+    if (maxDiag <= 0.0) maxDiag = 1.0;
+    return 1e8 * maxDiag;
 }
 
 inline DenseVec constraintPenaltyConstantForce(const Model2D& m,
@@ -2235,8 +2273,10 @@ inline ModelResult solveModel2DNonlinear(const Model2D& m,
         std::vector<Eigen::Triplet<double>> trip0;
         DenseVec fi0, fe0;
         assembleState(active, U, fi0, fe0, &trip0);
-        if (!m.ces.empty())
-            appendConstraintPenaltyTriplets(m, index, nDofs, m.cePenalty, trip0);
+        if (!m.ces.empty()) {
+            const double penalty = effectiveCePenalty(trip0, m.cePenalty);
+            appendConstraintPenaltyTriplets(m, index, nDofs, penalty, trip0);
+        }
         SparseMat K0(nDofs, nDofs);
         K0.setFromTriplets(trip0.begin(), trip0.end());
         K0.makeCompressed();
@@ -2279,8 +2319,10 @@ inline ModelResult solveModel2DNonlinear(const Model2D& m,
         for (int iter = 0; iter <= maxIter; ++iter) {
             std::vector<Eigen::Triplet<double>> triplets;
             assembleState(active, U, Fint, Fext, &triplets);
-            if (!m.ces.empty())
-                appendConstraintPenaltyTriplets(m, index, nDofs, m.cePenalty, triplets);
+            if (!m.ces.empty()) {
+                const double penalty = effectiveCePenalty(triplets, m.cePenalty);
+                appendConstraintPenaltyTriplets(m, index, nDofs, penalty, triplets);
+            }
 
             SparseMat Kt(nDofs, nDofs);
             Kt.setFromTriplets(triplets.begin(), triplets.end());
@@ -2486,8 +2528,10 @@ inline void assembleLinear2D(const Model2D& m,
             throw std::runtime_error("未知单元类型: " + e.type);
         }
     }
-    if (!m.ces.empty())
-        appendConstraintPenaltyTriplets(m, index, nDofs, m.cePenalty, triplets);
+    if (!m.ces.empty()) {
+        const double penalty = effectiveCePenalty(triplets, m.cePenalty);
+        appendConstraintPenaltyTriplets(m, index, nDofs, penalty, triplets);
+    }
     K.resize(nDofs, nDofs);
     K.setFromTriplets(triplets.begin(), triplets.end());
     K.makeCompressed();
@@ -3871,10 +3915,13 @@ inline void writeResult(const std::string& path, const Model2D& model,
 
     out << "\n支座反力 (N, N*m)\n";
     out << "节点\tdof\t反力\n";
+    double maxAbsR = 0.0;
+    for (int d = 0; d < result.R.size(); ++d) maxAbsR = std::max(maxAbsR, std::abs(result.R(d)));
+    const double rThresh = 1e-9 * std::max(1.0, maxAbsR); // 相对阈值，避免大模型漏噪声、小模型滤真值
     for (std::size_t i = 0; i < result.nodeIds.size(); ++i) {
         for (int d = 0; d < 3; ++d) {
             const double v = result.R(3 * static_cast<int>(i) + d);
-            if (std::abs(v) > 1e-9)
+            if (std::abs(v) > rThresh)
                 out << result.nodeIds[i] << '\t' << (d + 1) << '\t' << v << '\n';
         }
     }

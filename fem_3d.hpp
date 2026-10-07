@@ -894,9 +894,13 @@ inline std::pair<double,double> envelope3DFromSurface(
     const double pMinOrd  = (surface.p >= 0.0) ? globalMin : globalMax;
 
     double factor = surface.reduction;
-    if (surface.laneCount == 2) factor = 1.0;
-    else if (surface.laneCount == 3) factor = 0.9;
-    else if (surface.laneCount >= 4) factor = 0.8;
+    // 仅在 reduction 为默认值 1.0 且 laneCount>1 时，按规范自动折减；
+    // 用户显式指定了 REDUCTION= 则完全尊重用户输入，不再覆盖。
+    if (factor == 1.0 && surface.laneCount > 1) {
+        if (surface.laneCount == 2) factor = 1.0;
+        else if (surface.laneCount == 3) factor = 0.9;
+        else if (surface.laneCount >= 4) factor = 0.8;
+    }
 
     return {surface.impact * factor * (surface.q * qMaxArea + surface.p * pMaxOrd),
             surface.impact * factor * (surface.q * qMinArea + surface.p * pMinOrd)};
