@@ -1,0 +1,23 @@
+# 竖直杆自重验证
+# 下端伸长 = rho g L^2 / (2 E) = -1.9252e-7 m
+*TITLE
+竖直杆自重
+
+*NODE
+1 0.0 0.0
+2 0.0 -1.0
+
+*ELEMENT, TYPE=TRUSS, E=200e9, A=0.01
+1 1 2
+
+*BOUNDARY
+1 1 0.0
+1 2 0.0
+1 3 0.0
+2 1 0.0
+2 3 0.0
+
+*SELF_WEIGHT
+ALL RHO 7850
+
+*END

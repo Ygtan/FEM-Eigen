@@ -1,0 +1,43 @@
+# ---- 构建产物 ----
+build/
+build_cable/
+build_debug/
+build_local/
+build_make/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+*.exe
+*.o
+*.obj
+*.a
+*.dll
+
+# ---- 生成的计算结果 / 图形 / 输出 ----
+*.result
+*.svg
+*.csv
+*_stages.txt
+*_stages_backward.txt
+*_stages_iterated.txt
+*_stages_camber_iterated.txt
+*_envelope.txt
+*_envelope_lane1.txt
+*_influence_lane1.txt
+verify_stage_camber.txt
+bridge_3d_grillage_summary.txt
+
+# ---- 临时与调试残留 ----
+_tmp_*
+_test_*
+*.bak
+*.err.txt
+*.tmp
+*.log
+
+# ---- 编辑器 / 系统 ----
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,28 @@
+# 方案：*PRESTRESS METHOD=EQUIV
+# 10m 简支混凝土梁，抛物线预应力筋跨中下垂 0.2m，锚固在形心。
+*TITLE
+prestress equivalent load verification
+*NODE
+1 0.0 0.0
+2 2.5 0.0
+3 5.0 0.0
+4 7.5 0.0
+5 10.0 0.0
+*ET
+1 BEAM
+*MP
+1 E=35e9
+*R
+1 A=0.4 I=0.005333 WT=0.026667 WB=0.026667
+*TYPE,1
+*MAT,1
+*REAL,1
+*DO I 1 4
+*EN,I,I,I+1
+*ENDDO
+*BOUNDARY
+1 1-2 0.0
+5 2 0.0
+*PRESTRESS
+1 ELEM=1-4 P=1500e3 F=0.20 E1=0.0 E2=0.0 LOSS=0.85 METHOD=EQUIV
+*END

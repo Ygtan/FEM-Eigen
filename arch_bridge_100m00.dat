@@ -1,0 +1,71 @@
+# Bridge finite element model (new format)
+*TITLE
+100m Arch Bridge
+
+! Element types
+*ET
+1 BEAM
+2 TRUSS
+
+! Materials
+*MP
+1 E=206000000000 DENS=7850
+
+! Real constants
+*R
+1 A=0.08  I=0.02  WT=0.04 WB=0.04 ADDMASS=456.98
+2 A=0.06  I=0.015 WT=0.03 WB=0.03
+3 A=0.001  ADDMASS=4.98
+
+! Nodes: main girder (deck) 1..21, x = 0..100 equally spaced
+*NODE
+1 0.0 0.0
+21 100.0 0.0
+*FILL 1 21
+
+! Nodes: arch rib 101..109 (parabola, listed explicitly)
+*NODE
+101 10 7.2
+102 20 12.8
+103 30 16.8
+104 40 19.2
+105 50 20
+106 60 19.2
+107 70 16.8
+108 80 12.8
+109 90 7.2
+
+! Elements: main girder 1..20
+*TYPE,1
+*MAT,1
+*REAL,1
+*DO I 1 20
+*EN,I,I,I+1
+*ENDDO
+
+! Elements: arch rib 101..110 (chain 1-101-102-...-109-21)
+*TYPE,1
+*MAT,1
+*REAL,2
+*EN,101,1,101
+*DO I 102 109
+*EN,I,I-1,I
+*ENDDO
+*EN,110,109,21
+
+! Elements: hangers 201..209
+*TYPE,2
+*MAT,1
+*REAL,3
+*DO I 101 109
+*EN,I+100,2*I-199,I
+*ENDDO
+
+*BOUNDARY
+1 1-3 0.0
+21 2-3 0.0
+
+*GRAVITY
+0 -9.81
+
+*END

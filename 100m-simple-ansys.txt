@@ -1,0 +1,61 @@
+/clear
+
+/PREP7
+
+! 单元类型：BEAM4
+ET,1,BEAM4
+
+! 材料属性
+! Materials (ID, E, PRXY, ALPX, DENS)
+MP,EX,1,206000000000
+MP,PRXY,1,0.3
+MP,ALPX,1,1.2e-05
+MP,DENS,1,7850
+
+
+! BEAM4 实常数：
+! R,NSET,AREA,IZ,IY,TKZ,TKY,THETA
+R,1,0.18,0.6,0.6,0.4,0.4,0.0
+RMORE,0.0,0.0,0.0,0.0,0.0,0.0
+
+! 生成 101 个节点，跨径 100m，100 个单元，单元长度 1m
+*DO,I,1,101
+    N,I,(I-1)*1.0,0,0
+*ENDDO
+
+! 生成 100 个 BEAM4 单元
+*DO,I,1,100
+    E,I,I+1
+*ENDDO
+
+! 简支边界：
+! 左端节点 1：约束 UX、UY
+! 右端节点 101：约束 UY
+D,1,UX,0
+D,1,UY,0
+D,101,UY,0
+
+! BEAM4 为三维梁单元，增加平面外约束，避免刚体位移
+D,ALL,UZ,0
+D,ALL,ROTX,0
+D,ALL,ROTY,0
+
+ACEL,0,9.81,0 
+
+FINISH
+
+/SOLU
+ANTYPE,STATIC
+
+! 施加均布荷载。
+! 原数据为 LY=-10000，即向下。
+! ANSYS 中 SFBEAM 的 LKEY=1、PRES 正值通常对应向下压力。
+SFBEAM,ALL,2,PRES,1000,1000
+
+SOLVE
+FINISH
+
+/POST1
+PLDISP,2
+PLNSOL,U,Y
+FINISH

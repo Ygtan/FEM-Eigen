@@ -1,0 +1,104 @@
+# 三维梁格输入格式说明
+
+三维模块目前使用 `fem_3d.hpp`，支持三维桁架 `TRUSS` 和三维梁 `BEAM`。
+
+## 单位
+
+长度：m，力：N，弹性模量/应力：Pa。
+
+## 节点
+
+```text
+*NODE
+1 0.0 0.0 0.0
+2 1.0 0.0 0.0
+```
+
+## 单元类型
+
+```text
+*ET
+1 TRUSS
+2 BEAM
+```
+
+## 材料
+
+```text
+*MP
+1 E=200e9
+```
+
+## 实常数
+
+桁架：
+
+```text
+*R
+1 A=0.001 ISTRN=0.001
+```
+
+梁：
+
+```text
+*R
+1 A=0.01 IY=1e-8 IZ=1e-8 J=1e-8 G=80e9 WT=1e-4 WB=1e-4 ISTRN=0.0001
+```
+
+## 单元生成
+
+```text
+*TYPE,1
+*MAT,1
+*REAL,1
+*EN,1,1,2
+```
+
+## 约束与荷载
+
+```text
+*BOUNDARY
+1 1-6 0.0
+
+*CLOAD
+2 2 -1000.0
+```
+
+## 徐变收缩
+
+```text
+*CREEP PHI=2.0 CHI=0.8
+*SHRINKAGE ECS=3.0e-4
+```
+
+## 施工阶段
+
+```text
+*STAGE
+1 ACTIVE=1,2
+2 ACTIVE=3
+
+*STAGE_LOAD
+2 NODE=2 DOF=2 VALUE=-1000.0
+```
+
+## 三维影响线
+
+```text
+*INFLUENCE_3D
+2 2
+```
+
+## 三维车道荷载
+
+```text
+*LANE_3D
+NODES=1,2,3 Q=-10.0 P=-100.0 DOF=2 IMPACT=1.15 REDUCTION=0.9
+```
+
+## 三维影响面
+
+```text
+*LANE_SURFACE_3D
+X_NODES=1,2,3 Y_NODES=1,2 Q=-10.0 P=-100.0 DOF=2 LANE_COUNT=2 IMPACT=1.15
+```

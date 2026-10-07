@@ -1,0 +1,30 @@
+# 影响线与车道荷载包络验证：10m 简支梁。
+*TITLE
+influence line and lane load verification
+*NODE
+1 0.0 0.0
+2 2.5 0.0
+3 5.0 0.0
+4 7.5 0.0
+5 10.0 0.0
+*ET
+1 BEAM
+*MP
+1 E=35e9
+*R
+1 A=0.4 I=0.005333 WT=0.026667 WB=0.026667
+*TYPE,1
+*MAT,1
+*REAL,1
+*DO I 1 4
+*EN,I,I,I+1
+*ENDDO
+*BOUNDARY
+1 1-2 0.0
+5 2 0.0
+*INFLUENCE
+1 DISP 3 2
+2 FORCE 2 M 2
+*LANE_LOAD
+1 NODES=1-5 Q=-10.0 P=-100.0 DIR=GY
+*END

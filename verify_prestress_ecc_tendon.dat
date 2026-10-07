@@ -1,0 +1,27 @@
+# 方案：端节点偏心预应力筋，验证偏心弯矩。
+# Pe = 1500e3*0.85 = 1.275e6 N，e = 0.10 m。
+# 梁端理论弯矩约 Pe*e = 127500 N*m。
+*ANALYSIS TYPE=NONLINEAR TOL=1e-6 MAXITER=50
+*TITLE
+prestress eccentric end moment verification
+*NODE
+1 0.0 0.0
+2 5.0 0.0
+3 10.0 0.0
+*ET
+1 BEAM
+*MP
+1 E=35e9
+*R
+1 A=0.4 I=0.005333 WT=0.026667 WB=0.026667
+*TYPE,1
+*MAT,1
+*REAL,1
+*EN,1,1,2
+*EN,2,2,3
+*BOUNDARY
+1 1-2 0.0
+3 2 0.0
+*PRESTRESS
+1 ELEM=1-2 P=1500e3 F=0.0 E1=0.10 E2=0.10 LOSS=0.85 EPS=195e9 APS=0.001 METHOD=TENDON
+*END

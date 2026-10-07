@@ -1,0 +1,24 @@
+# 三维梁活载轴力影响验证
+*NODE
+1 0.0 0.0 0.0
+2 1.0 0.0 0.0
+3 2.0 0.0 0.0
+*ET
+1 BEAM
+*MP
+1 E=200e9
+*R
+1 A=0.01 IY=1e-8 IZ=1e-8 J=1e-8 G=80e9
+*TYPE,1
+*MAT,1
+*REAL,1
+*EN,1,1,2
+*EN,2,2,3
+*BOUNDARY
+1 1-6 0.0
+3 2-6 0.0
+*ELEMENT_INFLUENCE_3D
+1
+*LANE_3D
+NODES=1,2,3 Q=-10.0 P=-100.0 DOF=1
+*END
