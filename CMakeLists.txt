@@ -88,11 +88,7 @@ endif()
 # 添加可执行目标的便捷函数。
 function(fem_add_executable target source)
     add_executable(${target} ${source})
-    if(TARGET Eigen3::Eigen)
-        target_link_libraries(${target} PRIVATE Eigen3::Eigen)
-    else()
-        target_link_libraries(${target} PRIVATE eigen3_vendored)
-    endif()
+    target_link_libraries(${target} PRIVATE fem_core)
     if(FEM_AMGCL_INCLUDE_DIR)
         target_include_directories(${target} PRIVATE "${FEM_AMGCL_INCLUDE_DIR}")
         target_compile_definitions(${target} PRIVATE AMGCL_NO_BOOST)
@@ -163,20 +159,19 @@ fem_add_executable(example_stage_envelope example_stage_envelope.cpp)
 fem_link_cholmod(example_stage_envelope)
 fem_add_executable(example_viz example_viz.cpp)
 
-# ---- 安装与导出 ----
-# 把头文件组织为一个 INTERFACE 库，使外部项目可 `find_package(FEM_Solver)` 后
-# `target_link_libraries(myapp PRIVATE FEM_Solver::fem_core)`。
-add_library(fem_core INTERFACE)
+# ---- 核心静态库（fem_io.cpp + 头文件）----
+# 将 fem_io.hpp 中的实现提取到 fem_io.cpp，减少编译时间并实现二进制隔离。
+add_library(fem_core STATIC fem_io.cpp)
 add_library(FEM_Solver::fem_core ALIAS fem_core)
-target_include_directories(fem_core INTERFACE
+target_include_directories(fem_core PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
     $<INSTALL_INTERFACE:include/FEM_Solver>
 )
 if(TARGET Eigen3::Eigen)
-    target_link_libraries(fem_core INTERFACE Eigen3::Eigen)
+    target_link_libraries(fem_core PUBLIC Eigen3::Eigen)
 else()
     # 安装场景下要求消费方自行提供 Eigen3；此处仅把 vendored 路径用于构建期示例。
-    target_include_directories(fem_core INTERFACE
+    target_include_directories(fem_core PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/external/eigen3>)
 endif()
 
