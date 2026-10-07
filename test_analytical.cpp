@@ -353,10 +353,385 @@ void test3DInfluenceSurfaceTransverse() {
     }
 }
 
+// ---- 13. 徐变 AEMM：可重入 + 逐阶段时效 + 多 spec 不连乘 ----
+//
+// 物理判据：加载龄期 0、徐变系数 φ 的梁，长期挠度 = 弹性挠度 × (1 + χφ)。
+// 这是 AEMM 的直接推论，也是最容易验错的一项。
+void testCreepAEMM() {
+    std::printf("\n[13] 徐变 AEMM（可重入 / 逐阶段 / 多 spec）\n");
+
+    const int n = 2;
+    const double chi = 0.8;
+    const double phi = 1.5;
+
+    // 基准：无徐变的弹性解
+    Model2D base = straightBeam(L, n, E, A, I);
+    base.constraints.push_back({1, 1, 0.0});
+    base.constraints.push_back({1, 2, 0.0});
+    base.constraints.push_back({n + 1, 2, 0.0});
+    base.loads.push_back({2, 2, -P});
+    const double d0 = std::abs(nodalDisp(base, solveModel2D(base), 2, 2));
+
+    auto makeCreepModel = [&]() {
+        Model2D m = straightBeam(L, n, E, A, I);
+        m.constraints.push_back({1, 1, 0.0});
+        m.constraints.push_back({1, 2, 0.0});
+        m.constraints.push_back({n + 1, 2, 0.0});
+        m.loads.push_back({2, 2, -P});
+        Model2D::CreepSpec cs;
+        cs.all = true;
+        cs.phi = phi;
+        cs.chi = chi;
+        m.creepSpecs = {cs};
+        snapshotBaseModulus(m);
+        return m;
+    };
+
+    // (a) 徐变放大倍数 (1 + χφ)
+    {
+        Model2D m = makeCreepModel();
+        processTimeEffects(m);
+        const double d = std::abs(nodalDisp(m, solveModel2D(m), 2, 2));
+        check("徐变长期挠度 = 弹性挠度 × (1+χφ)", d, d0 * (1.0 + chi * phi), 1e-10);
+    }
+
+    // (b) 可重入：再处理一次，结果必须完全不变
+    //     （旧实现 `e.E *= factor` 会把模量折减两次）
+    {
+        Model2D m = makeCreepModel();
+        processTimeEffects(m);
+        const double E1 = m.elements[0].E;
+        processTimeEffects(m);
+        processTimeEffects(m);
+        const double E3 = m.elements[0].E;
+        check("processTimeEffects 幂等（调用 3 次模量不变）", E3, E1, 1e-14);
+        check("折减后模量 = E0/(1+χφ)", E1, E / (1.0 + chi * phi), 1e-12);
+    }
+
+    // (c) 多 spec 不连乘：两条相同 spec 折减一次，而不是平方
+    {
+        Model2D m = makeCreepModel();
+        m.creepSpecs.push_back(m.creepSpecs.front());
+        processTimeEffects(m);
+        check("两条相同 *CREEP 仅折减一次", m.elements[0].E,
+              E / (1.0 + chi * phi), 1e-12);
+    }
+
+    // (d) 逐阶段 AEMM：Δφ = φ(t_now) - φ(t_load)
+    //     晚加载的单元折减少（Δφ 小），早加载的折减多。
+    {
+        const double tLoad = 100.0;
+        const double tNow  = 1000.0;
+        Model2D m = makeCreepModel();
+        m.creepSpecs.front().phi = 0.0;   // 强制走龄期路径
+        std::map<int, double> loadAge;
+        for (const auto& e : m.elements) loadAge[e.id] = tLoad;
+        processTimeEffects(m, &loadAge, tNow);
+
+        const double phiNow = creepCoefficientAt(m, tNow);
+        const double phiT0  = creepCoefficientAt(m, tLoad);
+        const double dphi   = std::max(0.0, phiNow - phiT0);
+        check("逐阶段 AEMM：E_eff = E0/(1+χΔφ)", m.elements[0].E,
+              E / (1.0 + chi * dphi), 1e-12);
+
+        // 晚加载（Δφ 小）的有效模量必须高于早加载（Δφ 大）
+        std::map<int, double> early;
+        for (const auto& e : m.elements) early[e.id] = 0.0;
+        Model2D m2 = makeCreepModel();
+        m2.creepSpecs.front().phi = 0.0;
+        processTimeEffects(m2, &early, tNow);
+        if (m.elements[0].E > m2.elements[0].E && dphi > 0.0) {
+            ++g_pass;
+            std::printf("  [PASS] %-44s late=%.6g > early=%.6g\n",
+                        "晚加载单元模量高于早加载单元",
+                        m.elements[0].E, m2.elements[0].E);
+        } else {
+            ++g_fail;
+            std::printf("  [FAIL] %-44s late=%.6g early=%.6g dphi=%g\n",
+                        "晚加载单元模量高于早加载单元",
+                        m.elements[0].E, m2.elements[0].E, dphi);
+        }
+    }
+
+    // (e) 多阶段：阶段 2 的有效模量必须是 E0/(1+χ·(φ(t2)-φ(t0)))，
+    //     而不是旧实现的逐级累乘 E0/((1+χφ1)(1+χφ2))。
+    //     判据用简支梁跨中挠度 δ = PL³/(48·Eeff·I)。
+    {
+        Model2D m = straightBeam(L, 2, E, A, I);
+        m.constraints.push_back({1, 1, 0.0});
+        m.constraints.push_back({1, 2, 0.0});
+        m.constraints.push_back({3, 2, 0.0});
+        // 时变徐变只在给了时变模型时才启用；CURVE 且无数据点时会自动关闭。
+        m.creepModel = "CEB90";
+        m.creepPhi0 = 2.0; m.creepT0 = 7.0;
+        m.creepBetaH = 700.0; m.creepPower = 0.3;
+
+        Model2D::Stage s1;
+        s1.id = 1;
+        s1.time = 100.0;
+        s1.activate = {1, 2};          // 第 1 阶段安装，加载龄期 = 0
+        Model2D::Stage s2;
+        s2.id = 2;
+        s2.time = 1000.0;              // 第 2 阶段才加载
+        s2.loads.push_back({2, 2, -P});
+        m.stages = {s1, s2};
+
+        const auto res = solveModel2DStages(m);
+        // 节点 2 是 0-based 索引 1，dof 2 → 3*1 + 1 = 4
+        const double d2 = std::abs(res.back().U(4));
+
+        const double phi1 = creepCoefficientAt(m, 100.0);
+        const double phi2 = creepCoefficientAt(m, 1000.0);
+        const double EeffNew = E / (1.0 + 0.8 * (phi2 - 0.0));            // AEMM
+        const double EeffOld = E / ((1.0 + 0.8 * phi1) * (1.0 + 0.8 * phi2)); // 旧累乘
+        const double dNew = P * L * L * L / (48.0 * EeffNew * I);
+        const double dOld = P * L * L * L / (48.0 * EeffOld * I);
+
+        check("两阶段徐变 阶段2 挠度（AEMM）", d2, dNew, 1e-8);
+        const double gap = std::abs(d2 - dOld) / dOld;
+        if (gap > 1e-2) {
+            ++g_pass;
+            std::printf("  [PASS] %-44s 与旧累乘值差 %.1f%%\n",
+                        "已不是旧的逐级累乘（修复生效）", gap * 100.0);
+        } else {
+            ++g_fail;
+            std::printf("  [FAIL] %-44s 差仅 %.3g%%，疑似仍在累乘\n",
+                        "已不是旧的逐级累乘（修复生效）", gap * 100.0);
+        }
+    }
+}
+
+// ---- 14. 非线性：两杆桁架（von Mises）大位移解析解 + 收敛保障 ----
+//
+// 几何：两杆长 L0，下端铰支于 (±b, 0)，顶点在 (0, h)。顶点受竖向荷载 P 下沉 v。
+// 变形后杆长 L = √(b² + (h-v)²)，应变 ε = (L-L0)/L0，轴力 N = EA·ε。
+// 顶点竖向平衡：P = 2·N·(h-v)/L
+// 这是几何非线性的经典闭式解，用来锁住 Newton 内核。
+void testNonlinearTwoBarTruss() {
+    std::printf("\n[14] 非线性 两杆桁架（von Mises）+ 收敛保障\n");
+
+    const double b = 2.0;      // 半跨
+    const double h = 0.5;      // 初始矢高（浅桁架 → 强几何非线性）
+    const double Abar = 1.0e-3;
+    const double L0 = std::sqrt(b * b + h * h);
+
+    Model2D m;
+    m.analysisType = "NONLINEAR";
+    m.nodes[1] = Eigen::Vector2d(-b, 0.0);
+    m.nodes[2] = Eigen::Vector2d(0.0, h);
+    m.nodes[3] = Eigen::Vector2d(b, 0.0);
+    for (int e = 0; e < 2; ++e) {
+        Model2D::Element el;
+        el.id = e + 1;
+        el.type = "TRUSS";
+        el.E = E; el.A = Abar; el.I = 0.0;
+        el.conn = {e + 1, e + 2};
+        m.elements.push_back(el);
+    }
+    m.constraints.push_back({1, 1, 0.0});
+    m.constraints.push_back({1, 2, 0.0});
+    m.constraints.push_back({3, 1, 0.0});
+    m.constraints.push_back({3, 2, 0.0});
+
+    // 解析解：给定顶点下沉 v，反算所需荷载 P(v)。
+    // 顶点下移 → 杆长 L 变短 → 杆受压（N<0）→ 竖向分力向上抵抗外荷载，
+    // 故 P = -2·N·(h-v)/L，N = EA·(L-L0)/L0。
+    auto loadForDisp = [&](double v) {
+        const double L = std::sqrt(b * b + (h - v) * (h - v));
+        const double N = E * Abar * (L - L0) / L0;
+        return -2.0 * N * (h - v) / L;
+    };
+
+    // 取一个位于"上升段"（远低于失稳临界点）的荷载，二分求解析位移。
+    const double Pdown = 8.0e5;
+    const double hiBound = 0.12;   // P(v) 在 [0, 0.12] 上单调递增
+    auto solveExact = [&]() {
+        double lo = 0.0, hi = hiBound;
+        for (int i = 0; i < 200; ++i) {
+            const double mid = 0.5 * (lo + hi);
+            if (loadForDisp(mid) < Pdown) lo = mid; else hi = mid;
+        }
+        return 0.5 * (lo + hi);
+    };
+    const double vExact = solveExact();
+
+    // 线性解作为对照：确认这个算例确实处在非线性显著区（否则测不出东西）
+    const double kLin = 2.0 * (E * Abar / L0) * (h / L0) * (h / L0);
+    const double vLin = Pdown / kLin;
+    std::printf("  参考：线性解 v=%.6g，非线性解 v=%.6g（相差 %.1f%%）\n",
+                vLin, vExact, 100.0 * (vExact - vLin) / vLin);
+    if (std::abs(vExact - vLin) / vLin < 0.05) {
+        ++g_fail;
+        std::printf("  [FAIL] 算例非线性效应不足 5%%，测不出非线性内核的问题\n");
+    }
+
+    // (a) 不分級 + 线搜索：与解析解对比
+    m.loads.push_back({2, 2, -Pdown});
+    const ModelResult r1 = solveModel2D(m);
+    const double v1 = -nodalDisp(m, r1, 2, 2);
+    check("两杆桁架 顶点下沉（不分級）", v1, vExact, 1e-6);
+
+    // (b) 荷载分级 8 步：结果必须与不分級一致
+    {
+        Model2D ms = m;
+        ms.nonlinearLoadSteps = 8;
+        const ModelResult r2 = solveModel2D(ms);
+        const double v2 = -nodalDisp(ms, r2, 2, 2);
+        check("两杆桁架 顶点下沉（8 级加载）", v2, vExact, 1e-6);
+        check("分级与不分级结果一致", v2, v1, 1e-7);
+    }
+
+    // (c) 关掉线搜索：正常收敛工况下结果仍应一致
+    {
+        Model2D ms = m;
+        ms.nonlinearLineSearch = false;
+        const ModelResult r3 = solveModel2D(ms);
+        check("关闭线搜索 结果仍一致",
+              -nodalDisp(ms, r3, 2, 2), vExact, 1e-6);
+    }
+
+    // (d) 不收敛时返回"部分成功结果"而不是直接抛异常
+    {
+        Model2D ms = m;
+        ms.nonlinearThrowOnFailure = false;
+        ms.nonlinearTol = 1e-30;          // 容差低于机器精度 → 必然达不到
+        ms.nonlinearMaxIter = 5;
+        ms.nonlinearLoadSteps = 1;
+        NonlinearDiag diag;
+        const ModelResult r4 = solveModel2D(ms, SolverType::SimplicialLDLT,
+                                            nullptr, nullptr, &diag);
+        if (!r4.nonlinearConverged) {
+            ++g_pass;
+            std::printf("  [PASS] %-44s 已施加%.1f%%荷载\n",
+                        "不收敛时返回部分结果（不抛异常）", diag.loadRatio * 100.0);
+        } else {
+            ++g_fail;
+            std::printf("  [FAIL] %-44s 竟然判定为收敛\n", "不收敛时返回部分结果（不抛异常）");
+        }
+        if (!diag.failureReason.empty() && diag.maxResidualNode >= 0 &&
+            !diag.residualHistory.empty()) {
+            ++g_pass;
+            std::printf("  [PASS] %-44s 最大残差 节点%d dof%d\n",
+                        "诊断信息含原因/残差自由度/残差历史",
+                        diag.maxResidualNode, diag.maxResidualDof);
+        } else {
+            ++g_fail;
+            std::printf("  [FAIL] %-44s\n", "诊断信息不完整");
+        }
+    }
+
+    // (e) 抛异常时，异常文本必须带诊断信息（而不是一句"未收敛"）
+    {
+        Model2D ms = m;
+        ms.nonlinearTol = 1e-30;          // 同上，强制不收敛
+        ms.nonlinearMaxIter = 5;
+        ms.nonlinearLoadSteps = 1;
+        bool threw = false;
+        std::string msg;
+        try {
+            solveModel2D(ms);
+        } catch (const std::exception& ex) {
+            threw = true;
+            msg = ex.what();
+        }
+        if (threw && msg.find("残差最大自由度") != std::string::npos &&
+            msg.find("残差历史") != std::string::npos) {
+            ++g_pass;
+            std::printf("  [PASS] %-44s\n", "未收敛异常带诊断信息");
+        } else {
+            ++g_fail;
+            std::printf("  [FAIL] %-44s threw=%d msg=%.120s\n",
+                        "未收敛异常带诊断信息", static_cast<int>(threw), msg.c_str());
+        }
+    }
+}
+
+// ---- 15. 求解器复用：符号分解只做一次 ----
+//
+// P0-1/P1-1 已经把"重复装配+重复分解"从热路径上拿掉了，但真正省掉的是
+// **数值**分解那一半；符号分解（AMD 排序 + 消去树）只有结构变化时才需要。
+// 这里用 analyze/factorize 计数把这件事钉死，防止以后改回 compute()。
+void testSolverReuse() {
+    std::printf("\n[15] 求解器复用（analyze 一次 / factorize 多次）\n");
+
+    const int n = 4;
+    Model2D m = straightBeam(L, n, E, A, I);
+    m.constraints.push_back({1, 1, 0.0});
+    m.constraints.push_back({1, 2, 0.0});
+    m.constraints.push_back({n + 1, 2, 0.0});
+    m.loads.push_back({3, 2, -P});
+
+    // 同一结构、不同数值（模拟徐变折减 / 阶段推进 / Newton 迭代）
+    const Assembled2D a1 = assembleModel2DLinear(m);
+
+    Model2D m2 = m;
+    for (auto& e : m2.elements) e.E *= 0.5;      // 数值变了，结构没变
+    const Assembled2D a2 = assembleModel2DLinear(m2);
+
+    ReusableSolver rs(SolverType::SimplicialLDLT);
+    rs.factorizeReuse(a1.K);
+    const DenseVec u1 = rs.solve(a1.F);
+    rs.factorizeReuse(a2.K);
+    const DenseVec u2 = rs.solve(a2.F);
+
+    if (rs.analyzeCount() == 1 && rs.factorizeCount() == 2) {
+        ++g_pass;
+        std::printf("  [PASS] %-44s analyze=%d factorize=%d\n",
+                    "结构不变：符号分解只做一次",
+                    rs.analyzeCount(), rs.factorizeCount());
+    } else {
+        ++g_fail;
+        std::printf("  [FAIL] %-44s analyze=%d factorize=%d（期望 1 / 2）\n",
+                    "结构不变：符号分解只做一次",
+                    rs.analyzeCount(), rs.factorizeCount());
+    }
+
+    // 结果与一次性求解一致
+    const DenseVec ref1 = solve(a1.K, a1.F, SolverType::SimplicialLDLT);
+    const DenseVec ref2 = solve(a2.K, a2.F, SolverType::SimplicialLDLT);
+    check("复用求解与一次性求解一致（工况1）", (u1 - ref1).norm(), 0.0, 1e-12);
+    check("复用求解与一次性求解一致（工况2）", (u2 - ref2).norm(), 0.0, 1e-12);
+
+    // 结构变化时必须重新 analyze
+    Model2D m3 = m;
+    Model2D::Element extra;
+    extra.id = 100;
+    extra.type = "BEAM";
+    extra.E = E; extra.A = A; extra.I = I;
+    extra.conn = {1, 3};                       // 新增单元 → 非零结构改变
+    m3.elements.push_back(extra);
+    const Assembled2D a3 = assembleModel2DLinear(m3);
+    rs.factorizeReuse(a3.K);
+    if (rs.analyzeCount() == 2 && rs.factorizeCount() == 3) {
+        ++g_pass;
+        std::printf("  [PASS] %-44s analyze=%d factorize=%d\n",
+                    "结构变化：自动重新符号分解",
+                    rs.analyzeCount(), rs.factorizeCount());
+    } else {
+        ++g_fail;
+        std::printf("  [FAIL] %-44s analyze=%d factorize=%d（期望 2 / 3）\n",
+                    "结构变化：自动重新符号分解",
+                    rs.analyzeCount(), rs.factorizeCount());
+    }
+
+    // 多右端项
+    DenseMat B(a1.K.rows(), 3);
+    B.col(0) = a1.F;
+    B.col(1) = a1.F * 2.0;
+    B.col(2) = DenseVec::Zero(a1.K.rows());
+    ReusableSolver rs2(SolverType::SimplicialLDLT);
+    rs2.factorizeReuse(a1.K);
+    const DenseMat X = rs2.solveMulti(B);
+    check("多右端项 第1列 = 单右端解", (X.col(0) - u1).norm(), 0.0, 1e-12);
+    check("多右端项 第2列 = 2×(单右端解)", (X.col(1) - 2.0 * u1).norm(), 0.0, 1e-12);
+    check("多右端项 第3列 = 零右端 → 零解", X.col(2).norm(), 0.0, 1e-12);
+}
+
 } // namespace
 
 int main() {
     setupConsoleUTF8();
+    std::setvbuf(stdout, nullptr, _IONBF, 0);   // 崩溃时也能看到已输出的内容
     std::printf("========== 解析解断言测试 ==========\n");
 
     try {
@@ -371,6 +746,9 @@ int main() {
         test3DSupportSettlement();
         test3DMixedBeamTruss();
         test3DInfluenceSurfaceTransverse();
+        testCreepAEMM();
+        testNonlinearTwoBarTruss();
+        testSolverReuse();
     } catch (const std::exception& e) {
         std::printf("\n[ERROR] 异常: %s\n", e.what());
         ++g_fail;

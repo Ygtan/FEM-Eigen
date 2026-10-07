@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstddef>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 #include <tuple>
 #include <vector>
@@ -427,6 +428,194 @@ inline DenseVec solve(const SparseMat& K, const DenseVec& F,
 inline DenseVec solveSPD(const SparseMat& K, const DenseVec& F) {
     return solve(K, F, SolverType::SimplicialLDLT);
 }
+
+// ==================== 可复用的求解器句柄 ====================
+//
+// 直接法的成本分成两半：符号分解（analyzePattern：AMD/COLAMD 排序 + 消去树 +
+// 符号模式，只依赖非零结构）和数值分解（factorize：真正算因子，依赖数值）。
+// 影响线扫描、Newton 迭代、施工阶段推进这三处，矩阵**结构完全不变、只有数值变**
+// （或干脆数值也不变），却每次都走一遍 `compute()` = analyze + factorize。
+//
+// 这个类把两者拆开：结构指纹不变时只做 factorize，并支持多右端项一次回代。
+// CHOLMOD 封装本来就有 analyzePattern/factorize 分离，但从来没有接到求解路径上
+// （只在 example_cholmod.cpp 演示过一次），这里让它真正可用。
+class ReusableSolver {
+public:
+    explicit ReusableSolver(SolverType type = SolverType::SimplicialLDLT)
+        : type_(type),
+          reusable_(type == SolverType::SimplicialLDLT ||
+                    type == SolverType::SimplicialLLT ||
+                    type == SolverType::SparseLU ||
+                    type == SolverType::CHOLMOD)
+#ifdef FEM_HAS_CHOLMOD
+          , cholmod_(nullptr)
+#endif
+    {}
+
+    SolverType type() const { return type_; }
+    // 该后端是否支持 analyze/factorize 分离（迭代法与 AMGCL 不支持）。
+    bool reusable() const { return reusable_; }
+    int analyzeCount() const { return analyzeCount_; }
+    int factorizeCount() const { return factorizeCount_; }
+    // 结构未变却只做了 1 次符号分解 → 说明复用生效了（用于自检/统计）。
+    bool patternReused() const { return factorizeCount_ > analyzeCount_; }
+
+    // 结构指纹：行数 + 非零元数 + 列偏移 + 行索引。四项都相同才认为结构不变。
+    bool samePattern(const SparseMat& K) const {
+        if (!patternValid_ || !reusable_) return false;
+        if (K.rows() != n_ || K.cols() != n_) return false;
+        if (!K.isCompressed()) return false;
+        if (K.nonZeros() != nnz_) return false;
+        const int* outer = K.outerIndexPtr();
+        const int* inner = K.innerIndexPtr();
+        for (int i = 0; i <= n_; ++i)
+            if (outer[i] != outer_[static_cast<std::size_t>(i)]) return false;
+        for (int i = 0; i < nnz_; ++i)
+            if (inner[i] != inner_[static_cast<std::size_t>(i)]) return false;
+        return true;
+    }
+
+    // 符号分解：只在结构变化时需要。
+    void analyze(const SparseMat& K) {
+        if (!reusable_)
+            throw std::runtime_error("该求解后端不支持符号分解复用");
+        switch (type_) {
+            case SolverType::SimplicialLDLT: ldlt_.analyzePattern(K); break;
+            case SolverType::SimplicialLLT:  llt_.analyzePattern(K);  break;
+            case SolverType::SparseLU:       lu_.analyzePattern(K);   break;
+            case SolverType::CHOLMOD:
+#ifdef FEM_HAS_CHOLMOD
+                cholmod().analyzePattern(K);
+#else
+                throw std::runtime_error("CHOLMOD 后端未启用（缺少 SuiteSparse 头文件）");
+#endif
+                break;
+            default:
+                throw std::runtime_error("该求解后端不支持符号分解复用");
+        }
+        capturePattern(K);
+        ++analyzeCount_;
+    }
+
+    // 数值分解：可反复调用，复用上一次的符号分解结果。
+    void factorize(const SparseMat& K) {
+        if (!reusable_) {
+            Klast_ = K;                       // 迭代法/AMGCL 只能整体重来
+            ++factorizeCount_;
+            return;
+        }
+        if (factorizeCount_ == 0 && !patternValid_)
+            analyze(K);
+        switch (type_) {
+            case SolverType::SimplicialLDLT:
+                ldlt_.factorize(K);
+                if (ldlt_.info() != Eigen::Success)
+                    throw std::runtime_error("求解器：LDLT 数值分解失败");
+                break;
+            case SolverType::SimplicialLLT:
+                llt_.factorize(K);
+                if (llt_.info() != Eigen::Success)
+                    throw std::runtime_error("求解器：LLT 数值分解失败");
+                break;
+            case SolverType::SparseLU:
+                lu_.factorize(K);
+                if (lu_.info() != Eigen::Success)
+                    throw std::runtime_error("求解器：LU 数值分解失败");
+                break;
+            case SolverType::CHOLMOD:
+#ifdef FEM_HAS_CHOLMOD
+                cholmod().factorize(K);
+#else
+                throw std::runtime_error("CHOLMOD 后端未启用（缺少 SuiteSparse 头文件）");
+#endif
+                break;
+            default:
+                throw std::runtime_error("该求解后端不支持分解复用");
+        }
+        ++factorizeCount_;
+    }
+
+    // 便捷入口：结构不变则只 factorize，否则 analyze + factorize。
+    void factorizeReuse(const SparseMat& K) {
+        if (!samePattern(K)) analyze(K);
+        factorize(K);
+    }
+
+    DenseVec solve(const DenseVec& F) const {
+        if (!reusable_) {
+            if (Klast_.rows() == 0)
+                throw std::runtime_error("ReusableSolver：尚未 factorize");
+            return fem::solve(Klast_, F, type_);
+        }
+        if (factorizeCount_ == 0)
+            throw std::runtime_error("ReusableSolver：尚未 factorize");
+        DenseVec u;
+        switch (type_) {
+            case SolverType::SimplicialLDLT: u = ldlt_.solve(F); break;
+            case SolverType::SimplicialLLT:  u = llt_.solve(F);  break;
+            case SolverType::SparseLU:       u = lu_.solve(F);   break;
+            case SolverType::CHOLMOD:
+#ifdef FEM_HAS_CHOLMOD
+                if (!cholmod_) throw std::runtime_error("ReusableSolver：CHOLMOD 未初始化");
+                u = cholmod_->solve(F);
+#else
+                throw std::runtime_error("CHOLMOD 后端未启用（缺少 SuiteSparse 头文件）");
+#endif
+                break;
+            default:
+                throw std::runtime_error("该求解后端不支持分解复用");
+        }
+        if (!u.allFinite())
+            throw std::runtime_error("求解器：结果含 NaN/Inf");
+        return u;
+    }
+
+    // 多右端项：B 的每一列一个右端项。CHOLMOD 原生支持；Eigen 逐列回代。
+    DenseMat solveMulti(const DenseMat& B) const {
+        const int k = static_cast<int>(B.cols());
+        if (B.rows() != n_)
+            throw std::runtime_error("ReusableSolver：右端项行数与矩阵不匹配");
+#ifdef FEM_HAS_CHOLMOD
+        if (reusable_ && type_ == SolverType::CHOLMOD && cholmod_)
+            return cholmod_->solve(B);
+#endif
+        DenseMat X(n_, k);
+        for (int c = 0; c < k; ++c)
+            X.col(c) = solve(DenseVec(B.col(c)));
+        return X;
+    }
+
+private:
+    void capturePattern(const SparseMat& K) {
+        n_ = static_cast<int>(K.rows());
+        nnz_ = static_cast<int>(K.nonZeros());
+        outer_.assign(K.outerIndexPtr(), K.outerIndexPtr() + n_ + 1);
+        inner_.assign(K.innerIndexPtr(), K.innerIndexPtr() + nnz_);
+        patternValid_ = K.isCompressed();
+    }
+
+#ifdef FEM_HAS_CHOLMOD
+    CholmodSolver& cholmod() {
+        if (!cholmod_) cholmod_ = std::make_unique<CholmodSolver>();
+        return *cholmod_;
+    }
+#endif
+
+    SolverType type_;
+    bool reusable_;
+    Eigen::SimplicialLDLT<SparseMat> ldlt_;
+    Eigen::SimplicialLLT<SparseMat> llt_;
+    Eigen::SparseLU<SparseMat> lu_;
+#ifdef FEM_HAS_CHOLMOD
+    std::unique_ptr<CholmodSolver> cholmod_;
+#endif
+    SparseMat Klast_;               // 仅非可复用后端需要
+    std::vector<int> outer_, inner_;
+    int n_ = 0, nnz_ = 0;
+    bool patternValid_ = false;
+    int analyzeCount_ = 0;
+    int factorizeCount_ = 0;
+};
 
 // ==================== 单元 ====================
 

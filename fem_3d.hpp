@@ -284,37 +284,86 @@ inline Eigen::VectorXd solveSparse3D(const SparseMat3D& K, const Eigen::VectorXd
     return U;
 }
 
-// 可复用的稀疏分解：一次 compute()，多次 solve()。
+// 可复用的稀疏分解：一次分解，多次回代。
+//
+// 默认 SimplicialLDLT，失败自动回退 SparseLU（保持旧行为）。
+// 显式传 SolverType::CHOLMOD 时走 SuiteSparse——fem.hpp 里那套
+// analyzePattern/factorize 分离的 CHOLMOD 封装此前只在 example_cholmod.cpp
+// 里演示过一次，从来没有接到真正的求解路径上（P1-7）。CHOLMOD 不可用
+// （未装 SuiteSparse）或矩阵不适用时，这里会静默回退到 LDLT/ LU。
 class Factorization3D {
 public:
-    explicit Factorization3D(const SparseMat3D& K) { compute(K); }
+    explicit Factorization3D(const SparseMat3D& K,
+                             SolverType type = SolverType::SimplicialLDLT) {
+        compute(K, type);
+    }
 
-    void compute(const SparseMat3D& K) {
+    void compute(const SparseMat3D& K,
+                 SolverType type = SolverType::SimplicialLDLT) {
         n_ = static_cast<int>(K.rows());
+        type_ = type;
+        useCholmod_ = false;
+        useLu_ = false;
+        ok_ = false;
+
+        if (type == SolverType::CHOLMOD) {
+            try {
+                cholmod_.analyze(K);
+                cholmod_.factorize(K);
+                useCholmod_ = true;
+                ok_ = true;
+                return;
+            } catch (const std::exception&) {
+                useCholmod_ = false;   // 未启用或非正定 → 回退
+            }
+        }
+
         ldlt_.compute(K);
-        useLu_ =false;
+        if (ldlt_.info() == Eigen::Success) {
+            ok_ = true;
+            return;
+        }
+        useLu_ = true;
+        lu_.compute(K);
+        ok_ = (lu_.info() == Eigen::Success);
+    }
+
+    // 结构不变、只有数值变化时只做数值分解，省掉重复的符号分解与排序。
+    void refactorize(const SparseMat3D& K) {
+        if (!ok_) { compute(K, type_); return; }
+        if (useCholmod_) { cholmod_.factorize(K); return; }
+        if (useLu_) {
+            lu_.factorize(K);
+            ok_ = (lu_.info() == Eigen::Success);
+            return;
+        }
+        ldlt_.factorize(K);
         if (ldlt_.info() != Eigen::Success) {
             useLu_ = true;
             lu_.compute(K);
             ok_ = (lu_.info() == Eigen::Success);
-        } else {
-            ok_ = true;
         }
     }
 
+    SolverType type() const { return type_; }
+    bool usingCholmod() const { return useCholmod_; }
+
     Eigen::VectorXd solve(const Eigen::VectorXd& b) const {
         if (!ok_) throw std::runtime_error("三维求解：矩阵分解失败");
-        // 两种分解的 solve() 返回不同的表达式类型，不能放在同一个 ?: 里。
+        // 三种分解的 solve() 返回不同的表达式类型，不能放在同一个 ?: 里。
         Eigen::VectorXd x;
-        if (useLu_) x = lu_.solve(b);
-        else        x = ldlt_.solve(b);
+        if (useCholmod_) x = cholmod_.solve(b);
+        else if (useLu_) x = lu_.solve(b);
+        else             x = ldlt_.solve(b);
         if (!x.allFinite())
             throw std::runtime_error("三维求解失败：结果含 NaN/Inf，矩阵可能奇异");
         return x;
     }
 
     // 多右端项：B 的每一列一个右端项，返回同尺寸解矩阵。
+    // CHOLMOD 原生支持多右端项；Eigen 后端逐列回代。
     Eigen::MatrixXd solveMulti(const Eigen::MatrixXd& B) const {
+        if (useCholmod_) return cholmod_.solveMulti(B);
         Eigen::MatrixXd X(n_, B.cols());
         for (int c = 0; c < static_cast<int>(B.cols()); ++c)
             X.col(c) = solve(Eigen::VectorXd(B.col(c)));
@@ -324,6 +373,9 @@ public:
 private:
     Eigen::SimplicialLDLT<SparseMat3D> ldlt_;
     Eigen::SparseLU<SparseMat3D, Eigen::COLAMDOrdering<int>> lu_;
+    ReusableSolver cholmod_{SolverType::CHOLMOD};
+    SolverType type_ = SolverType::SimplicialLDLT;
+    bool useCholmod_ = false;
     bool useLu_ = false;
     bool ok_ = false;
     int n_ = 0;
@@ -438,6 +490,15 @@ inline std::vector<double> solveModel3D(const Model3D& m) {
 struct StageResult3D {
     int stage = 0;
     std::vector<double> U;
+    // 本阶段的自由度映射。
+    //
+    // 阶段 U 是按"该阶段激活单元"的自由度编号来排的：某节点在阶段 1 只连桁架
+    // （3 个自由度），阶段 2 接上梁后变 6 个，于是同一个节点在两个阶段里的
+    // 全局自由度编号完全不同，总自由度数也不一样。
+    // 包络函数若拿全模型的 DofMap3D 去索引阶段 U，轻则读错自由度（静默算错），
+    // 重则下标越界（std::vector 断言失败直接 abort —— example_3d_beam_envelope
+    // 原来就是这么崩的）。所以每个阶段必须自带自己的映射。
+    DofMap3D dm;
 };
 
 // 给未参与任何激活单元的节点补齐约束（否则这些节点自由度零刚度）。
@@ -479,6 +540,7 @@ inline std::vector<StageResult3D> solveModel3DStages(const Model3D& m) {
 
         StageResult3D sr;
         sr.stage = st.id;
+        sr.dm = buildDofMap3D(mc);   // 约束补齐后再取，与 solveModel3D 内部一致
         sr.U = solveModel3D(mc);
         out.push_back(sr);
     }
@@ -492,16 +554,18 @@ struct Envelope3D {
 
 inline std::vector<Envelope3D> compute3DStageEnvelope(const Model3D& m,
                                                       const std::vector<StageResult3D>& stages) {
-    const DofMap3D dm = buildDofMap3D(m);
     std::map<int, Envelope3D> env;
     for (const auto& sr : stages) {
+        const DofMap3D& dm = sr.dm;   // 必须用本阶段的映射
         for (const auto& e : m.elements) {
+            const int d1 = dm.safeDof(e.n1, 0), d2 = dm.safeDof(e.n2, 0);
+            if (d1 < 0 || d2 < 0) continue;
             const Vec3 d = m.nodes.at(e.n2) - m.nodes.at(e.n1);
             const double L = std::max(d.norm(), 1e-12);
             const Vec3 c = d / L;
             double dL = 0.0;
             for (int k = 0; k < 3; ++k)
-                dL += (sr.U[dm.dof(e.n2, k)] - sr.U[dm.dof(e.n1, k)]) * c(k);
+                dL += (sr.U[d2 + k] - sr.U[d1 + k]) * c(k);
             const double N = e.E * e.A / L * dL;
             auto& r = env[e.id]; r.id = e.id;
             r.Nmin = std::min(r.Nmin, N); r.Nmax = std::max(r.Nmax, N);
@@ -534,8 +598,10 @@ inline Eigen::VectorXd beam3DLocalEndForces(const Model3D& m, const DofMap3D& dm
                                             const std::vector<double>& U) {
     Eigen::VectorXd ug(12);
     for (int k = 0; k < 6; ++k) {
-        ug(k)     = U[dm.dof(e.n1, k)];
-        ug(6 + k) = U[dm.dof(e.n2, k)];
+        // 该阶段该节点可能只有 3 个平动自由度（梁尚未激活）→ 转动分量取 0。
+        const int d1 = dm.safeDof(e.n1, k), d2 = dm.safeDof(e.n2, k);
+        ug(k)     = (d1 >= 0 && d1 < static_cast<int>(U.size())) ? U[d1] : 0.0;
+        ug(6 + k) = (d2 >= 0 && d2 < static_cast<int>(U.size())) ? U[d2] : 0.0;
     }
     const Vec3 p1 = m.nodes.at(e.n1), p2 = m.nodes.at(e.n2);
     const double L = (p2 - p1).norm();
@@ -546,11 +612,13 @@ inline Eigen::VectorXd beam3DLocalEndForces(const Model3D& m, const DofMap3D& dm
 
 inline std::vector<BeamEnvelope3D> compute3DBeamEnvelope(
     const Model3D& m, const std::vector<StageResult3D>& stages) {
-    const DofMap3D dm = buildDofMap3D(m);
     std::map<int, BeamEnvelope3D> env;
     for (const auto& sr : stages) {
+        const DofMap3D& dm = sr.dm;   // 必须用本阶段的映射
         for (const auto& e : m.elements) {
             if (e.type != "BEAM") continue;
+            // 本阶段该梁是否激活：两端节点都得有转动自由度（6 自由度）才算。
+            if (dm.safeDof(e.n1, 5) < 0 || dm.safeDof(e.n2, 5) < 0) continue;
             const Eigen::VectorXd fl = beam3DLocalEndForces(m, dm, e, sr.U);
             const double N  = -fl(0);
             const double Vy = fl(1),  Vz = fl(2);
@@ -570,15 +638,23 @@ inline std::vector<BeamEnvelope3D> compute3DBeamEnvelope(
 
 inline std::vector<DisplacementEnvelope3D> compute3DDisplacementEnvelope(
     const Model3D& m, const std::vector<StageResult3D>& stages) {
-    const DofMap3D dm = buildDofMap3D(m);
+    // 用"最后一个阶段"的映射决定输出哪些自由度；每个阶段再用它自己的映射取值。
+    // 未激活阶段的自由度视为 0（该阶段此节点还没参与受力）。
+    const DofMap3D dmLast = stages.empty() ? buildDofMap3D(m) : stages.back().dm;
     std::vector<DisplacementEnvelope3D> out;
     for (const auto& [id, x] : m.nodes) {
-        for (int k = 0; k < dm.count(id); ++k) {
+        const int nd = dmLast.count(id);
+        for (int k = 0; k < nd; ++k) {
             double mn = 1e300, mx = -1e300;
+            bool seen = false;
             for (const auto& s : stages) {
-                const double v = s.U[dm.dof(id, k)];
-                mn = std::min(mn, v); mx = std::max(mx, v);
+                const int d = s.dm.safeDof(id, k);
+                if (d < 0 || d >= static_cast<int>(s.U.size())) continue;
+                const double v = s.U[d];
+                if (!seen) { mn = v; mx = v; seen = true; }
+                else { mn = std::min(mn, v); mx = std::max(mx, v); }
             }
+            if (!seen) { mn = 0.0; mx = 0.0; }
             out.push_back({id, k + 1, mn, mx});
         }
     }
@@ -590,11 +666,12 @@ inline std::vector<DisplacementEnvelope3D> compute3DDisplacementEnvelope(
 // 旧实现对每个加载位置都重新装配并重新分解一次总体矩阵，而 K 完全相同、
 // 只有右端项相差一个单位荷载。这里装配一次、分解一次，之后只做回代。
 template <class F>
-inline void scanLane3D(const Model3D& m, const Model3D::Lane3D& lane, F&& f) {
+inline void scanLane3D(const Model3D& m, const Model3D::Lane3D& lane, F&& f,
+                       SolverType type = SolverType::SimplicialLDLT) {
     Model3D bare = m;
     bare.loads.clear();                    // 影响线只反映单位荷载的增量
     const Assembled3D a = assembleModel3D(bare);
-    const Factorization3D fac(a.K);
+    const Factorization3D fac(a.K, type);
     const std::vector<double> Ubase = toStdVec(fac.solve(a.F));
 
     Eigen::VectorXd Fk(a.F.size());
@@ -874,12 +951,15 @@ inline std::vector<StageLiveEnvelope3D> compute3DStageLiveEnvelope(
 inline std::vector<Camber3D> compute3DCamber(const Model3D& m,
                                              const std::vector<StageResult3D>& stages) {
     if (stages.empty()) return {};
-    const DofMap3D dm = buildDofMap3D(m);
+    const DofMap3D& dm = stages.back().dm;   // 用最后一个阶段自己的映射
     const std::vector<double>& Ulast = stages.back().U;
     std::vector<Camber3D> out;
     for (const auto& [id, x] : m.nodes) {
-        for (int k = 0; k < dm.count(id); ++k)
-            out.push_back({id, k + 1, -Ulast[dm.dof(id, k)]});
+        for (int k = 0; k < dm.count(id); ++k) {
+            const int d = dm.safeDof(id, k);
+            out.push_back({id, k + 1, (d >= 0 && d < static_cast<int>(Ulast.size()))
+                                          ? -Ulast[d] : 0.0});
+        }
     }
     return out;
 }

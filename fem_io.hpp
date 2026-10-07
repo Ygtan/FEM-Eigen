@@ -161,6 +161,12 @@ struct Model2D {
     };
     std::vector<CreepSpec> creepSpecs;
 
+    // 徐变折减基准：单元 id -> **未折减**的初始弹性模量。
+    // 解析完成后由 snapshotBaseModulus() 自动填充。
+    // AEMM 的每次折减都从这张表重新计算（而不是就地 e.E *= factor），
+    // 因此处理徐变是幂等的、可重入的。
+    std::map<int, double> baseModulus;
+
     struct ShrinkageSpec {
         bool all = false;
         std::vector<int> elems;
@@ -280,6 +286,15 @@ struct Model2D {
     std::string analysisType = "LINEAR"; // "LINEAR"(方案A) 或 "NONLINEAR"(方案C)
     double nonlinearTol = 1e-6;          // 方案C Newton 相对收敛容差
     int nonlinearMaxIter = 50;           // 方案C Newton 最大迭代次数
+    // 荷载分级步数。1 = 不分級（与旧行为一致）；大位移/索松弛工况建议 4~10。
+    // 某一步不收敛时会自动细分步长重来。
+    int nonlinearLoadSteps = 1;
+    // 是否启用 dU 阻尼线搜索（残差不下降时把步长折半）。
+    // 正常情况下 α=1 直接被接受，结果与不启用时完全一致。
+    bool nonlinearLineSearch = true;
+    // 不收敛时是否抛异常。设为 false 则返回"部分成功"的结果，
+    // 由 ModelResult::nonlinearConverged 告知调用方未收敛。
+    bool nonlinearThrowOnFailure = true;
 };
 
 namespace detail {
@@ -1035,17 +1050,25 @@ inline void processPrestress(Model2D& m) {
     }
 }
 
-// 处理混凝土徐变与收缩（第一阶段：AEMM 龄期调整有效模量法）。
-inline void processTimeEffects(Model2D& m) {
-    for (const auto& cs : m.creepSpecs) {
-        const double factor = 1.0 / (1.0 + cs.chi * cs.phi);
-        for (auto& e : m.elements) {
-            if (isRigid(e.type)) continue;
-            if (!cs.all && std::find(cs.elems.begin(), cs.elems.end(), e.id) == cs.elems.end())
-                continue;
-            e.E *= factor;
-        }
-    }
+// 记录徐变折减基准（未折减的初始弹性模量）。
+// 必须在所有会新增单元的步骤（如 processPrestress 生成预应力筋）之后调用，
+// 这样新生成的钢束单元也有正确的基准值。
+inline void snapshotBaseModulus(Model2D& m) {
+    for (const auto& e : m.elements)
+        m.baseModulus[e.id] = e.E;
+}
+
+// 取单元的徐变折减基准模量；没有记录时退化为单元自身的 E。
+inline double baseModulusOf(const Model2D& m, const Model2D::Element& e) {
+    auto it = m.baseModulus.find(e.id);
+    return (it != m.baseModulus.end()) ? it->second : e.E;
+}
+
+// AEMM（龄期调整有效模量法）徐变折减系数。
+//   Eeff = E0 / (1 + chi * Δφ)，  Δφ = φ(t_now) - φ(t_load) >= 0
+inline double creepReductionFactor(double chi, double dphi) {
+    const double r = chi * std::max(0.0, dphi);
+    return 1.0 / (1.0 + r);
 }
 
 inline double interpolateTimeCurve(const Model2D::TimeCurve& curve, double time) {
@@ -1077,6 +1100,56 @@ inline double shrinkageStrainAt(const Model2D& m, double time) {
         return interpolateTimeCurve(m.shrinkageCurve, time);
     const double dt = std::max(0.0, time - m.shrinkageTs);
     return m.shrinkageEcsInf * std::pow(dt / (m.shrinkageAlphaDs + dt), m.shrinkagePower);
+}
+
+// 处理混凝土徐变的模量折减（AEMM 龄期调整有效模量法）。
+//
+// 与旧实现的三点关键区别：
+//   1) **可重入**：不再 `e.E *= factor` 就地累乘，而是每次都从 baseModulus
+//      （未折减基准）重新算一遍。重复调用同一阶段不会把模量折减两次。
+//   2) **多 spec 不再连乘**：同一单元命中多条 *CREEP 时，取折减最强的一条
+//      （max chi*Δφ），语义明确且与书写顺序无关。
+//   3) **逐阶段时效**：给出 now > 0 与 loadAge 时，按
+//      Δφ = φ(now) - φ(t_load) 折减；不同单元因加载龄期不同而得到不同的有效
+//      模量，这才是 AEMM 的核心特征。不给 now 时退化为旧的"直接给 phi"。
+//
+// 注意：本函数只改模量。收缩按等效温度应变在单元荷载向量里处理，不在这里。
+inline void processTimeEffects(Model2D& m,
+                               const std::map<int, double>* loadAge = nullptr,
+                               double now = 0.0) {
+    if (m.creepSpecs.empty()) return;
+    const bool useAge = (now > 0.0);
+
+    for (auto& e : m.elements) {
+        if (isRigid(e.type)) continue;
+
+        double bestChi = 0.0, bestDphi = 0.0;
+        bool hit = false;
+        for (const auto& cs : m.creepSpecs) {
+            if (!cs.all && std::find(cs.elems.begin(), cs.elems.end(), e.id) == cs.elems.end())
+                continue;
+            double dphi = cs.phi;
+            if (useAge) {
+                double t0 = 0.0;
+                if (loadAge) {
+                    auto it = loadAge->find(e.id);
+                    if (it != loadAge->end()) t0 = it->second;
+                }
+                // AEMM：只计加载龄期之后发展的那部分徐变
+                dphi = creepCoefficientAt(m, now) - creepCoefficientAt(m, t0);
+            }
+            const double red = cs.chi * std::max(0.0, dphi);
+            if (!hit || red > bestChi * bestDphi) {
+                bestChi = cs.chi;
+                bestDphi = std::max(0.0, dphi);
+                hit = true;
+            }
+        }
+        if (!hit) continue;
+
+        const double E0 = baseModulusOf(m, e);
+        e.E = E0 * creepReductionFactor(bestChi, bestDphi);
+    }
 }
 
 // 读取二维结构输入文件。
@@ -1183,10 +1256,37 @@ inline Model2D readModel2D(const std::string& path) {
                 if (it != p.end()) m.nonlinearTol = std::stod(it->second);
                 it = p.find("MAXITER");
                 if (it != p.end()) m.nonlinearMaxIter = std::stoi(it->second);
+                // STEPS：荷载分级步数（默认 1，即不分级）。
+                it = p.find("STEPS");
+                if (it != p.end()) m.nonlinearLoadSteps = std::stoi(it->second);
+                // LINESEARCH：ON/OFF，ΔU 阻尼回溯（默认 ON）。
+                it = p.find("LINESEARCH");
+                if (it != p.end()) {
+                    const std::string s = detail::toUpper(detail::trim(it->second));
+                    if (s == "ON" || s == "1" || s == "TRUE" || s == "YES")
+                        m.nonlinearLineSearch = true;
+                    else if (s == "OFF" || s == "0" || s == "FALSE" || s == "NO")
+                        m.nonlinearLineSearch = false;
+                    else
+                        throw std::runtime_error("*ANALYSIS LINESEARCH 只能为 ON 或 OFF");
+                }
+                // THROW：不收敛时是否抛异常（默认 ON）。OFF 则返回部分成功结果。
+                it = p.find("THROW");
+                if (it != p.end()) {
+                    const std::string s = detail::toUpper(detail::trim(it->second));
+                    if (s == "ON" || s == "1" || s == "TRUE" || s == "YES")
+                        m.nonlinearThrowOnFailure = true;
+                    else if (s == "OFF" || s == "0" || s == "FALSE" || s == "NO")
+                        m.nonlinearThrowOnFailure = false;
+                    else
+                        throw std::runtime_error("*ANALYSIS THROW 只能为 ON 或 OFF");
+                }
                 if (m.nonlinearTol <= 0.0)
                     throw std::runtime_error("*ANALYSIS TOL 必须大于 0");
                 if (m.nonlinearMaxIter < 1)
                     throw std::runtime_error("*ANALYSIS MAXITER 必须至少为 1");
+                if (m.nonlinearLoadSteps < 1)
+                    throw std::runtime_error("*ANALYSIS STEPS 必须至少为 1");
                 continue;
             }
 
@@ -1811,6 +1911,9 @@ inline Model2D readModel2D(const std::string& path) {
     if (m.nodes.empty())
         throw std::runtime_error("输入文件没有定义任何节点");
     processPrestress(m);
+    // 先记录未折减的基准模量，再做徐变折减。
+    // 之后每一次徐变处理都从这个基准重算，保证幂等。
+    snapshotBaseModulus(m);
     processTimeEffects(m);
     return m;
 }
@@ -1822,6 +1925,65 @@ struct ModelResult {
     std::vector<Eigen::Vector2d> coords; // 对应坐标
     int nonlinearIterations = 0;       // 方案C Newton 迭代次数（线性分析为 0）
     double nonlinearResidual = 0.0;    // 方案C 收敛时自由残差范数（线性分析为 0）
+    bool nonlinearConverged = true;    // 方案C 是否收敛（关闭 throwOnFailure 时可能为 false）
+};
+
+// ==================== 方案C Newton 的诊断信息 ====================
+//
+// 旧的失败信息只有一句"未收敛（迭代 50 次，最后残差=xxx）"，用户既不知道
+// 卡在哪个自由度、也不知道残差是发散还是在震荡、更拿不到部分成功的结果。
+// 这里把迭代过程的量记下来，失败时拼成可定位的诊断文本。
+struct NonlinearDiag {
+    int iterations = 0;              // 累计 Newton 迭代次数
+    int loadSteps = 0;               // 已完成的荷载分级步数
+    int lineSearchCuts = 0;          // 线搜索把步长折半的次数
+    int stepRefinements = 0;         // 荷载步因不收敛被细分的次数
+    double loadRatio = 0.0;          // 失败时已成功施加的荷载比例
+    double initialResidual = 0.0;
+    double lastResidual = 0.0;
+    double residualRef = 0.0;        // 收敛判据的参考量 tol*max(1,|Fext|)
+    std::vector<double> residualHistory;
+    int maxResidualNode = -1;        // 最后一步残差最大的节点号
+    int maxResidualDof = -1;         // 1..3
+    double maxResidualValue = 0.0;
+    // 条件数的廉价代理：max|Kii| / min|Kii|（自由自由度）。
+    // 真正的条件数估计要做极值特征值求解，代价太高，这里只用它做量级提示。
+    double diagCondEst = 0.0;
+    bool converged = false;
+    std::string failureReason;
+
+    std::string describe() const {
+        std::ostringstream os;
+        os << "方案C：Newton 迭代未收敛\n";
+        if (!failureReason.empty()) os << "  失败原因      : " << failureReason << "\n";
+        os << "  已施加荷载比例: " << std::fixed << std::setprecision(1)
+           << loadRatio * 100.0 << "%（分 " << loadSteps << " 步完成）\n";
+        os << "  累计迭代次数  : " << iterations << "\n";
+        os << "  残差          : 最后=" << std::scientific << std::setprecision(3)
+           << lastResidual << "，初始=" << initialResidual
+           << "，判据阈值=" << residualRef << "\n";
+        if (maxResidualNode >= 0)
+            os << "  残差最大自由度: 节点 " << maxResidualNode
+               << " dof " << maxResidualDof
+               << "（|r|=" << std::scientific << std::setprecision(3)
+               << maxResidualValue << "）\n";
+        if (diagCondEst > 0.0)
+            os << "  对角条件数估计: " << std::scientific << std::setprecision(3)
+               << diagCondEst << "（max|Kii|/min|Kii|，仅作量级参考）\n";
+        os << "  线搜索折减    : " << lineSearchCuts
+           << " 次；荷载步细分 " << stepRefinements << " 次\n";
+        if (!residualHistory.empty()) {
+            os << "  残差历史（最后 " << std::min<std::size_t>(10, residualHistory.size())
+               << " 步）: ";
+            const std::size_t from = residualHistory.size() > 10
+                                         ? residualHistory.size() - 10 : 0;
+            for (std::size_t i = from; i < residualHistory.size(); ++i)
+                os << std::scientific << std::setprecision(2)
+                   << residualHistory[i] << (i + 1 < residualHistory.size() ? " " : "");
+            os << "\n";
+        }
+        return os.str();
+    }
 };
 
 // ==================== CE 约束方程（罚函数法） ====================
@@ -1882,12 +2044,38 @@ inline DenseVec constraintPenaltyResidualForce(const Model2D& m,
     return Fce;
 }
 
+// 自动约束"无转动刚度的转角自由度"。
+// 二维统一按每节点 3 个自由度 [u, v, θ] 编号，但 TRUSS/CABLE/STRUT 只贡献
+// 平动刚度。纯桁架节点的 θ 对角元恒为 0，若不由用户显式约束，总体矩阵必然
+// 奇异，且报错信息对使用者很不友好。这里自动补零约束（等价于 ANSYS 等软件
+// 对未用自由度的处理），平移自由度仍然保持严格的零刚度检查。
+inline void autoConstrainFreeRotations(const SparseMat& K, int nDofs,
+                                       const std::vector<int>& baseCdofs,
+                                       const std::vector<double>& baseCvals,
+                                       std::vector<int>& cdofs,
+                                       std::vector<double>& cvals) {
+    cdofs = baseCdofs;
+    cvals = baseCvals;
+    std::vector<char> isC(nDofs, 0);
+    for (int d : cdofs) isC[d] = 1;
+    for (int d = 2; d < nDofs; d += 3) {   // 每节点的第 3 个自由度 = 转角 θ
+        if (isC[d]) continue;
+        if (K.coeff(d, d) == 0.0) {
+            cdofs.push_back(d);
+            cvals.push_back(0.0);
+            isC[d] = 1;
+        }
+    }
+}
+
 // 方案 C：几何非线性轴向单元 + 线性欧拉梁的 Newton-Raphson 求解。
 // 当前版本非线性部分覆盖 TRUSS/CABLE/STRUT；BEAM 仍使用线性切线。
 inline ModelResult solveModel2DNonlinear(const Model2D& m,
                                          SolverType type = SolverType::SimplicialLDLT,
                                          const DenseVec* U0 = nullptr,
-                                         const std::vector<char>* active0 = nullptr) {
+                                         const std::vector<char>* active0 = nullptr,
+                                         NonlinearDiag* diagOut = nullptr,
+                                         ReusableSolver* reuse = nullptr) {
     std::vector<int> ids;
     std::map<int, int> index;
     for (const auto& [id, c] : m.nodes) {
@@ -1931,6 +2119,16 @@ inline ModelResult solveModel2DNonlinear(const Model2D& m,
         return 1e-12 * std::max(1.0, std::abs(e.E * e.A));
     };
 
+    // 荷载分级比例：assembleState 只把**外荷载**乘以它。
+    // 1.0 = 全部荷载（默认，与旧行为一致）。
+    double loadScale = 1.0;
+
+    // 把指定位移"钉"回向量里。荷载分级/线搜索期间每一步都要保证约束成立。
+    auto applyPrescribed = [&](DenseVec& V) {
+        for (std::size_t i = 0; i < cdofs.size(); ++i)
+            V(cdofs[i]) = cvals[i];
+    };
+
     auto assembleState = [&](const std::vector<char>& act, const DenseVec& Ucur,
                              DenseVec& Fint, DenseVec& Fext,
                              std::vector<Eigen::Triplet<double>>* triplets) {
@@ -1938,11 +2136,11 @@ inline ModelResult solveModel2DNonlinear(const Model2D& m,
         Fext = DenseVec::Zero(nDofs);
         if (triplets) triplets->clear();
 
-        // 节点集中荷载始终施加。
+        // 节点集中荷载始终施加（按当前荷载分级比例缩放）。
         for (const auto& l : m.loads) {
             if (l.dof < 1 || l.dof > 3)
                 throw std::runtime_error("载荷自由度必须在 1~3 之间");
-            Fext(3 * index.at(l.node) + (l.dof - 1)) += l.value;
+            Fext(3 * index.at(l.node) + (l.dof - 1)) += loadScale * l.value;
         }
 
         for (std::size_t ei = 0; ei < m.elements.size(); ++ei) {
@@ -1957,7 +2155,8 @@ inline ModelResult solveModel2DNonlinear(const Model2D& m,
 
             if (isAxial(e.type)) {
                 const std::vector<int> g = elementGdofs2D(e.type, i1, i2);
-                const DenseVec fext = elementExternalEquivalentLoad(m, e, p1, p2);
+                DenseVec fext = elementExternalEquivalentLoad(m, e, p1, p2);
+                fext *= loadScale;
                 const DenseVec fint = axialInternalForceNonlinear(e, Ucur, i1, i2, p1, p2);
                 addElementLoad(g, fext, Fext);
                 addElementLoad(g, fint, Fint);
@@ -1982,7 +2181,8 @@ inline ModelResult solveModel2DNonlinear(const Model2D& m,
                       Ucur(3 * i2 + 0), Ucur(3 * i2 + 1), Ucur(3 * i2 + 2);
                 const DenseMat Ke = be.stiffness();
                 const DenseVec fint = Ke * ug;
-                const DenseVec fext = elementExternalEquivalentLoad(m, e, p1, p2);
+                DenseVec fext = elementExternalEquivalentLoad(m, e, p1, p2);
+                fext *= loadScale;
                 addElementLoad(g, fext, Fext);
                 addElementLoad(g, fint, Fint);
                 if (triplets) scatter(Ke, g, *triplets);
@@ -1993,92 +2193,243 @@ inline ModelResult solveModel2DNonlinear(const Model2D& m,
     };
 
     DenseVec Fint, Fext;
-    int finalIter = 0;
-    double finalResidual = 0.0;
-    bool converged = false;
-    const std::vector<double> zeroPrescribed(cdofs.size(), 0.0);
+    NonlinearDiag diag;
+    std::vector<double> zeroPrescribed(cdofs.size(), 0.0);
+    bool haveInitialResidual = false;
 
-    for (int iter = 0; iter <= maxIter; ++iter) {
-        std::vector<Eigen::Triplet<double>> triplets;
-        assembleState(active, U, Fint, Fext, &triplets);
+    // 给定构形与激活状态，返回自由自由度的残差范数（只组装内力/外力，不算切线）。
+    // 线搜索每一步都用它判断"这一步有没有让残差下降"。
+    auto residualNorm = [&](const std::vector<char>& act, const DenseVec& Ucur) -> double {
+        DenseVec fi, fe;
+        assembleState(act, Ucur, fi, fe, nullptr);
+        DenseVec rr = fe - fi;
         if (!m.ces.empty())
-            appendConstraintPenaltyTriplets(m, index, nDofs, m.cePenalty, triplets);
+            rr -= constraintPenaltyResidualForce(m, index, nDofs, m.cePenalty, Ucur);
+        double s = 0.0;
+        for (int d = 0; d < nDofs; ++d)
+            if (!isConstrained[d]) s += rr(d) * rr(d);
+        return std::sqrt(s);
+    };
 
-        SparseMat Kt(nDofs, nDofs);
-        Kt.setFromTriplets(triplets.begin(), triplets.end());
-        Kt.makeCompressed();
-
-        // 自由自由度残差范数，用于收敛判断。
-        DenseVec r = Fext - Fint;
-        if (!m.ces.empty())
-            r -= constraintPenaltyResidualForce(m, index, nDofs, m.cePenalty, U);
-        double rFree2 = 0.0, fFree2 = 0.0;
-        for (int d = 0; d < nDofs; ++d) {
-            if (isConstrained[d]) continue;
-            rFree2 += r(d) * r(d);
-            fFree2 += Fext(d) * Fext(d);
-        }
-        const double rFree = std::sqrt(rFree2);
-        const double fFree = std::sqrt(fFree2);
-        finalResidual = rFree;
-        // 自由 DOF 若没有刚度，直接给出可诊断错误。
-        for (int d = 0; d < nDofs; ++d) {
-            if (!isConstrained[d] && Kt.coeff(d, d) == 0.0) {
-                const int ni = d / 3;
-                const int ld = d % 3;
-                throw std::runtime_error(
-                    "方案C：存在零刚度自由度：节点 " + std::to_string(ids[ni]) +
-                    " dof " + std::to_string(ld + 1) +
-                    "（未约束且未被任何激活单元连接）");
-            }
-        }
-
-        // 求解增量：Kt·ΔU = Fext - Fint。
-        DenseVec rhs = r;
-        applyDirichlet(Kt, rhs, cdofs, zeroPrescribed);
-        const DenseVec dU = solve(Kt, rhs, type);
-        U += dU;
-
-        // 依据新构形更新 cable/strut 激活状态。
-        std::vector<char> newActive(m.elements.size(), 1);
+    // 依据当前构形更新 cable/strut 的单向激活状态。
+    auto updateActive = [&](const DenseVec& Ucur) -> std::vector<char> {
+        std::vector<char> na(m.elements.size(), 1);
         for (std::size_t ei = 0; ei < m.elements.size(); ++ei) {
             const auto& e = m.elements[ei];
             if (e.type != "CABLE" && e.type != "STRUT") continue;
             const int i1 = index.at(e.conn[0]);
             const int i2 = index.at(e.conn[1]);
-            const double N = axialForceNonlinear(e, U, i1, i2,
+            const double N = axialForceNonlinear(e, Ucur, i1, i2,
                                                  m.nodes.at(e.conn[0]),
                                                  m.nodes.at(e.conn[1]));
             const double atol = axialActiveTol(e);
-            newActive[ei] = (e.type == "CABLE") ? (N > atol) : (N < -atol);
+            na[ei] = (e.type == "CABLE") ? (N > atol) : (N < -atol);
         }
+        return na;
+    };
 
-        const bool statusChanged = (newActive != active);
-        active.swap(newActive);
+    // 线性路径已经会为"只连桁架的节点"自动约束多余转角自由度（P1-3 的二维版）。
+    // 非线性路径原先没有这一步，纯桁架/索模型必须先做一次装配才知道哪些 θ 没有刚度，
+    // 因此这里在初始构形上预装配一次，补上这些约束后再进入迭代。
+    {
+        std::vector<Eigen::Triplet<double>> trip0;
+        DenseVec fi0, fe0;
+        assembleState(active, U, fi0, fe0, &trip0);
+        if (!m.ces.empty())
+            appendConstraintPenaltyTriplets(m, index, nDofs, m.cePenalty, trip0);
+        SparseMat K0(nDofs, nDofs);
+        K0.setFromTriplets(trip0.begin(), trip0.end());
+        K0.makeCompressed();
 
-        const double duNorm = dU.norm();
-        const double uNorm = U.norm();
-        const bool duOk = duNorm <= tol * std::max(1.0, uNorm);
-        const bool resOk = rFree <= tol * std::max(1.0, fFree);
-        finalIter = iter + 1;
-
-        if (!statusChanged && duOk && resOk) {
-            converged = true;
-            break;
+        std::vector<int> cd2;
+        std::vector<double> cv2;
+        autoConstrainFreeRotations(K0, nDofs, cdofs, cvals, cd2, cv2);
+        if (cd2.size() != cdofs.size()) {
+            cdofs.swap(cd2);
+            cvals.swap(cv2);
+            isConstrained.assign(nDofs, 0);
+            for (int d : cdofs) isConstrained[d] = 1;
+            zeroPrescribed.assign(cdofs.size(), 0.0);
+            applyPrescribed(U);
         }
     }
 
-    if (!converged) {
-        throw std::runtime_error(
-            "方案C：Newton 迭代未收敛（迭代 " + std::to_string(maxIter) +
-            " 次，最后自由残差=" + std::to_string(finalResidual) + "）");
+    // ---- 外层：荷载分级；内层：Newton-Raphson ----
+    const int nSteps = std::max(1, m.nonlinearLoadSteps);
+    double lam = 0.0;                           // 已成功施加的荷载比例
+    double dlam = 1.0 / static_cast<double>(nSteps);
+    const double minLam = 1.0 / 4096.0;         // 再细分下去没有意义
+    const int maxLineSearch = 12;               // 步长最多折半 12 次
+
+    int finalIter = 0;
+    double finalResidual = 0.0;
+    bool converged = false;
+
+    while (lam < 1.0 - 1e-12) {
+        const double lamTarget = std::min(1.0, lam + dlam);
+        loadScale = lamTarget;
+
+        // 本步起点：不收敛时要回滚到它，再用更小的步长重来。
+        const DenseVec Usaved = U;
+        const std::vector<char> actSaved = active;
+
+        bool stepOk = false;
+        int stepIter = 0;
+
+        for (int iter = 0; iter <= maxIter; ++iter) {
+            std::vector<Eigen::Triplet<double>> triplets;
+            assembleState(active, U, Fint, Fext, &triplets);
+            if (!m.ces.empty())
+                appendConstraintPenaltyTriplets(m, index, nDofs, m.cePenalty, triplets);
+
+            SparseMat Kt(nDofs, nDofs);
+            Kt.setFromTriplets(triplets.begin(), triplets.end());
+            Kt.makeCompressed();
+
+            // 自由自由度残差范数，用于收敛判断。
+            DenseVec r = Fext - Fint;
+            if (!m.ces.empty())
+                r -= constraintPenaltyResidualForce(m, index, nDofs, m.cePenalty, U);
+            double rFree2 = 0.0, fFree2 = 0.0, rMaxAbs = 0.0;
+            int rMaxDof = -1;
+            double kDiagMax = 0.0;
+            double kDiagMin = std::numeric_limits<double>::infinity();
+            for (int d = 0; d < nDofs; ++d) {
+                if (isConstrained[d]) continue;
+                rFree2 += r(d) * r(d);
+                fFree2 += Fext(d) * Fext(d);
+                if (std::abs(r(d)) > rMaxAbs) { rMaxAbs = std::abs(r(d)); rMaxDof = d; }
+                const double kd = std::abs(Kt.coeff(d, d));
+                if (kd > kDiagMax) kDiagMax = kd;
+                if (kd < kDiagMin) kDiagMin = kd;
+            }
+            const double rFree = std::sqrt(rFree2);
+            const double fFree = std::sqrt(fFree2);
+            const double resRef = tol * std::max(1.0, fFree);
+            stepIter = iter + 1;
+
+            diag.residualHistory.push_back(rFree);
+            diag.lastResidual = rFree;
+            diag.residualRef = resRef;
+            if (!haveInitialResidual) { diag.initialResidual = rFree; haveInitialResidual = true; }
+            if (kDiagMin > 0.0) diag.diagCondEst = kDiagMax / kDiagMin;
+            if (rMaxDof >= 0) {
+                diag.maxResidualNode = ids[rMaxDof / 3];
+                diag.maxResidualDof = (rMaxDof % 3) + 1;
+                diag.maxResidualValue = rMaxAbs;
+            }
+
+            // 自由 DOF 若没有刚度，直接给出可诊断错误。
+            for (int d = 0; d < nDofs; ++d) {
+                if (!isConstrained[d] && Kt.coeff(d, d) == 0.0) {
+                    const int ni = d / 3;
+                    const int ld = d % 3;
+                    throw std::runtime_error(
+                        "方案C：存在零刚度自由度：节点 " + std::to_string(ids[ni]) +
+                        " dof " + std::to_string(ld + 1) +
+                        "（未约束且未被任何激活单元连接）");
+                }
+            }
+
+            // 残差判据：当前构形已平衡，无需再解增量。
+            if (rFree <= resRef) { stepOk = true; break; }
+
+            // 求解增量：Kt·ΔU = Fext - Fint。
+            // Newton 迭代中切线矩阵的**非零结构恒定**，只有数值在变，
+            // 因此符号分解只需做一次（reuse 由调用方在施工阶段/扫描间传递）。
+            DenseVec rhs = r;
+            applyDirichlet(Kt, rhs, cdofs, zeroPrescribed);
+            DenseVec dU;
+            if (reuse && reuse->reusable()) {
+                reuse->factorizeReuse(Kt);
+                dU = reuse->solve(rhs);
+            } else {
+                dU = solve(Kt, rhs, type);
+            }
+            if (!dU.allFinite()) {
+                diag.failureReason = "切线方程解出非有限增量 ΔU（矩阵奇异或严重病态）";
+                break;
+            }
+
+            // ---- 线搜索（backtracking）：α ∈ {1, 1/2, 1/4, ...} ----
+            // 索松弛、跳跃失稳时全步长 ΔU 会让残差不降反升甚至发散。
+            // 正常情况下 α=1 立刻被接受，结果与不启用线搜索时一致。
+            double alpha = 1.0;
+            DenseVec Ubest = U + dU;
+            applyPrescribed(Ubest);
+            double rBest = residualNorm(active, Ubest);
+            if (m.nonlinearLineSearch && !(rBest < rFree)) {
+                for (int ls = 0; ls < maxLineSearch; ++ls) {
+                    alpha *= 0.5;
+                    ++diag.lineSearchCuts;
+                    Ubest = U + alpha * dU;
+                    applyPrescribed(Ubest);
+                    rBest = residualNorm(active, Ubest);
+                    if (rBest < rFree) break;
+                }
+            }
+
+            U = Ubest;
+
+            // 依据新构形更新 cable/strut 激活状态。
+            std::vector<char> newActive = updateActive(U);
+            const bool statusChanged = (newActive != active);
+            active.swap(newActive);
+
+            const double duOk = (alpha * dU.norm()) <= tol * std::max(1.0, U.norm());
+            const bool resOk = rBest <= resRef;
+
+            // 发散检测：残差涨到初始值的 1e8 倍以上，再迭代没有意义。
+            if (!U.allFinite() ||
+                (diag.initialResidual > 0.0 && rBest > 1e8 * diag.initialResidual)) {
+                diag.failureReason = "残差发散（超过初始残差的 1e8 倍）";
+                break;
+            }
+
+            if (!statusChanged && duOk && resOk) { stepOk = true; break; }
+        }
+
+        finalIter += stepIter;
+
+        if (stepOk) {
+            lam = lamTarget;
+            ++diag.loadSteps;
+            continue;
+        }
+
+        // 本荷载步失败：回滚，步长减半重来（自适应荷载分级）。
+        U = Usaved;
+        active = actSaved;
+        if (diag.failureReason.empty())
+            diag.failureReason = "单个荷载步内达到最大迭代次数 " + std::to_string(maxIter);
+        dlam *= 0.5;
+        ++diag.stepRefinements;
+        if (dlam < minLam) break;
     }
 
-    // 用最终位移和最终激活状态重新组装一次，得到精确内力/反力。
+    converged = (lam >= 1.0 - 1e-12);
+    diag.iterations = finalIter;
+    diag.loadRatio = lam;
+    diag.converged = converged;
+
+    // 用最终位移和最终激活状态重新组装一次，得到精确内力/反力/残差。
+    loadScale = 1.0;
     assembleState(active, U, Fint, Fext, nullptr);
+    DenseVec rFinal = Fext - Fint;
+    if (!m.ces.empty())
+        rFinal -= constraintPenaltyResidualForce(m, index, nDofs, m.cePenalty, U);
+    double rf2 = 0.0;
+    for (int d = 0; d < nDofs; ++d)
+        if (!isConstrained[d]) rf2 += rFinal(d) * rFinal(d);
+    finalResidual = std::sqrt(rf2);
+    diag.lastResidual = finalResidual;
+
     DenseVec R = Fint - Fext; // 约束反力 = 内部节点力 - 外部节点力
     if (!m.ces.empty())
         R += constraintPenaltyResidualForce(m, index, nDofs, m.cePenalty, U);
+
+    if (!converged && m.nonlinearThrowOnFailure)
+        throw std::runtime_error(diag.describe());
 
     ModelResult result;
     result.U = U;
@@ -2088,6 +2439,8 @@ inline ModelResult solveModel2DNonlinear(const Model2D& m,
     for (int id : ids) result.coords.push_back(m.nodes.at(id));
     result.nonlinearIterations = finalIter;
     result.nonlinearResidual = finalResidual;
+    result.nonlinearConverged = converged;
+    if (diagOut) *diagOut = diag;
     return result;
 }
 
@@ -2156,30 +2509,6 @@ inline void assembleLinear2D(const Model2D& m,
     }
     if (!m.ces.empty())
         F += constraintPenaltyConstantForce(m, index, nDofs, m.cePenalty);
-}
-
-// 自动约束"无转动刚度的转角自由度"。
-// 二维统一按每节点 3 个自由度 [u, v, θ] 编号，但 TRUSS/CABLE/STRUT 只贡献
-// 平动刚度。纯桁架节点的 θ 对角元恒为 0，若不由用户显式约束，总体矩阵必然
-// 奇异，且报错信息对使用者很不友好。这里自动补零约束（等价于 ANSYS 等软件
-// 对未用自由度的处理），平移自由度仍然保持严格的零刚度检查。
-inline void autoConstrainFreeRotations(const SparseMat& K, int nDofs,
-                                       const std::vector<int>& baseCdofs,
-                                       const std::vector<double>& baseCvals,
-                                       std::vector<int>& cdofs,
-                                       std::vector<double>& cvals) {
-    cdofs = baseCdofs;
-    cvals = baseCvals;
-    std::vector<char> isC(nDofs, 0);
-    for (int d : cdofs) isC[d] = 1;
-    for (int d = 2; d < nDofs; d += 3) {   // 每节点的第 3 个自由度 = 转角 θ
-        if (isC[d]) continue;
-        if (K.coeff(d, d) == 0.0) {
-            cdofs.push_back(d);
-            cvals.push_back(0.0);
-            isC[d] = 1;
-        }
-    }
 }
 
 // 装配结果：影响线/车道扫描可复用同一份 K 的分解，避免逐位置重新装配+重新分解。
@@ -2252,9 +2581,11 @@ inline ModelResult makeResult2D(const Model2D& m, const Assembled2D& a,
 inline ModelResult solveModel2D(const Model2D& m,
                                 SolverType type = SolverType::SimplicialLDLT,
                                 const DenseVec* U0 = nullptr,
-                                const std::vector<char>* active0 = nullptr) {
+                                const std::vector<char>* active0 = nullptr,
+                                NonlinearDiag* diagOut = nullptr,
+                                ReusableSolver* reuse = nullptr) {
     if (m.analysisType == "NONLINEAR")
-        return solveModel2DNonlinear(m, type, U0, active0);
+        return solveModel2DNonlinear(m, type, U0, active0, diagOut, reuse);
 
     // 节点号 -> 0-based 索引（std::map 按键有序）。
     std::vector<int> ids;
@@ -2308,7 +2639,14 @@ inline ModelResult solveModel2D(const Model2D& m,
             }
         }
 
-        U = solve(K, F, type);
+        // 传入 reuse 时复用符号分解（结构不变则只做数值分解）。
+        // 施工阶段推进、影响线扫描这类"结构不变、只有数值变"的场景收益最直接。
+        if (reuse && reuse->reusable()) {
+            reuse->factorizeReuse(K);
+            U = reuse->solve(F);
+        } else {
+            U = solve(K, F, type);
+        }
 
         // 检查 cable/strut 的开关状态。
         bool changed = false;
@@ -2490,6 +2828,17 @@ inline std::vector<StageResult> solveModel2DStages(const Model2D& m,
     std::vector<StageResult> results;
     std::vector<char> active(m.elements.size(), 0);
     std::vector<Model2D::Element> workingElements = m.elements;
+
+    // 徐变折减基准：readModel2D 已填好；但程序化建模（不经文件解析）时是空的，
+    // 这里兜底补一次——否则 baseModulusOf 会退化成 e.E，
+    // 而 e.E 在上一阶段已被折减过，折减就会被逐级累乘（正是 P1-5 要修的 bug）。
+    std::map<int, double> baseE = m.baseModulus;
+    if (baseE.empty())
+        for (const auto& e : m.elements) baseE[e.id] = e.E;
+
+    // 各阶段的总体矩阵结构只在"单元激活/钝化"时才变，徐变折减与荷载变化都不改结构。
+    // 用可复用句柄把符号分解跨阶段保留下来（P1-7）。
+    ReusableSolver reuse(type);
     std::vector<Model2D::Load> cumulativeLoads;
     std::vector<Model2D::ElemLoad> cumulativeElemLoads;
     DenseVec prevU;
@@ -2499,6 +2848,10 @@ inline std::vector<StageResult> solveModel2DStages(const Model2D& m,
     std::map<int, double> prevM1, prevM2;
     std::vector<char> prevActive;
     bool hasPrevActive = false;
+    // 单元加载龄期（天）：单元被激活的那个阶段的龄期。
+    // 逐阶段 AEMM 用它算 Δφ = φ(t_now) - φ(t_load)。
+    // 未记录（例如阶段未给 TIME）的单元按 0 处理，即"从龄期 0 开始持荷"。
+    std::map<int, double> loadAge;
 
     for (const auto& st : stages) {
         for (int id : st.activate) {
@@ -2506,17 +2859,25 @@ inline std::vector<StageResult> solveModel2DStages(const Model2D& m,
             for (std::size_t ei = 0; ei < m.elements.size(); ++ei)
                 if (m.elements[ei].id == id) { active[ei] = 1; found = true; break; }
             if (!found) throw std::runtime_error("*STAGE 激活了不存在的单元: " + std::to_string(id));
+            // *STAGE 的 TIME 是"该阶段末的龄期"，单元在阶段开始时就安装并受力，
+            // 因此加载龄期取**上一阶段末**的龄期（首个阶段为 0）。
+            // 若误取 st.time，则"第 1 阶段 TIME=100"会得到 Δφ=φ(100)-φ(100)=0，
+            // 徐变被整个抹掉。
+            loadAge[id] = prevStageTime;
         }
         for (int id : st.deactivate) {
             bool found = false;
             for (std::size_t ei = 0; ei < m.elements.size(); ++ei)
                 if (m.elements[ei].id == id) { active[ei] = 0; found = true; break; }
             if (!found) throw std::runtime_error("*STAGE 钝化了不存在的单元: " + std::to_string(id));
+            // 钝化再激活视为重新加载，龄期重新起算。
+            loadAge.erase(id);
         }
 
         double creepDPhi = 0.0;
 
         Model2D mc = m;
+        mc.baseModulus = baseE;
         mc.elements.clear();
         for (std::size_t ei = 0; ei < m.elements.size(); ++ei)
             if (active[ei]) mc.elements.push_back(workingElements[ei]);
@@ -2542,6 +2903,8 @@ inline std::vector<StageResult> solveModel2DStages(const Model2D& m,
         mc.loads = cumulativeLoads;
         mc.elemLoads = cumulativeElemLoads;
         mc.prestresses = st.prestresses;
+        // 本阶段是否走"按时变曲线逐阶段 AEMM"路径。
+        bool creepByAge = false;
         if (st.time > 0.0 && (m.creepModel != "CURVE" || !m.creepCurve.points.empty())) {
             Model2D::CreepSpec cs;
             cs.all = true;
@@ -2550,9 +2913,10 @@ inline std::vector<StageResult> solveModel2DStages(const Model2D& m,
                                        ? creepCoefficientAt(m, prevStageTime)
                                        : 0.0;
             creepDPhi = (prevStageTime > 0.0) ? (phiNow - phiPrev) : phiNow;
-            cs.phi = phiNow;
+            cs.phi = phiNow;   // 仅作为无龄期信息时的兜底值
             cs.chi = 0.8;
             mc.creepSpecs = {cs};
+            creepByAge = true;
         } else {
             mc.creepSpecs = st.creepSpecs;
         }
@@ -2586,8 +2950,13 @@ inline std::vector<StageResult> solveModel2DStages(const Model2D& m,
         constraints.insert(constraints.end(), st.addedConstraints.begin(), st.addedConstraints.end());
         mc.constraints = constraints;
 
-        if (!mc.creepSpecs.empty() || !mc.shrinkageSpecs.empty())
-            processTimeEffects(mc);
+        // 徐变折减：逐阶段 AEMM。
+        // 关键：模量始终从 baseModulus 重算，而不是在上一阶段折减后的
+        // 基础上再乘一次 —— 旧实现那样做会让折减被逐级累乘
+        // （E0/((1+χφ1)(1+χφ2)…)，而不是 AEMM 的 E0/(1+χ(φ(t)-φ(t0)))）。
+        if (!mc.creepSpecs.empty())
+            processTimeEffects(mc, creepByAge ? &loadAge : nullptr,
+                               creepByAge ? st.time : 0.0);
 
         if (creepDPhi != 0.0 && !prevAxialForce.empty()) {
             for (const auto& e : mc.elements) {
@@ -2648,7 +3017,7 @@ inline std::vector<StageResult> solveModel2DStages(const Model2D& m,
 
         const DenseVec* U0 = (m.analysisType == "NONLINEAR" && hasPrevU) ? &prevU : nullptr;
         const std::vector<char>* A0 = (m.analysisType == "NONLINEAR" && hasPrevActive) ? &prevActive : nullptr;
-        const ModelResult r = solveModel2D(mc, type, U0, A0);
+        const ModelResult r = solveModel2D(mc, type, U0, A0, nullptr, &reuse);
         prevU = r.U;
         hasPrevU = true;
         StageResult sr;
@@ -2914,6 +3283,8 @@ inline std::vector<StageResult> solveModel2DStagesBackward(const Model2D& m,
     std::vector<char> prevActive;
     bool hasPrevActive = false;
     std::vector<StageResult> results;
+    // 同正装：结构不变时跨阶段复用符号分解（P1-7）。
+    ReusableSolver reuse(type);
 
     for (auto it = stages.rbegin(); it != stages.rend(); ++it) {
         const Model2D::Stage& st = *it;
@@ -2922,7 +3293,7 @@ inline std::vector<StageResult> solveModel2DStagesBackward(const Model2D& m,
 
         const DenseVec* U0 = (m.analysisType == "NONLINEAR" && hasPrevU) ? &prevU : nullptr;
         const std::vector<char>* A0 = (m.analysisType == "NONLINEAR" && hasPrevActive) ? &prevActive : nullptr;
-        const ModelResult r = solveModel2D(mc, type, U0, A0);
+        const ModelResult r = solveModel2D(mc, type, U0, A0, nullptr, &reuse);
         prevU = r.U;
         hasPrevU = true;
 
@@ -3267,14 +3638,13 @@ inline InfluenceCurve computeInfluenceCurve(const Model2D& m,
         // 之后每个位置只做一次三角回代（旧实现每个位置都重新装配+重新分解）。
         const Assembled2D a = assembleModel2DLinear(m);
 
-        Eigen::SimplicialLDLT<SparseMat> ldlt;
-        ldlt.compute(a.K);
-        if (ldlt.info() != Eigen::Success)
-            throw std::runtime_error("影响线：刚度矩阵分解失败");
+        // 旧实现在这里硬编码 SimplicialLDLT，直接无视调用方传入的 type，
+        // 于是 CHOLMOD 等后端在影响线扫描里根本用不上。改用可复用句柄：
+        // 既尊重 type，也把 analyze/factorize 分离的能力真正用起来。
+        ReusableSolver solver(type);
+        solver.factorizeReuse(a.K);
 
-        const DenseVec Ubase = ldlt.solve(a.F);
-        if (ldlt.info() != Eigen::Success)
-            throw std::runtime_error("影响线：基准工况求解失败");
+        const DenseVec Ubase = solver.solve(a.F);
         const ModelResult base = makeResult2D(m, a, Ubase, a.F0);
         const double baseValue = evaluateInfluenceResponse(m, base, spec);
 
@@ -3285,10 +3655,7 @@ inline InfluenceCurve computeInfluenceCurve(const Model2D& m,
             const int d = 3 * a.index.at(lane.nodes[k]) + (loadDof - 1);
             // 加载点若被约束，单位荷载由支座直接承担，对结构无影响。
             if (!a.isConstrained[d]) { F0k(d) += 1.0; Fk(d) += 1.0; }
-            const DenseVec U = ldlt.solve(Fk);
-            if (ldlt.info() != Eigen::Success)
-                throw std::runtime_error("影响线：第 " + std::to_string(k + 1) +
-                                         " 个加载位置求解失败");
+            const DenseVec U = solver.solve(Fk);
             const ModelResult r = makeResult2D(m, a, U, F0k);
             out.eta.push_back(evaluateInfluenceResponse(m, r, spec) - baseValue);
         }

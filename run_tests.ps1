@@ -19,7 +19,12 @@ $tests = @(
   @{ exe="example_3d_stage.exe"; args=@((Join-Path $root "verify_3d_stage.dat")) },
   @{ exe="example_3d_influence.exe"; args=@((Join-Path $root "verify_3d_influence.dat")) },
   @{ exe="example_3d_influence_surface.exe"; args=@((Join-Path $root "verify_3d_influence_surface.dat")) },
-  @{ exe="example_3d_grillage.exe"; args=@((Join-Path $root "bridge_3d_grillage.dat")) }
+  @{ exe="example_3d_grillage.exe"; args=@((Join-Path $root "bridge_3d_grillage.dat")) },
+  # 二维影响线：走"一次分解 + 多右端项"路径（P1-1 / P1-7），
+  # 这条路径原先硬编码 SimplicialLDLT，改动后必须回归
+  @{ exe="example_influence.exe"; args=@((Join-Path $root "verify_influence.dat")) },
+  # 三维梁包络：曾因阶段 U 与全模型自由度编号错配而越界 abort
+  @{ exe="example_3d_beam_envelope.exe"; args=@((Join-Path $root "verify_3d_beam_stage.dat")) }
 )
 
 $failed = 0
