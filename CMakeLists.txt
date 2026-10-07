@@ -5,6 +5,12 @@ project(FEM_Solver LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# 未指定构建类型时默认 Release（避免空优化级别导致性能骤降）。
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+    set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
+endif()
+
 # MinGW 下静态链接 C++/GCC 运行库，使示例 exe 不依赖 libstdc++-6.dll 等
 # 运行库 DLL，双击或复制到其它机器也能直接运行。
 if(MINGW)
@@ -32,41 +38,50 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/amgcl/amgcl/amg.hpp")
     message(STATUS "使用项目内自带的 AMGCL 头文件")
 endif()
 
-# ---- SuiteSparse CHOLMOD（可选，通过 MSYS2 pacman 安装）----
-# 注意：必须同时定位"头文件"与"库文件"。只 find_path 头文件会导致链接期
-# `cannot find -lcholmod`，因此这里由头文件路径推导库目录并逐个 find_library，
-# 任一库缺失即整体禁用 CHOLMOD，避免产生必然失败的链接目标。
+# ---- SuiteSparse CHOLMOD（可选，通过 MSYS2 pacman / vcpkg / apt 安装）----
+# 优先尝试 CMake CONFIG 模式（ SuiteSparse 5.4+ / vcpkg 提供），
+# 失败则回退到手动 find_path + find_library（支持 MSYS2 / MinGW 等）。
 option(FEM_USE_CHOLMOD "启用 SuiteSparse CHOLMOD 后端（未安装时自动禁用）" ON)
 
 set(FEM_CHOLMOD_READY FALSE)
 if(FEM_USE_CHOLMOD)
-    find_path(CHOLMOD_INCLUDE_DIR cholmod.h
-        PATHS "C:/msys64/mingw64/include/suitesparse" "C:/msys64/ucrt64/include/suitesparse")
-    if(CHOLMOD_INCLUDE_DIR)
-        # <prefix>/include/suitesparse  ->  <prefix>/lib
-        get_filename_component(_cholmod_inc_parent "${CHOLMOD_INCLUDE_DIR}" DIRECTORY)
-        get_filename_component(_cholmod_prefix "${_cholmod_inc_parent}" DIRECTORY)
-        set(_cholmod_lib_hints "${_cholmod_prefix}/lib")
-
-        set(FEM_CHOLMOD_LIBS "")
-        set(_cholmod_missing "")
-        foreach(_lib cholmod suitesparseconfig amd colamd camd ccolamd openblas)
-            find_library(CHOLMOD_LIB_${_lib} NAMES ${_lib} HINTS "${_cholmod_lib_hints}")
-            if(CHOLMOD_LIB_${_lib})
-                list(APPEND FEM_CHOLMOD_LIBS "${CHOLMOD_LIB_${_lib}}")
-            else()
-                list(APPEND _cholmod_missing "${_lib}")
-            endif()
-        endforeach()
-
-        if(_cholmod_missing)
-            message(STATUS "CHOLMOD: 缺少库 ${_cholmod_missing}，已禁用 CHOLMOD 后端")
-        else()
-            set(FEM_CHOLMOD_READY TRUE)
-            message(STATUS "找到 CHOLMOD: 头文件 ${CHOLMOD_INCLUDE_DIR}，库目录 ${_cholmod_lib_hints}")
-        endif()
+    # 尝试 1：CONFIG 模式（最干净，无硬编码路径）。
+    find_package(SuiteSparse CONFIG QUIET)
+    if(SuiteSparse_FOUND AND TARGET SuiteSparse::CHOLMOD)
+        set(FEM_CHOLMOD_READY TRUE)
+        set(FEM_CHOLMOD_CONFIG_MODE TRUE)
+        message(STATUS "找到 CHOLMOD：通过 SuiteSparse CONFIG（${SuiteSparse_DIR}）")
     else()
-        message(STATUS "未找到 CHOLMOD 头文件，已禁用 CHOLMOD 后端")
+        # 尝试 2：手动定位头文件 + 库文件。
+        # 保留 MSYS2 常用路径作为 HINTS（而非唯一的 PATHS），仍允许系统标准路径参与搜索。
+        find_path(CHOLMOD_INCLUDE_DIR cholmod.h
+            HINTS "C:/msys64/mingw64/include/suitesparse" "C:/msys64/ucrt64/include/suitesparse"
+                  "$ENV{SUITESPARSE_ROOT}/include/suitesparse")
+        if(CHOLMOD_INCLUDE_DIR)
+            get_filename_component(_cholmod_inc_parent "${CHOLMOD_INCLUDE_DIR}" DIRECTORY)
+            get_filename_component(_cholmod_prefix "${_cholmod_inc_parent}" DIRECTORY)
+            set(_cholmod_lib_hints "${_cholmod_prefix}/lib")
+
+            set(FEM_CHOLMOD_LIBS "")
+            set(_cholmod_missing "")
+            foreach(_lib cholmod suitesparseconfig amd colamd camd ccolamd openblas)
+                find_library(CHOLMOD_LIB_${_lib} NAMES ${_lib} HINTS "${_cholmod_lib_hints}")
+                if(CHOLMOD_LIB_${_lib})
+                    list(APPEND FEM_CHOLMOD_LIBS "${CHOLMOD_LIB_${_lib}}")
+                else()
+                    list(APPEND _cholmod_missing "${_lib}")
+                endif()
+            endforeach()
+
+            if(_cholmod_missing)
+                message(STATUS "CHOLMOD: 缺少库 ${_cholmod_missing}，已禁用 CHOLMOD 后端")
+            else()
+                set(FEM_CHOLMOD_READY TRUE)
+                message(STATUS "找到 CHOLMOD: 头文件 ${CHOLMOD_INCLUDE_DIR}，库目录 ${_cholmod_lib_hints}")
+            endif()
+        else()
+            message(STATUS "未找到 CHOLMOD 头文件，已禁用 CHOLMOD 后端")
+        endif()
     endif()
 endif()
 
@@ -85,9 +100,14 @@ function(fem_add_executable target source)
 endfunction()
 
 # 仅为真正使用 CHOLMOD 的目标链接 SuiteSparse（避免其它示例产生 DLL 依赖）。
-# 使用 find_library 得到的绝对路径，而不是裸 -l 名称。
+# CONFIG 模式下直接用 imported target；手动模式下使用绝对路径库。
 function(fem_link_cholmod target)
-    if(FEM_CHOLMOD_READY)
+    if(NOT FEM_CHOLMOD_READY)
+        return()
+    endif()
+    if(FEM_CHOLMOD_CONFIG_MODE)
+        target_link_libraries(${target} PRIVATE SuiteSparse::CHOLMOD)
+    else()
         target_include_directories(${target} PRIVATE "${CHOLMOD_INCLUDE_DIR}")
         target_link_libraries(${target} PRIVATE ${FEM_CHOLMOD_LIBS})
     endif()
@@ -142,3 +162,47 @@ fem_link_cholmod(example_stage_viz)
 fem_add_executable(example_stage_envelope example_stage_envelope.cpp)
 fem_link_cholmod(example_stage_envelope)
 fem_add_executable(example_viz example_viz.cpp)
+
+# ---- 安装与导出 ----
+# 把头文件组织为一个 INTERFACE 库，使外部项目可 `find_package(FEM_Solver)` 后
+# `target_link_libraries(myapp PRIVATE FEM_Solver::fem_core)`。
+add_library(fem_core INTERFACE)
+add_library(FEM_Solver::fem_core ALIAS fem_core)
+target_include_directories(fem_core INTERFACE
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+    $<INSTALL_INTERFACE:include/FEM_Solver>
+)
+if(TARGET Eigen3::Eigen)
+    target_link_libraries(fem_core INTERFACE Eigen3::Eigen)
+else()
+    # 安装场景下要求消费方自行提供 Eigen3；此处仅把 vendored 路径用于构建期示例。
+    target_include_directories(fem_core INTERFACE
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/external/eigen3>)
+endif()
+
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/
+    DESTINATION include/FEM_Solver
+    FILES_MATCHING PATTERN "*.hpp"
+)
+install(TARGETS fem_core
+    EXPORT FEM_SolverTargets
+)
+install(EXPORT FEM_SolverTargets
+    FILE FEM_SolverTargets.cmake
+    NAMESPACE FEM_Solver::
+    DESTINATION lib/cmake/FEM_Solver
+)
+include(CMakePackageConfigHelpers)
+write_basic_package_version_file(
+    "${CMAKE_CURRENT_BINARY_DIR}/FEM_SolverConfigVersion.cmake"
+    VERSION 1.0.0
+    COMPATIBILITY SameMajorVersion
+)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/FEM_SolverConfig.cmake"
+"include(\\\"\\\${CMAKE_CURRENT_LIST_DIR}/FEM_SolverTargets.cmake\\\")\n"
+)
+install(FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/FEM_SolverConfig.cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/FEM_SolverConfigVersion.cmake"
+    DESTINATION lib/cmake/FEM_Solver
+)

@@ -2647,6 +2647,7 @@ inline ModelResult solveModel2D(const Model2D& m,
         } else {
             U = solve(K, F, type);
         }
+        validateSolution(K, F, U, "二维求解");
 
         // 检查 cable/strut 的开关状态。
         bool changed = false;

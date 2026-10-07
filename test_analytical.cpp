@@ -158,9 +158,88 @@ void testCantileverUDL() {
           std::abs(elementForces2D(m, r.U).front().M1), q * L * L / 2.0);
 }
 
-// ---- 5. 轴力杆：δ = P L / (E A) ----
+// ---- 5. 梁端力符号约定（P2-6） ----
+// 注释约定：M1>0 表示"下侧受拉"；N1>0 表示"受拉"。
+// 这些约定一旦写反，输出"看起来合理"但物理意义全错，因此用解析解锁定。
+void testBeamSignConvention() {
+    std::printf("\n[5] 梁端力符号约定\n");
+
+    // 5a. 悬臂梁端部向下集中力：固定端为"上侧受拉"→ M1 应为负。
+    {
+        Model2D m = straightBeam(L, 1, E, A, I);
+        m.constraints.push_back({1, 1, 0.0});
+        m.constraints.push_back({1, 2, 0.0});
+        m.constraints.push_back({1, 3, 0.0});
+        m.loads.push_back({2, 2, -P});
+        const ModelResult r = solveModel2D(m);
+        const auto forces = elementForces2D(m, r.U);
+        const auto& f = forces.front();
+        // 固定端弯矩 = -P*L（上侧受拉，按约定应为负）
+        check("悬臂固定端 M1 = -PL（上侧受拉为负）", f.M1, -P * L);
+        // 剪力约定：V1/V2 均为"截面剪力向上作用于单元"为正。
+        // 悬臂常剪力 = P，因此两端均为 +P。
+        check("悬臂左端剪力 V1 = P",  f.V1, P);
+        check("悬臂右端剪力 V2 = P",  f.V2, P);
+        // 轴力为零
+        check("悬臂轴力 N1 = 0", f.N1, 0.0, 1e-12);
+    }
+
+    // 5b. 简支梁跨中向下集中力：跨中为"下侧受拉"→ M 应为正。
+    {
+        const int n = 2;
+        Model2D m = straightBeam(L, n, E, A, I);
+        m.constraints.push_back({1, 1, 0.0});
+        m.constraints.push_back({1, 2, 0.0});
+        m.constraints.push_back({n + 1, 2, 0.0});
+        m.loads.push_back({2, 2, -P});            // 节点 2 为跨中
+        const ModelResult r = solveModel2D(m);
+        const auto forces = elementForces2D(m, r.U);
+        // 单元 1（左半跨）：节点 2 端弯矩 M2 = +PL/4（下侧受拉）
+        check("简支左半跨 M2 = +PL/4（下侧受拉为正）", forces[0].M2, P * L / 4.0);
+        // 单元 2（右半跨）：节点 2 端弯矩 M1 = +PL/4
+        check("简支右半跨 M1 = +PL/4（下侧受拉为正）", forces[1].M1, P * L / 4.0);
+    }
+
+    // 5c. 轴力杆受拉：N1 = N2 = +F（拉力为正）。
+    {
+        Model2D m;
+        m.nodes[1] = Eigen::Vector2d(0.0, 0.0);
+        m.nodes[2] = Eigen::Vector2d(L, 0.0);
+        Model2D::Element el;
+        el.id = 1; el.type = "TRUSS"; el.E = E; el.A = A; el.conn = {1, 2};
+        m.elements.push_back(el);
+        m.constraints.push_back({1, 1, 0.0});
+        m.constraints.push_back({1, 2, 0.0});
+        m.constraints.push_back({2, 2, 0.0});
+        m.loads.push_back({2, 1, P});   // 节点 2 受向右拉力
+        const ModelResult r = solveModel2D(m);
+        const auto forces = elementForces2D(m, r.U);
+        check("桁架拉杆 N1 = +F（受拉为正）", forces.front().N1, P);
+        check("桁架拉杆 N2 = +F（受拉为正）", forces.front().N2, P);
+    }
+
+    // 5d. 轴力杆受压：N1 = N2 = -F（压力为负）。
+    {
+        Model2D m;
+        m.nodes[1] = Eigen::Vector2d(0.0, 0.0);
+        m.nodes[2] = Eigen::Vector2d(L, 0.0);
+        Model2D::Element el;
+        el.id = 1; el.type = "TRUSS"; el.E = E; el.A = A; el.conn = {1, 2};
+        m.elements.push_back(el);
+        m.constraints.push_back({1, 1, 0.0});
+        m.constraints.push_back({1, 2, 0.0});
+        m.constraints.push_back({2, 2, 0.0});
+        m.loads.push_back({2, 1, -P});  // 节点 2 受向左压力
+        const ModelResult r = solveModel2D(m);
+        const auto forces = elementForces2D(m, r.U);
+        check("桁架压杆 N1 = -F（受压为负）", forces.front().N1, -P);
+        check("桁架压杆 N2 = -F（受压为负）", forces.front().N2, -P);
+    }
+}
+
+// ---- 6. 轴力杆：δ = P L / (E A) ----
 void testAxialBar() {
-    std::printf("\n[5] 桁架杆 轴向拉伸\n");
+    std::printf("\n[6] 桁架杆 轴向拉伸\n");
     Model2D m;
     m.nodes[1] = Eigen::Vector2d(0.0, 0.0);
     m.nodes[2] = Eigen::Vector2d(L, 0.0);
@@ -182,7 +261,7 @@ void testAxialBar() {
 // ---- 6. 两跨连续梁（超静定）：中支座反力 = 5qL/8（每跨 q、跨度 L）----
 // 用于验证组装与约束处理在多跨体系下仍然正确。
 void testContinuousBeam() {
-    std::printf("\n[6] 两跨连续梁 均布荷载（超静定）\n");
+    std::printf("\n[7] 两跨连续梁 均布荷载（超静定）\n");
     const int nPerSpan = 4;
     const int n = 2 * nPerSpan;
     Model2D m = straightBeam(2.0 * L, n, E, A, I);
@@ -224,7 +303,7 @@ Model3D straightBeam3D(double Lb, int nElem, double Em, double Am, double Im) {
 
 // ---- 7. 三维悬臂梁端部集中力：δ = P L³ / (3 E Iz) ----
 void test3DCantilever() {
-    std::printf("\n[7] 三维悬臂梁 端部集中力\n");
+    std::printf("\n[8] 三维悬臂梁 端部集中力\n");
     const int n = 1;
     Model3D m = straightBeam3D(L, n, E, A, I);
     for (int d = 1; d <= 6; ++d) m.constraints.push_back({1, d, 0.0});
@@ -237,7 +316,7 @@ void test3DCantilever() {
 
 // ---- 8. 三维桁架杆：δ = P L / (E A) ----
 void test3DAxialBar() {
-    std::printf("\n[8] 三维桁架杆 轴向拉伸\n");
+    std::printf("\n[9] 三维桁架杆 轴向拉伸\n");
     Model3D m;
     m.nodes[1] = Vec3(0.0, 0.0, 0.0);
     m.nodes[2] = Vec3(L, 0.0, 0.0);
@@ -258,7 +337,7 @@ void test3DAxialBar() {
 // 旧实现的 Model3D 约束只有 (node, dof)，且求解时硬编码 F(d)=0，
 // 三维模型完全无法施加支座沉降。
 void test3DSupportSettlement() {
-    std::printf("\n[9] 三维 支座沉降（非零指定位移）\n");
+    std::printf("\n[10] 三维 支座沉降（非零指定位移）\n");
     const int n = 1;
     const double settle = -0.005;
     Model3D m = straightBeam3D(L, n, E, A, I);
@@ -277,7 +356,7 @@ void test3DSupportSettlement() {
 // 旧实现"存在一个 BEAM 就给所有节点 6 个自由度"，纯桁架节点的转动
 // 自由度恒为零刚度，总体矩阵奇异 —— 这个算例在旧实现下会直接报错。
 void test3DMixedBeamTruss() {
-    std::printf("\n[10] 三维 梁+桁架混合（按节点分配自由度）\n");
+    std::printf("\n[11] 三维 梁+桁架混合（按节点分配自由度）\n");
     const double Lb = 10.0, Lt = 10.0;
     Model3D m;
     m.nodes[1] = Vec3(0.0, 0.0, 0.0);
@@ -309,7 +388,7 @@ void test3DMixedBeamTruss() {
 // 旧实现的内层循环不使用 yn，同一条一维影响线被复制 N 遍。
 // 这里验证不同横向位置会得到不同的影响值。
 void test3DInfluenceSurfaceTransverse() {
-    std::printf("\n[11] 三维 影响面横向维度\n");
+    std::printf("\n[12] 三维 影响面横向维度\n");
     const char* cands[] = {"../verify_3d_influence_surface.dat",
                            "verify_3d_influence_surface.dat",
                            "../../verify_3d_influence_surface.dat"};
@@ -358,7 +437,7 @@ void test3DInfluenceSurfaceTransverse() {
 // 物理判据：加载龄期 0、徐变系数 φ 的梁，长期挠度 = 弹性挠度 × (1 + χφ)。
 // 这是 AEMM 的直接推论，也是最容易验错的一项。
 void testCreepAEMM() {
-    std::printf("\n[13] 徐变 AEMM（可重入 / 逐阶段 / 多 spec）\n");
+    std::printf("\n[14] 徐变 AEMM（可重入 / 逐阶段 / 多 spec）\n");
 
     const int n = 2;
     const double chi = 0.8;
@@ -508,7 +587,7 @@ void testCreepAEMM() {
 // 顶点竖向平衡：P = 2·N·(h-v)/L
 // 这是几何非线性的经典闭式解，用来锁住 Newton 内核。
 void testNonlinearTwoBarTruss() {
-    std::printf("\n[14] 非线性 两杆桁架（von Mises）+ 收敛保障\n");
+    std::printf("\n[15] 非线性 两杆桁架（von Mises）+ 收敛保障\n");
 
     const double b = 2.0;      // 半跨
     const double h = 0.5;      // 初始矢高（浅桁架 → 强几何非线性）
@@ -652,7 +731,7 @@ void testNonlinearTwoBarTruss() {
 // **数值**分解那一半；符号分解（AMD 排序 + 消去树）只有结构变化时才需要。
 // 这里用 analyze/factorize 计数把这件事钉死，防止以后改回 compute()。
 void testSolverReuse() {
-    std::printf("\n[15] 求解器复用（analyze 一次 / factorize 多次）\n");
+    std::printf("\n[16] 求解器复用（analyze 一次 / factorize 多次）\n");
 
     const int n = 4;
     Model2D m = straightBeam(L, n, E, A, I);
@@ -739,6 +818,7 @@ int main() {
         testCantileverPointLoad();
         testSimplySupportedUDL();
         testCantileverUDL();
+        testBeamSignConvention();
         testAxialBar();
         testContinuousBeam();
         test3DCantilever();

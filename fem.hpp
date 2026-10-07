@@ -377,56 +377,89 @@ inline DenseVec solveCHOLMOD(const SparseMat& K, const DenseVec& F) {
 }
 #endif
 
+// 前向声明：数值健全性校验（定义在 solveSPD 之后）。
+inline void validateSolution(const SparseMat& K, const DenseVec& F, const DenseVec& U,
+                             const char* context = "求解");
+
 // 通用求解接口：type 默认使用 SimplicialLDLT。
 inline DenseVec solve(const SparseMat& K, const DenseVec& F,
                       SolverType type = SolverType::SimplicialLDLT) {
+    DenseVec U;
     switch (type) {
         case SolverType::SimplicialLDLT: {
             Eigen::SimplicialLDLT<SparseMat> s;
-            return detail::runSolver(s, K, F);
+            U = detail::runSolver(s, K, F);
+            break;
         }
         case SolverType::SimplicialLLT: {
             Eigen::SimplicialLLT<SparseMat> s;
-            return detail::runSolver(s, K, F);
+            U = detail::runSolver(s, K, F);
+            break;
         }
         case SolverType::SparseLU: {
             Eigen::SparseLU<SparseMat> s;
-            return detail::runSolver(s, K, F);
+            U = detail::runSolver(s, K, F);
+            break;
         }
         case SolverType::SparseQR: {
             Eigen::SparseQR<SparseMat, Eigen::COLAMDOrdering<int>> s;
-            return detail::runSolver(s, K, F);
+            U = detail::runSolver(s, K, F);
+            break;
         }
         case SolverType::ConjugateGradient: {
             Eigen::ConjugateGradient<SparseMat, Eigen::Lower,
                                      Eigen::DiagonalPreconditioner<double>> s;
             detail::setIterativeDefaults(s, K);
-            return detail::runSolver(s, K, F);
+            U = detail::runSolver(s, K, F);
+            break;
         }
         case SolverType::BiCGSTAB: {
             Eigen::BiCGSTAB<SparseMat, Eigen::DiagonalPreconditioner<double>> s;
             detail::setIterativeDefaults(s, K);
-            return detail::runSolver(s, K, F);
+            U = detail::runSolver(s, K, F);
+            break;
         }
         case SolverType::AMGCL:
 #ifdef FEM_HAS_AMGCL
-            return solveAMGCL(K, F);
+            U = solveAMGCL(K, F);
+            break;
 #else
             throw std::runtime_error("AMGCL 后端未启用（缺少 AMGCL 头文件）");
 #endif
         case SolverType::CHOLMOD:
 #ifdef FEM_HAS_CHOLMOD
-            return solveCHOLMOD(K, F);
+            U = solveCHOLMOD(K, F);
+            break;
 #else
             throw std::runtime_error("CHOLMOD 后端未启用（缺少 SuiteSparse 头文件）");
 #endif
+        default:
+            throw std::runtime_error("未知的求解器类型");
     }
-    throw std::runtime_error("未知的求解器类型");
+    validateSolution(K, F, U, "求解");
+    return U;
 }
 
 // 向后兼容：默认仍使用 SimplicialLDLT。
 inline DenseVec solveSPD(const SparseMat& K, const DenseVec& F) {
     return solve(K, F, SolverType::SimplicialLDLT);
+}
+
+// 数值健全性校验：NaN/Inf + 相对残差两级阈值。
+// 相对残差 >1e-3 视为求解失败（矩阵奇异或约束不足）；
+// >1e-6 仅警告（细长梁链等病态模型本身就会到这个量级）。
+inline void validateSolution(const SparseMat& K, const DenseVec& F, const DenseVec& U,
+                             const char* context) {
+    if (!U.allFinite())
+        throw std::runtime_error(std::string(context) + "失败：结果含 NaN/Inf，矩阵可能奇异或约束不足");
+    const double fNorm = std::max(1.0, F.norm());
+    const double rel = (K * U - F).norm() / fNorm;
+    if (rel > 1e-3)
+        throw std::runtime_error(std::string(context) + "：相对残差过大 (" + std::to_string(rel) +
+                                 ")，矩阵可能奇异或约束不足");
+    if (rel > 1e-6)
+        std::cerr << "[警告] " << context << "相对残差 " << rel
+                  << "：模型可能病态（细长梁单元过多或刚度比悬殊）\n";
 }
 
 // ==================== 可复用的求解器句柄 ====================
