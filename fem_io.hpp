@@ -5,12 +5,15 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdint>
 #include <fstream>
 #include <iomanip>
 #include <limits>
 #include <map>
 #include <sstream>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -885,16 +888,25 @@ inline DenseVec elementExternalEquivalentLoad(const Model2D& m, const Model2D::E
 inline void processPrestress(Model2D& m) {
     if (m.prestresses.empty()) return;
 
+    // 预建单元索引，避免 getElem 的 O(n) 线性扫描。
+    std::unordered_map<int, Model2D::Element*> elemById;
+    elemById.reserve(m.elements.size() * 2);
+    for (auto& e : m.elements) elemById[e.id] = &e;
+
+    // 预建约束索引，避免 isConstrained 的 O(n_bc) 线性扫描。
+    std::unordered_set<std::uint64_t> constrainedSet;
+    constrainedSet.reserve(m.constraints.size() * 2);
+    for (const auto& c : m.constraints)
+        constrainedSet.insert(static_cast<std::uint64_t>(c.node) * 10ull + static_cast<std::uint64_t>(c.dof));
+
     auto getElem = [&](int id) -> Model2D::Element* {
-        for (auto& e : m.elements)
-            if (e.id == id) return &e;
-        return nullptr;
+        auto it = elemById.find(id);
+        return (it != elemById.end()) ? it->second : nullptr;
     };
 
-    auto isConstrained = [&](int node, int dof) {
-        for (const auto& c : m.constraints)
-            if (c.node == node && c.dof == dof) return true;
-        return false;
+    auto isConstrained = [&](int node, int dof) -> bool {
+        return constrainedSet.find(static_cast<std::uint64_t>(node) * 10ull + static_cast<std::uint64_t>(dof))
+               != constrainedSet.end();
     };
 
     int nextNode = 0, nextElem = 0, nextType = 0, nextMat = 0, nextReal = 0;
