@@ -407,9 +407,11 @@ inline Assembled3D assembleModel3D(const Model3D& m) {
                         trips.emplace_back(g[r], g[c], Ke(r, c));
         } else {
             const auto Ke = truss3DStiffness(Eeff, e.A, m.nodes.at(e.n1), m.nodes.at(e.n2));
+            const double scale = std::max(1.0, Ke.cwiseAbs().maxCoeff());
             for (int r = 0; r < 6; ++r)
                 for (int c = 0; c < 6; ++c)
-                    if (Ke(r, c) != 0.0) trips.emplace_back(g[r], g[c], Ke(r, c));
+                    if (std::abs(Ke(r, c)) > 1e-12 * scale)
+                        trips.emplace_back(g[r], g[c], Ke(r, c));
         }
     }
 

@@ -86,9 +86,14 @@ inline std::vector<int> nodeDofs(const std::vector<int>& nodes, int dofsPerNode)
 inline void scatter(const DenseMat& Ke, const std::vector<int>& gdofs,
                     std::vector<Eigen::Triplet<double>>& triplets) {
     assert(static_cast<int>(gdofs.size()) == Ke.rows());
+    double maxAbs = 0.0;
     for (int i = 0; i < Ke.rows(); ++i)
         for (int j = 0; j < Ke.cols(); ++j)
-            if (Ke(i, j) != 0.0)
+            maxAbs = std::max(maxAbs, std::abs(Ke(i, j)));
+    const double eps = 1e-12 * std::max(1.0, maxAbs);
+    for (int i = 0; i < Ke.rows(); ++i)
+        for (int j = 0; j < Ke.cols(); ++j)
+            if (std::abs(Ke(i, j)) > eps)
                 triplets.emplace_back(gdofs[i], gdofs[j], Ke(i, j));
 }
 
