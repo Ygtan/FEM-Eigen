@@ -117,32 +117,31 @@ inline void applyDirichlet(SparseMat& K, DenseVec& F,
     assert(constrainedDofs.size() == prescribedValues.size());
     const int n = static_cast<int>(K.rows());
     std::vector<char> isConstrained(n, 0);
-    for (int d : constrainedDofs) isConstrained[d] = 1;
+    std::vector<double> val(n, 0.0);
+    for (std::size_t i = 0; i < constrainedDofs.size(); ++i) {
+        isConstrained[constrainedDofs[i]] = 1;
+        val[constrainedDofs[i]] = prescribedValues[i];
+    }
 
-    // 1) 把被约束自由度所在列的已知贡献移到右端。
-    for (std::size_t idx = 0; idx < constrainedDofs.size(); ++idx) {
-        const int d = constrainedDofs[idx];
-        const double g = prescribedValues[idx];
-        for (int col = 0; col < K.outerSize(); ++col) {
-            for (SparseMat::InnerIterator it(K, col); it; ++it) {
-                if (it.col() == d && it.row() != d)
-                    F(it.row()) -= it.value() * g;
+    // 单次遍历矩阵非零元：
+    // - 若列被约束且行自由 → 把列贡献移到右端；
+    // - 若行或列被约束 → 清零该非零元。
+    for (int col = 0; col < K.outerSize(); ++col) {
+        for (SparseMat::InnerIterator it(K, col); it; ++it) {
+            const int r = it.row();
+            const int c = it.col();
+            if (isConstrained[r] || isConstrained[c]) {
+                if (!isConstrained[r] && isConstrained[c])
+                    F(r) -= it.value() * val[c];
+                it.valueRef() = 0.0;
             }
         }
     }
 
-    // 2) 清零被约束自由度所在的行与列（保持对称性）。
-    for (int col = 0; col < K.outerSize(); ++col) {
-        for (SparseMat::InnerIterator it(K, col); it; ++it) {
-            if (isConstrained[it.row()] || isConstrained[it.col()])
-                it.valueRef() = 0.0;
-        }
-    }
-
-    // 3) 对角线置 1，右端置为指定位移。
-    for (std::size_t idx = 0; idx < constrainedDofs.size(); ++idx) {
-        K.coeffRef(constrainedDofs[idx], constrainedDofs[idx]) = 1.0;
-        F(constrainedDofs[idx]) = prescribedValues[idx];
+    // 对角线置 1，右端置为指定位移。
+    for (int d : constrainedDofs) {
+        K.coeffRef(d, d) = 1.0;
+        F(d) = val[d];
     }
 }
 
