@@ -1,13 +1,20 @@
 #pragma once
 
+// 复用 fem.hpp 中的稀疏求解器与 Dirichlet 处理（applyDirichlet / solve）。
+#include "fem.hpp"
+
 #include <Eigen/Dense>
 #include <Eigen/Sparse>
 
-#include <map>
 #include <algorithm>
+#include <cmath>
 #include <fstream>
+#include <functional>
+#include <map>
 #include <sstream>
+#include <stdexcept>
 #include <string>
+#include <tuple>
 #include <vector>
 
 namespace fem {
@@ -92,11 +99,21 @@ struct Element3D {
     int n1 = 0, n2 = 0;
 };
 
+// 三维约束：节点 + 自由度(1~6) + 指定位移值。
+// value 默认 0；非零即支座沉降 / 强制位移。
+// （旧实现只有 (node, dof) 两个字段，且求解时硬编码 F(d)=0，
+//  三维模型完全无法计算支座沉降工况。）
+struct Constraint3D {
+    int node = 0;
+    int dof = 1;
+    double value = 0.0;
+};
+
 struct Model3D {
     std::map<int, Vec3> nodes;
     std::vector<Element3D> elements;
-    std::vector<std::pair<int, int>> constraints; // node, dof 1..3
-    std::vector<std::tuple<int, int, double>> loads;
+    std::vector<Constraint3D> constraints;
+    std::vector<std::tuple<int, int, double>> loads; // node, dof, value
 
     struct Stage3D {
         int id = 0;
@@ -143,39 +160,323 @@ struct Model3D {
     LaneSurface3D laneSurface;
 };
 
+// ==================== 自由度映射 ====================
+//
+// 按节点分配自由度数：
+//   - 与 BEAM 单元相连的节点：6 个自由度 [u,v,w,θx,θy,θz]
+//   - 仅由轴向单元（TRUSS/CABLE/STRUT）连接的节点：3 个平动自由度
+//
+// 旧实现用"只要存在一个 BEAM 就给所有节点 6 个自由度"的一刀切方式，
+// 会让纯桁架节点产生恒为零的转动自由度行/列，导致总体矩阵奇异。
+struct DofMap3D {
+    std::map<int, int> index;   // 节点号 -> 节点序号
+    std::vector<int> nodeIds;   // 节点序号 -> 节点号
+    std::vector<int> dofStart;  // 节点序号 -> 起始全局自由度编号
+    std::vector<int> dofCount;  // 节点序号 -> 该节点自由度数（3 或 6）
+    int nDofs = 0;
+
+    int count(int node) const { return dofCount[index.at(node)]; }
+
+    // 节点 node 的第 local 个自由度（0-based）的全局编号。
+    int dof(int node, int local) const { return dofStart[index.at(node)] + local; }
+
+    // 越界时返回 -1（例如纯轴向节点没有转动自由度）。
+    int safeDof(int node, int local) const {
+        const auto it = index.find(node);
+        if (it == index.end()) return -1;
+        return (local >= 0 && local < dofCount[it->second])
+                   ? dofStart[it->second] + local
+                   : -1;
+    }
+};
+
+inline DofMap3D buildDofMap3D(const Model3D& m) {
+    DofMap3D dm;
+    std::map<int, int> need;
+    for (const auto& [id, x] : m.nodes) need[id] = 3;
+    for (const auto& e : m.elements) {
+        if (e.type != "BEAM") continue;
+        if (m.nodes.count(e.n1)) need[e.n1] = 6;
+        if (m.nodes.count(e.n2)) need[e.n2] = 6;
+    }
+    int start = 0;
+    for (const auto& [id, x] : m.nodes) {
+        dm.index[id] = static_cast<int>(dm.nodeIds.size());
+        dm.nodeIds.push_back(id);
+        dm.dofStart.push_back(start);
+        dm.dofCount.push_back(need[id]);
+        start += need[id];
+    }
+    dm.nDofs = start;
+    return dm;
+}
+
+// 单元全局自由度编号：梁 12 个，轴向单元 6 个（各取前 3 个平动自由度）。
+inline std::vector<int> elementGdofs3D(const DofMap3D& dm, const Element3D& e) {
+    std::vector<int> g;
+    if (e.type == "BEAM") {
+        g.resize(12);
+        for (int k = 0; k < 6; ++k) {
+            g[k]     = dm.dof(e.n1, k);
+            g[6 + k] = dm.dof(e.n2, k);
+        }
+    } else {
+        g.resize(6);
+        for (int k = 0; k < 3; ++k) {
+            g[k]     = dm.dof(e.n1, k);
+            g[3 + k] = dm.dof(e.n2, k);
+        }
+    }
+    return g;
+}
+
+inline std::vector<double> toStdVec(const Eigen::VectorXd& v) {
+    return std::vector<double>(v.data(), v.data() + v.size());
+}
+
+// ==================== 装配与求解 ====================
+
+// 三维线性系统的装配结果。影响线/影响面扫描可复用同一份 K 的分解。
+struct Assembled3D {
+    DofMap3D dm;
+    SparseMat3D K0;                 // 未施加约束（可用于反力 K0*U - F0）
+    Eigen::VectorXd F0;
+    SparseMat3D K;                  // 已施加 Dirichlet，可直接分解
+    Eigen::VectorXd F;              // 已施加 Dirichlet
+    std::vector<int> cdofs;
+    std::vector<double> cvals;
+    std::vector<char> isConstrained;
+};
+
+// 稀疏直接法求解。首选 SimplicialLDLT（对称正定），失败时回退 SparseLU。
+// 旧实现把稀疏矩阵转成 Eigen::MatrixXd 后用 FullPivLU 稠密求解，
+// 内存 O(n²)、时间 O(n³)：6000 自由度需 288 MB，是三维分析的规模天花板。
+inline Eigen::VectorXd solveSparse3D(const SparseMat3D& K, const Eigen::VectorXd& F) {
+    const double fNorm = std::max(1.0, F.norm());
+
+    Eigen::VectorXd U;
+    Eigen::SimplicialLDLT<SparseMat3D> ldlt;
+    ldlt.compute(K);
+    if (ldlt.info() == Eigen::Success) {
+        U = ldlt.solve(F);
+        if (ldlt.info() != Eigen::Success || !U.allFinite()) U.resize(0);
+    }
+    if (U.size() == 0) {
+        Eigen::SparseLU<SparseMat3D, Eigen::COLAMDOrdering<int>> lu;
+        lu.compute(K);
+        if (lu.info() != Eigen::Success)
+            throw std::runtime_error("三维求解失败：矩阵奇异，请检查约束是否充分");
+        U = lu.solve(F);
+        if (lu.info() != Eigen::Success || !U.allFinite())
+            throw std::runtime_error("三维求解失败：矩阵奇异，请检查约束是否充分");
+    }
+
+    // 残差分两级：明显错误直接抛异常；中等残差只警告——
+    // 细长梁单元链的条件数按 ~N⁴ 增长，残差 1e-5 量级属于模型本身病态，
+    // 并不是求解错误，不应因此中断计算。
+    const double rel = (K * U - F).norm() / fNorm;
+    if (rel > 1e-3)
+        throw std::runtime_error("三维求解：相对残差过大 (" + std::to_string(rel) +
+                                 ")，矩阵可能奇异或约束不足");
+    if (rel > 1e-6)
+        std::cerr << "[警告] 三维求解相对残差 " << rel
+                  << "：模型可能病态（细长梁单元过多或刚度比悬殊）\n";
+    return U;
+}
+
+// 可复用的稀疏分解：一次 compute()，多次 solve()。
+class Factorization3D {
+public:
+    explicit Factorization3D(const SparseMat3D& K) { compute(K); }
+
+    void compute(const SparseMat3D& K) {
+        n_ = static_cast<int>(K.rows());
+        ldlt_.compute(K);
+        useLu_ =false;
+        if (ldlt_.info() != Eigen::Success) {
+            useLu_ = true;
+            lu_.compute(K);
+            ok_ = (lu_.info() == Eigen::Success);
+        } else {
+            ok_ = true;
+        }
+    }
+
+    Eigen::VectorXd solve(const Eigen::VectorXd& b) const {
+        if (!ok_) throw std::runtime_error("三维求解：矩阵分解失败");
+        // 两种分解的 solve() 返回不同的表达式类型，不能放在同一个 ?: 里。
+        Eigen::VectorXd x;
+        if (useLu_) x = lu_.solve(b);
+        else        x = ldlt_.solve(b);
+        if (!x.allFinite())
+            throw std::runtime_error("三维求解失败：结果含 NaN/Inf，矩阵可能奇异");
+        return x;
+    }
+
+    // 多右端项：B 的每一列一个右端项，返回同尺寸解矩阵。
+    Eigen::MatrixXd solveMulti(const Eigen::MatrixXd& B) const {
+        Eigen::MatrixXd X(n_, B.cols());
+        for (int c = 0; c < static_cast<int>(B.cols()); ++c)
+            X.col(c) = solve(Eigen::VectorXd(B.col(c)));
+        return X;
+    }
+
+private:
+    Eigen::SimplicialLDLT<SparseMat3D> ldlt_;
+    Eigen::SparseLU<SparseMat3D, Eigen::COLAMDOrdering<int>> lu_;
+    bool useLu_ = false;
+    bool ok_ = false;
+    int n_ = 0;
+};
+
+inline Assembled3D assembleModel3D(const Model3D& m) {
+    Assembled3D a;
+    a.dm = buildDofMap3D(m);
+    const int nd = a.dm.nDofs;
+
+    std::vector<Eigen::Triplet<double>> trips;
+    for (const auto& e : m.elements) {
+        if (!m.nodes.count(e.n1) || !m.nodes.count(e.n2))
+            throw std::runtime_error("单元 " + std::to_string(e.id) + " 引用了不存在的节点");
+        const double Eeff = e.E / (1.0 + m.creepChi * m.creepPhi);
+        const std::vector<int> g = elementGdofs3D(a.dm, e);
+
+        if (e.type == "BEAM") {
+            const Vec3 p1 = m.nodes.at(e.n1), p2 = m.nodes.at(e.n2);
+            const double L = (p2 - p1).norm();
+            const auto Kl = beam3DLocalStiffness(Eeff, e.A, e.Iy, e.Iz, e.J, e.G, L);
+            const auto T = beam3DTransformation(p1, p2);
+            const auto Ke = T.transpose() * Kl * T;
+            // 坐标变换会引入 1e-17 量级的数值噪声，按相对阈值过滤以控制 nnz。
+            const double scale = std::max(1.0, Ke.cwiseAbs().maxCoeff());
+            for (int r = 0; r < 12; ++r)
+                for (int c = 0; c < 12; ++c)
+                    if (std::abs(Ke(r, c)) > 1e-12 * scale)
+                        trips.emplace_back(g[r], g[c], Ke(r, c));
+        } else {
+            const auto Ke = truss3DStiffness(Eeff, e.A, m.nodes.at(e.n1), m.nodes.at(e.n2));
+            for (int r = 0; r < 6; ++r)
+                for (int c = 0; c < 6; ++c)
+                    if (Ke(r, c) != 0.0) trips.emplace_back(g[r], g[c], Ke(r, c));
+        }
+    }
+
+    SparseMat3D K(nd, nd);
+    K.setFromTriplets(trips.begin(), trips.end());
+    K.makeCompressed();
+    a.K0 = K;
+
+    Eigen::VectorXd F = Eigen::VectorXd::Zero(nd);
+    for (const auto& [node, dof, val] : m.loads) {
+        const int d = a.dm.safeDof(node, dof - 1);
+        if (d >= 0) F(d) += val;
+    }
+
+    // 初应变 / 收缩等效节点荷载
+    for (const auto& e : m.elements) {
+        if (e.istrn == 0.0 && m.shrinkageEcs == 0.0) continue;
+        const Vec3 d = m.nodes.at(e.n2) - m.nodes.at(e.n1);
+        const double L = std::max(d.norm(), 1e-12);
+        const Vec3 c = d / L;
+        const double Eeff = e.E / (1.0 + m.creepChi * m.creepPhi);
+        const double P = Eeff * e.A * (e.istrn - m.shrinkageEcs);
+        for (int k = 0; k < 3; ++k) {
+            const int d1 = a.dm.safeDof(e.n1, k);
+            const int d2 = a.dm.safeDof(e.n2, k);
+            if (d1 >= 0) F(d1) += P * c(k);
+            if (d2 >= 0) F(d2) -= P * c(k);
+        }
+    }
+    a.F0 = F;
+
+    // 约束：支持非零指定位移（支座沉降）。
+    a.isConstrained.assign(nd, 0);
+    for (const auto& c : m.constraints) {
+        const int d = a.dm.safeDof(c.node, c.dof - 1);
+        if (d < 0) continue;   // 纯轴向节点没有该转动自由度，约束无意义
+        a.isConstrained[d] = 1;
+        const auto it = std::find(a.cdofs.begin(), a.cdofs.end(), d);
+        if (it == a.cdofs.end()) {
+            a.cdofs.push_back(d);
+            a.cvals.push_back(c.value);
+        } else {
+            a.cvals[std::distance(a.cdofs.begin(), it)] = c.value;
+        }
+    }
+
+    // 诊断：未约束且未被任何单元连接的自由度（零对角线）。
+    for (int d = 0; d < nd; ++d) {
+        if (a.isConstrained[d]) continue;
+        if (K.coeff(d, d) == 0.0) {
+            int owner = -1;
+            for (std::size_t i = 0; i < a.dm.nodeIds.size(); ++i) {
+                if (d >= a.dm.dofStart[i] && d < a.dm.dofStart[i] + a.dm.dofCount[i]) {
+                    owner = a.dm.nodeIds[i];
+                    break;
+                }
+            }
+            throw std::runtime_error(
+                "三维求解：零刚度自由度——节点 " + std::to_string(owner) +
+                " 的第 " + std::to_string(d - a.dm.dofStart[a.dm.index.at(owner)] + 1) +
+                " 个自由度未约束且未被任何单元连接");
+        }
+    }
+
+    a.K = K;
+    a.F = F;
+    applyDirichlet(a.K, a.F, a.cdofs, a.cvals);
+    return a;
+}
+
+inline std::vector<double> solveModel3D(const Model3D& m) {
+    const Assembled3D a = assembleModel3D(m);
+    return toStdVec(solveSparse3D(a.K, a.F));
+}
+
+// ==================== 施工阶段 ====================
+
 struct StageResult3D {
     int stage = 0;
     std::vector<double> U;
 };
+
+// 给未参与任何激活单元的节点补齐约束（否则这些节点自由度零刚度）。
+inline void constrainDisconnected3D(Model3D& mc) {
+    const DofMap3D dm = buildDofMap3D(mc);
+    std::map<int, bool> connected;
+    for (const auto& e : mc.elements) { connected[e.n1] = true; connected[e.n2] = true; }
+    for (const auto& [id, x] : mc.nodes) {
+        if (connected[id]) continue;
+        for (int k = 0; k < dm.count(id); ++k)
+            mc.constraints.push_back({id, k + 1, 0.0});
+    }
+}
 
 inline std::vector<StageResult3D> solveModel3DStages(const Model3D& m) {
     std::vector<char> active(m.elements.size(), 0);
     std::vector<StageResult3D> out;
     for (const auto& st : m.stages) {
         for (int id : st.activate) {
-            bool found=false;
-            for (std::size_t i=0;i<m.elements.size();++i) if(m.elements[i].id==id){active[i]=1;found=true;break;}
-            if(!found) throw std::runtime_error("三维阶段激活了不存在单元");
+            bool found = false;
+            for (std::size_t i = 0; i < m.elements.size(); ++i)
+                if (m.elements[i].id == id) { active[i] = 1; found = true; break; }
+            if (!found) throw std::runtime_error("三维阶段激活了不存在单元");
         }
         for (int id : st.deactivate) {
-            bool found=false;
-            for (std::size_t i=0;i<m.elements.size();++i) if(m.elements[i].id==id){active[i]=0;found=true;break;}
-            if(!found) throw std::runtime_error("三维阶段钝化了不存在单元");
+            bool found = false;
+            for (std::size_t i = 0; i < m.elements.size(); ++i)
+                if (m.elements[i].id == id) { active[i] = 0; found = true; break; }
+            if (!found) throw std::runtime_error("三维阶段钝化了不存在单元");
         }
         Model3D mc;
         mc.nodes = m.nodes;
         mc.constraints = m.constraints;
         mc.loads = st.loads;
-        for (std::size_t i=0;i<m.elements.size();++i) if(active[i]) mc.elements.push_back(m.elements[i]);
-        std::map<int,bool> connected;
-        for (const auto& e : mc.elements) { connected[e.n1]=true; connected[e.n2]=true; }
-        bool hasBeamStage = false;
-        for (const auto& e : mc.elements) if (e.type=="BEAM") { hasBeamStage=true; break; }
-        const int dofPerNodeStage = hasBeamStage ? 6 : 3;
-        for (const auto& [id,x] : m.nodes)
-            if (!connected[id])
-                for (int dof=1; dof<=dofPerNodeStage; ++dof)
-                    mc.constraints.push_back({id,dof});
+        mc.creepPhi = m.creepPhi; mc.creepChi = m.creepChi; mc.shrinkageEcs = m.shrinkageEcs;
+        for (std::size_t i = 0; i < m.elements.size(); ++i)
+            if (active[i]) mc.elements.push_back(m.elements[i]);
+        constrainDisconnected3D(mc);
+
         StageResult3D sr;
         sr.stage = st.id;
         sr.U = solveModel3D(mc);
@@ -191,32 +492,23 @@ struct Envelope3D {
 
 inline std::vector<Envelope3D> compute3DStageEnvelope(const Model3D& m,
                                                       const std::vector<StageResult3D>& stages) {
-    bool hasBeam = false;
-    for (const auto& e : m.elements) if (e.type == "BEAM") { hasBeam = true; break; }
-    const int dofPerNode = hasBeam ? 6 : 3;
+    const DofMap3D dm = buildDofMap3D(m);
     std::map<int, Envelope3D> env;
     for (const auto& sr : stages) {
-        std::map<int, int> idx;
-        int n = 0;
-        for (const auto& [id, x] : m.nodes) idx[id] = n++;
-        Model3D mc;
-        mc.nodes = m.nodes;
         for (const auto& e : m.elements) {
-            // 用当前阶段位移计算轴力
-            const int i1=idx.at(e.n1), i2=idx.at(e.n2);
-            const Vec3 d = m.nodes.at(e.n2)-m.nodes.at(e.n1);
-            const double L = std::max(d.norm(),1e-12);
-            const Vec3 c=d/L;
-            const double dL = (sr.U[dofPerNode*i2]-sr.U[dofPerNode*i1])*c(0)
-                            + (sr.U[dofPerNode*i2+1]-sr.U[dofPerNode*i1+1])*c(1)
-                            + (sr.U[dofPerNode*i2+2]-sr.U[dofPerNode*i1+2])*c(2);
-            const double N = e.E*e.A/L*dL;
-            auto& r=env[e.id]; r.id=e.id;
-            r.Nmin=std::min(r.Nmin,N); r.Nmax=std::max(r.Nmax,N);
+            const Vec3 d = m.nodes.at(e.n2) - m.nodes.at(e.n1);
+            const double L = std::max(d.norm(), 1e-12);
+            const Vec3 c = d / L;
+            double dL = 0.0;
+            for (int k = 0; k < 3; ++k)
+                dL += (sr.U[dm.dof(e.n2, k)] - sr.U[dm.dof(e.n1, k)]) * c(k);
+            const double N = e.E * e.A / L * dL;
+            auto& r = env[e.id]; r.id = e.id;
+            r.Nmin = std::min(r.Nmin, N); r.Nmax = std::max(r.Nmax, N);
         }
     }
     std::vector<Envelope3D> out;
-    for (const auto& [id,r] : env) out.push_back(r);
+    for (const auto& [id, r] : env) out.push_back(r);
     return out;
 }
 
@@ -236,244 +528,258 @@ struct BeamEnvelope3D {
     double MyMin=0,MyMax=0,MzMin=0,MzMax=0;
 };
 
+// 梁单元的局部杆端力：fl = Kl · (T · ug)
+inline Eigen::VectorXd beam3DLocalEndForces(const Model3D& m, const DofMap3D& dm,
+                                            const Element3D& e,
+                                            const std::vector<double>& U) {
+    Eigen::VectorXd ug(12);
+    for (int k = 0; k < 6; ++k) {
+        ug(k)     = U[dm.dof(e.n1, k)];
+        ug(6 + k) = U[dm.dof(e.n2, k)];
+    }
+    const Vec3 p1 = m.nodes.at(e.n1), p2 = m.nodes.at(e.n2);
+    const double L = (p2 - p1).norm();
+    const auto T = beam3DTransformation(p1, p2);
+    const auto Kl = beam3DLocalStiffness(e.E, e.A, e.Iy, e.Iz, e.J, e.G, L);
+    return Kl * (T * ug);
+}
+
 inline std::vector<BeamEnvelope3D> compute3DBeamEnvelope(
     const Model3D& m, const std::vector<StageResult3D>& stages) {
-    std::map<int,int> idx; int n=0;
-    for (const auto& [id,x] : m.nodes) idx[id]=n++;
+    const DofMap3D dm = buildDofMap3D(m);
     std::map<int, BeamEnvelope3D> env;
     for (const auto& sr : stages) {
         for (const auto& e : m.elements) {
             if (e.type != "BEAM") continue;
-            const int i1=idx.at(e.n1), i2=idx.at(e.n2);
-            Eigen::VectorXd ug(12);
-            for (int k=0;k<6;++k){ ug(k)=sr.U[6*i1+k]; ug(6+k)=sr.U[6*i2+k]; }
-            const Vec3 p1=m.nodes.at(e.n1), p2=m.nodes.at(e.n2);
-            const auto T=beam3DTransformation(p1,p2);
-            const Eigen::VectorXd ul=T*ug;
-            const double L=(p2-p1).norm();
-            const auto Kl=beam3DLocalStiffness(e.E,e.A,e.Iy,e.Iz,e.J,e.G,L);
-            const Eigen::VectorXd fl=Kl*ul;
-            auto& r=env[e.id]; r.id=e.id;
-            double N=-fl(0), Vy=fl(1), Vz=fl(2), My=fl(4), Mz=fl(5);
-            r.Nmin=std::min(r.Nmin,N); r.Nmax=std::max(r.Nmax,N);
-            r.VyMin=std::min(r.VyMin,Vy); r.VyMax=std::max(r.VyMax,Vy);
-            r.VzMin=std::min(r.VzMin,Vz); r.VzMax=std::max(r.VzMax,Vz);
-            r.MyMin=std::min(r.MyMin,My); r.MyMax=std::max(r.MyMax,My);
-            r.MzMin=std::min(r.MzMin,Mz); r.MzMax=std::max(r.MzMax,Mz);
+            const Eigen::VectorXd fl = beam3DLocalEndForces(m, dm, e, sr.U);
+            const double N  = -fl(0);
+            const double Vy = fl(1),  Vz = fl(2);
+            const double My = fl(4),  Mz = fl(5);
+            auto& r = env[e.id]; r.id = e.id;
+            r.Nmin  = std::min(r.Nmin,  N);   r.Nmax  = std::max(r.Nmax,  N);
+            r.VyMin = std::min(r.VyMin, Vy);  r.VyMax = std::max(r.VyMax, Vy);
+            r.VzMin = std::min(r.VzMin, Vz);  r.VzMax = std::max(r.VzMax, Vz);
+            r.MyMin = std::min(r.MyMin, My);  r.MyMax = std::max(r.MyMax, My);
+            r.MzMin = std::min(r.MzMin, Mz);  r.MzMax = std::max(r.MzMax, Mz);
         }
     }
     std::vector<BeamEnvelope3D> out;
-    for (auto& [id,r] : env) out.push_back(r);
+    for (auto& [id, r] : env) out.push_back(r);
     return out;
 }
 
 inline std::vector<DisplacementEnvelope3D> compute3DDisplacementEnvelope(
     const Model3D& m, const std::vector<StageResult3D>& stages) {
-    bool hasBeam = false;
-    for (const auto& e : m.elements) if (e.type == "BEAM") { hasBeam = true; break; }
-    const int dofPerNode = hasBeam ? 6 : 3;
-    std::map<int,int> idx; int n=0;
-    for (const auto& [id,x] : m.nodes) idx[id]=n++;
+    const DofMap3D dm = buildDofMap3D(m);
     std::vector<DisplacementEnvelope3D> out;
-    for (const auto& [id,x] : m.nodes) {
-        for (int dof=1; dof<=dofPerNode; ++dof) {
-            double mn=1e300, mx=-1e300;
+    for (const auto& [id, x] : m.nodes) {
+        for (int k = 0; k < dm.count(id); ++k) {
+            double mn = 1e300, mx = -1e300;
             for (const auto& s : stages) {
-                double v = s.U[dofPerNode*idx[id]+dof-1];
-                mn=std::min(mn,v); mx=std::max(mx,v);
+                const double v = s.U[dm.dof(id, k)];
+                mn = std::min(mn, v); mx = std::max(mx, v);
             }
-            out.push_back({id,dof,mn,mx});
+            out.push_back({id, k + 1, mn, mx});
         }
     }
     return out;
 }
 
-inline std::vector<double> compute3DInfluence(const Model3D& m,
-                                               const Model3D::Influence3D& spec,
-                                               const Model3D::Lane3D& lane) {
-    std::map<int,int> idx; int n=0;
-    for (const auto& [id,x] : m.nodes) idx[id]=n++;
-    bool hasBeam=false;
-    for (const auto& e : m.elements) if (e.type=="BEAM") { hasBeam=true; break; }
-    const int dofPerNode = hasBeam ? 6 : 3;
-    std::vector<double> eta;
-    Model3D base = m;
-    base.loads.clear();
-    auto baseU = solveModel3D(base);
-    const double baseResp = baseU[dofPerNode*idx.at(spec.node)+spec.dof-1];
-    for (int node : lane.nodes) {
-        Model3D mc = m;
-        mc.loads.clear();
-        mc.loads.push_back({node,lane.dof,1.0});
-        auto U = solveModel3D(mc);
-        eta.push_back(U[dofPerNode*idx.at(spec.node)+spec.dof-1] - baseResp);
+// ==================== 车道扫描（一次分解，多次回代）====================
+//
+// 旧实现对每个加载位置都重新装配并重新分解一次总体矩阵，而 K 完全相同、
+// 只有右端项相差一个单位荷载。这里装配一次、分解一次，之后只做回代。
+template <class F>
+inline void scanLane3D(const Model3D& m, const Model3D::Lane3D& lane, F&& f) {
+    Model3D bare = m;
+    bare.loads.clear();                    // 影响线只反映单位荷载的增量
+    const Assembled3D a = assembleModel3D(bare);
+    const Factorization3D fac(a.K);
+    const std::vector<double> Ubase = toStdVec(fac.solve(a.F));
+
+    Eigen::VectorXd Fk(a.F.size());
+    for (std::size_t k = 0; k < lane.nodes.size(); ++k) {
+        Fk = a.F;
+        const int d = a.dm.safeDof(lane.nodes[k], lane.dof - 1);
+        // 加载点若被约束，单位荷载直接由支座承担，对结构无影响。
+        if (d >= 0 && !a.isConstrained[d]) Fk(d) += 1.0;
+        f(k, toStdVec(fac.solve(Fk)), Ubase);
     }
+}
+
+inline std::vector<double> compute3DInfluence(const Model3D& m,
+                                              const Model3D::Influence3D& spec,
+                                              const Model3D::Lane3D& lane) {
+    const DofMap3D dm = buildDofMap3D(m);
+    const int dResp = dm.safeDof(spec.node, spec.dof - 1);
+    if (dResp < 0)
+        throw std::runtime_error("三维影响线：响应自由度不存在（节点 " +
+                                std::to_string(spec.node) + " dof " +
+                                std::to_string(spec.dof) + "）");
+
+    std::vector<double> eta(lane.nodes.size(), 0.0);
+    scanLane3D(m, lane,
+               [&](std::size_t k, const std::vector<double>& U, const std::vector<double>& Ub) {
+                   eta[k] = U[dResp] - Ub[dResp];
+               });
     return eta;
 }
 
 inline std::vector<double> compute3DBeamAxialInfluence(const Model3D& m,
                                                        int elemId,
                                                        const Model3D::Lane3D& lane) {
-    const Element3D* target=nullptr;
-    for (const auto& e : m.elements) if (e.id==elemId) { target=&e; break; }
+    const Element3D* target = nullptr;
+    for (const auto& e : m.elements) if (e.id == elemId) { target = &e; break; }
     if (!target) throw std::runtime_error("三维梁单元不存在");
-    std::map<int,int> idx; int n=0;
-    for (const auto& [id,x] : m.nodes) idx[id]=n++;
-    bool hasBeam=false; for(const auto& e:m.elements) if(e.type=="BEAM"){hasBeam=true;break;}
-    const int dofPerNode=hasBeam?6:3;
-    Model3D base=m; base.loads.clear();
-    auto baseU=solveModel3D(base);
-    auto axial=[&](const std::vector<double>& U){
-        const int i1=idx.at(target->n1), i2=idx.at(target->n2);
-        const Vec3 d=m.nodes.at(target->n2)-m.nodes.at(target->n1);
-        const double L=std::max(d.norm(),1e-12); const Vec3 c=d/L;
-        double dl=0;
-        for(int k=0;k<3;++k) dl += (U[dofPerNode*i2+k]-U[dofPerNode*i1+k])*c(k);
-        return target->E*target->A/L*dl;
+
+    const DofMap3D dm = buildDofMap3D(m);
+    const Vec3 d0 = m.nodes.at(target->n2) - m.nodes.at(target->n1);
+    const double L = std::max(d0.norm(), 1e-12);
+    const Vec3 c = d0 / L;
+
+    auto axial = [&](const std::vector<double>& U) {
+        double dl = 0.0;
+        for (int k = 0; k < 3; ++k)
+            dl += (U[dm.dof(target->n2, k)] - U[dm.dof(target->n1, k)]) * c(k);
+        return target->E * target->A / L * dl;
     };
-    const double baseN=axial(baseU);
-    std::vector<double> eta;
-    for(int node:lane.nodes){
-        Model3D mc=m; mc.loads.clear(); mc.loads.push_back({node,lane.dof,1.0});
-        auto U=solveModel3D(mc);
-        eta.push_back(axial(U)-baseN);
-    }
+
+    std::vector<double> eta(lane.nodes.size(), 0.0);
+    scanLane3D(m, lane,
+               [&](std::size_t k, const std::vector<double>& U, const std::vector<double>& Ub) {
+                   eta[k] = axial(U) - axial(Ub);
+               });
     return eta;
 }
 
-inline std::vector<double> compute3DBeamMomentInfluence(const Model3D& m,
-                                                        int elemId,
-                                                        const std::string& comp,
-                                                        int end,
+// 梁单元内力/应力影响线的统一实现：extractor 从局部杆端力取出关注分量。
+// （旧代码 MOMENT / SHEAR / STRESS 三个函数 90% 重复，这里合并。）
+inline std::vector<double> compute3DBeamResponseInfluence(
+    const Model3D& m, int elemId,
+    const std::function<double(const Eigen::VectorXd& fl, const Element3D& e)>& extract,
+    const Model3D::Lane3D& lane) {
+    const Element3D* target = nullptr;
+    for (const auto& e : m.elements) if (e.id == elemId) { target = &e; break; }
+    if (!target || target->type != "BEAM")
+        throw std::runtime_error("三维梁单元不存在: " + std::to_string(elemId));
+
+    const DofMap3D dm = buildDofMap3D(m);
+    std::vector<double> eta(lane.nodes.size(), 0.0);
+    scanLane3D(m, lane,
+               [&](std::size_t k, const std::vector<double>& U, const std::vector<double>& Ub) {
+                   const auto fl  = beam3DLocalEndForces(m, dm, *target, U);
+                   const auto flb = beam3DLocalEndForces(m, dm, *target, Ub);
+                   eta[k] = extract(fl, *target) - extract(flb, *target);
+               });
+    return eta;
+}
+
+inline std::vector<double> compute3DBeamMomentInfluence(const Model3D& m, int elemId,
+                                                        const std::string& comp, int end,
                                                         const Model3D::Lane3D& lane) {
-    const Element3D* target=nullptr;
-    for (const auto& e : m.elements) if (e.id==elemId) { target=&e; break; }
-    if (!target || target->type!="BEAM") throw std::runtime_error("三维梁单元不存在");
-    std::map<int,int> idx; int n=0;
-    for (const auto& [id,x] : m.nodes) idx[id]=n++;
-    auto localForce=[&](const std::vector<double>& U)->Eigen::VectorXd{
-        const int i1=idx.at(target->n1), i2=idx.at(target->n2);
-        Eigen::VectorXd ug(12);
-        for(int k=0;k<6;++k){ ug(k)=U[6*i1+k]; ug(6+k)=U[6*i2+k]; }
-        const Vec3 p1=m.nodes.at(target->n1), p2=m.nodes.at(target->n2);
-        const auto T=beam3DTransformation(p1,p2);
-        const double L=(p2-p1).norm();
-        const auto Kl=beam3DLocalStiffness(target->E,target->A,target->Iy,target->Iz,target->J,target->G,L);
-        return Kl*(T*ug);
-    };
-    auto baseU=solveModel3D(m);
-    const auto baseF=localForce(baseU);
-    auto moment=[&](const Eigen::VectorXd& fl){
-        int idxLocal = (end==1)?4:10;
-        if (comp=="MY") idxLocal += 0; else if (comp=="MZ") idxLocal += 1; else throw std::runtime_error("未知弯矩分量");
-        return fl(idxLocal);
-    };
-    const double baseM=moment(baseF);
-    std::vector<double> eta;
-    for(int node:lane.nodes){
-        Model3D mc=m; mc.loads.clear(); mc.loads.push_back({node,lane.dof,1.0});
-        auto U=solveModel3D(mc);
-        eta.push_back(moment(localForce(U))-baseM);
-    }
-    return eta;
+    if (comp != "MY" && comp != "MZ")
+        throw std::runtime_error("未知弯矩分量: " + comp);
+    const int baseIdx = (end == 1) ? 4 : 10;
+    const int offset  = (comp == "MY") ? 0 : 1;
+    return compute3DBeamResponseInfluence(m, elemId,
+        [baseIdx, offset](const Eigen::VectorXd& fl, const Element3D&) {
+            return fl(baseIdx + offset);
+        }, lane);
 }
 
-inline std::vector<double> compute3DBeamShearInfluence(const Model3D& m,
-                                                       int elemId,
-                                                       const std::string& comp,
-                                                       int end,
+inline std::vector<double> compute3DBeamShearInfluence(const Model3D& m, int elemId,
+                                                       const std::string& comp, int end,
                                                        const Model3D::Lane3D& lane) {
-    const Element3D* target=nullptr;
-    for (const auto& e : m.elements) if (e.id==elemId) { target=&e; break; }
-    if (!target || target->type!="BEAM") throw std::runtime_error("三维梁单元不存在");
-    std::map<int,int> idx; int n=0;
-    for (const auto& [id,x] : m.nodes) idx[id]=n++;
-    auto localForce=[&](const std::vector<double>& U)->Eigen::VectorXd{
-        const int i1=idx.at(target->n1), i2=idx.at(target->n2);
-        Eigen::VectorXd ug(12);
-        for(int k=0;k<6;++k){ ug(k)=U[6*i1+k]; ug(6+k)=U[6*i2+k]; }
-        const Vec3 p1=m.nodes.at(target->n1), p2=m.nodes.at(target->n2);
-        const auto T=beam3DTransformation(p1,p2);
-        const double L=(p2-p1).norm();
-        const auto Kl=beam3DLocalStiffness(target->E,target->A,target->Iy,target->Iz,target->J,target->G,L);
-        return Kl*(T*ug);
-    };
-    auto baseU=solveModel3D(m);
-    const auto baseF=localForce(baseU);
-    auto shear=[&](const Eigen::VectorXd& fl){
-        if (comp=="VY") return (end==1)?fl(1):fl(7);
-        if (comp=="VZ") return (end==1)?fl(2):fl(8);
-        throw std::runtime_error("未知剪力分量");
-    };
-    const double baseV=shear(baseF);
-    std::vector<double> eta;
-    for(int node:lane.nodes){
-        Model3D mc=m; mc.loads.clear(); mc.loads.push_back({node,lane.dof,1.0});
-        auto U=solveModel3D(mc);
-        eta.push_back(shear(localForce(U))-baseV);
-    }
-    return eta;
+    if (comp != "VY" && comp != "VZ")
+        throw std::runtime_error("未知剪力分量: " + comp);
+    const int idx = (comp == "VY") ? ((end == 1) ? 1 : 7) : ((end == 1) ? 2 : 8);
+    return compute3DBeamResponseInfluence(m, elemId,
+        [idx](const Eigen::VectorXd& fl, const Element3D&) { return fl(idx); }, lane);
 }
 
-inline std::vector<double> compute3DBeamStressInfluence(const Model3D& m,
-                                                        int elemId,
-                                                        const std::string& comp,
-                                                        int end,
+inline std::vector<double> compute3DBeamStressInfluence(const Model3D& m, int elemId,
+                                                        const std::string& comp, int end,
                                                         const Model3D::Lane3D& lane) {
-    const Element3D* target=nullptr;
-    for (const auto& e : m.elements) if (e.id==elemId) { target=&e; break; }
-    if (!target || target->type!="BEAM") throw std::runtime_error("三维梁单元不存在");
-    if (target->Wtop<=0 || target->Wbot<=0) throw std::runtime_error("梁应力需要 WT/WB");
-    std::map<int,int> idx; int n=0;
-    for (const auto& [id,x] : m.nodes) idx[id]=n++;
-    auto localForce=[&](const std::vector<double>& U)->Eigen::VectorXd{
-        const int i1=idx.at(target->n1), i2=idx.at(target->n2);
-        Eigen::VectorXd ug(12);
-        for(int k=0;k<6;++k){ ug(k)=U[6*i1+k]; ug(6+k)=U[6*i2+k]; }
-        const Vec3 p1=m.nodes.at(target->n1), p2=m.nodes.at(target->n2);
-        const auto T=beam3DTransformation(p1,p2);
-        const double L=(p2-p1).norm();
-        const auto Kl=beam3DLocalStiffness(target->E,target->A,target->Iy,target->Iz,target->J,target->G,L);
-        return Kl*(T*ug);
-    };
-    auto baseU=solveModel3D(m);
-    const auto baseF=localForce(baseU);
-    auto stress=[&](const Eigen::VectorXd& fl){
-        double N = (end==1)? -fl(0) : fl(6);
-        double Mz = (end==1)? fl(5) : fl(11);
-        if (comp=="TOP") return N/target->A - Mz/target->Wtop;
-        if (comp=="BOT") return N/target->A + Mz/target->Wbot;
-        throw std::runtime_error("未知应力分量");
-    };
-    const double baseS=stress(baseF);
-    std::vector<double> eta;
-    for(int node:lane.nodes){
-        Model3D mc=m; mc.loads.clear(); mc.loads.push_back({node,lane.dof,1.0});
-        auto U=solveModel3D(mc);
-        eta.push_back(stress(localForce(U))-baseS);
+    if (comp != "TOP" && comp != "BOT")
+        throw std::runtime_error("未知应力分量: " + comp);
+    return compute3DBeamResponseInfluence(m, elemId,
+        [comp, end](const Eigen::VectorXd& fl, const Element3D& e) {
+            if (e.Wtop <= 0 || e.Wbot <= 0)
+                throw std::runtime_error("梁应力需要 WT/WB");
+            const double N  = (end == 1) ? -fl(0)  : fl(6);
+            const double Mz = (end == 1) ?  fl(5)  : fl(11);
+            return (comp == "TOP") ? (N / e.A - Mz / e.Wtop)
+                                   : (N / e.A + Mz / e.Wbot);
+        }, lane);
+}
+
+// ==================== 影响面 ====================
+
+// 由纵向节点 xn 与横向节点 yn 确定网格交点处的节点号。
+// 交点定义为坐标为 ( nodes[xn].x, nodes[yn].y ) 的节点。
+//
+// 旧实现的内层循环完全不使用 yn，"影响面"实际是同一条一维影响线被复制
+// N 遍，横向维度从未生效，得到的包络值是错的。
+inline int surfaceGridNode(const Model3D& m, int xn, int yn) {
+    const auto itx = m.nodes.find(xn);
+    const auto ity = m.nodes.find(yn);
+    if (itx == m.nodes.end() || ity == m.nodes.end())
+        throw std::runtime_error("LANE_SURFACE_3D 引用了不存在的节点");
+    const double targetX = itx->second.x();
+    const double targetY = ity->second.y();
+
+    double span = 1.0;
+    for (const auto& [id, p] : m.nodes)
+        span = std::max(span, std::max(std::abs(p.x()), std::abs(p.y())));
+    const double tol = 1e-6 * std::max(1.0, span);
+
+    int best = -1;
+    double bestD2 = 0.0;
+    for (const auto& [id, p] : m.nodes) {
+        const double dx = p.x() - targetX;
+        const double dy = p.y() - targetY;
+        const double d2 = dx * dx + dy * dy;
+        if (best < 0 || d2 < bestD2) { bestD2 = d2; best = id; }
     }
-    return eta;
+    if (best < 0 || std::sqrt(bestD2) > tol)
+        throw std::runtime_error(
+            "LANE_SURFACE_3D 需要规则的节点网格：找不到坐标 (" +
+            std::to_string(targetX) + ", " + std::to_string(targetY) + ") 处的节点");
+    return best;
 }
 
 inline std::vector<std::tuple<int,int,double>> compute3DInfluenceSurface(
     const Model3D& m, const Model3D::Influence3D& spec,
     const Model3D::LaneSurface3D& surface) {
-    std::map<int,int> idx; int n=0;
-    for (const auto& [id,x] : m.nodes) idx[id]=n++;
-    bool hasBeam=false;
-    for (const auto& e : m.elements) if (e.type=="BEAM") { hasBeam=true; break; }
-    const int dofPerNode = hasBeam ? 6 : 3;
-    Model3D base = m; base.loads.clear();
-    auto baseU = solveModel3D(base);
-    const double baseResp = baseU[dofPerNode*idx.at(spec.node)+spec.dof-1];
+    const DofMap3D dm = buildDofMap3D(m);
+    const int dResp = dm.safeDof(spec.node, spec.dof - 1);
+    if (dResp < 0)
+        throw std::runtime_error("三维影响面：响应自由度不存在");
+
+    // 预计算每个 (纵向, 横向) 组合对应的实际加载节点。
+    struct Cell { int xn, yn, node; };
+    std::vector<Cell> cells;
+    cells.reserve(surface.xNodes.size() * surface.yNodes.size());
+    for (int yn : surface.yNodes)
+        for (int xn : surface.xNodes)
+            cells.push_back({xn, yn, surfaceGridNode(m, xn, yn)});
+
+    Model3D bare = m;
+    bare.loads.clear();
+    const Assembled3D a = assembleModel3D(bare);
+    const Factorization3D fac(a.K);
+    const std::vector<double> Ubase = toStdVec(fac.solve(a.F));
+    const double baseResp = Ubase[dResp];
+
     std::vector<std::tuple<int,int,double>> out;
-    for (int yn : surface.yNodes) {
-        for (int xn : surface.xNodes) {
-            Model3D mc = m; mc.loads.clear(); mc.loads.push_back({xn,surface.dof,1.0});
-            auto U = solveModel3D(mc);
-            double resp = U[dofPerNode*idx.at(spec.node)+spec.dof-1] - baseResp;
-            out.push_back({xn,yn,resp});
-        }
+    out.reserve(cells.size());
+    Eigen::VectorXd Fk(a.F.size());
+    for (const auto& cell : cells) {
+        Fk = a.F;
+        const int d = a.dm.safeDof(cell.node, surface.dof - 1);
+        if (d >= 0 && !a.isConstrained[d]) Fk(d) += 1.0;
+        const std::vector<double> U = toStdVec(fac.solve(Fk));
+        out.push_back({cell.xn, cell.yn, U[dResp] - baseResp});
     }
     return out;
 }
@@ -481,28 +787,42 @@ inline std::vector<std::tuple<int,int,double>> compute3DInfluenceSurface(
 inline std::pair<double,double> envelope3DFromSurface(
     const Model3D::LaneSurface3D& surface,
     const std::vector<std::tuple<int,int,double>>& vals) {
-    std::map<int,double> bestMax, bestMin;
-    double globalMax=-1e300, globalMin=1e300;
-    for (auto [xn,yn,v] : vals) {
-        bestMax[xn] = std::max(bestMax[xn], v);
-        bestMin[xn] = std::min(bestMin[xn], v);
-        globalMax = std::max(globalMax, v);
-        globalMin = std::min(globalMin, v);
+    // 每个纵向位置取所有横向位置中的最不利值（影响面的标准用法）。
+    std::map<int, double> perXMax, perXMin;
+    std::map<int, bool> seen;
+    for (auto [xn, yn, v] : vals) {
+        if (!seen[xn]) {
+            perXMax[xn] = v; perXMin[xn] = v; seen[xn] = true;
+        } else {
+            perXMax[xn] = std::max(perXMax[xn], v);
+            perXMin[xn] = std::min(perXMin[xn], v);
+        }
     }
-    double pos=0, neg=0;
-    for (auto [xn,v] : bestMax) {
-        if (v>0) pos += v; else neg += v;
+
+    // 旧实现用 std::map 的默认值 0 做初值，负值影响线会被 max(0, v) 吞掉，
+    // 负向车道荷载（如 Q=-10）算出的包络恒为 0。这里改用真实极值初始化。
+    double pos = 0.0, neg = 0.0;
+    double globalMax = -1e300, globalMin = 1e300;
+    for (const auto& [xn, mx] : perXMax) {
+        const double mn = perXMin[xn];
+        const double vsel = (surface.q >= 0.0) ? mx : mn;   // 均布荷载取同向最不利
+        if (vsel > 0.0) pos += vsel; else neg += vsel;
+        globalMax = std::max(globalMax, mx);
+        globalMin = std::min(globalMin, mn);
     }
-    const double qMaxArea = surface.q>=0 ? pos : neg;
-    const double qMinArea = surface.q>=0 ? neg : pos;
-    const double pMaxOrd = surface.p>=0 ? globalMax : globalMin;
-    const double pMinOrd = surface.p>=0 ? globalMin : globalMax;
+
+    const double qMaxArea = (surface.q >= 0.0) ? pos : neg;
+    const double qMinArea = (surface.q >= 0.0) ? neg : pos;
+    const double pMaxOrd  = (surface.p >= 0.0) ? globalMax : globalMin;
+    const double pMinOrd  = (surface.p >= 0.0) ? globalMin : globalMax;
+
     double factor = surface.reduction;
     if (surface.laneCount == 2) factor = 1.0;
     else if (surface.laneCount == 3) factor = 0.9;
     else if (surface.laneCount >= 4) factor = 0.8;
-    return {surface.impact*factor*(surface.q*qMaxArea + surface.p*pMaxOrd),
-            surface.impact*factor*(surface.q*qMinArea + surface.p*pMinOrd)};
+
+    return {surface.impact * factor * (surface.q * qMaxArea + surface.p * pMaxOrd),
+            surface.impact * factor * (surface.q * qMinArea + surface.p * pMinOrd)};
 }
 
 inline std::pair<double,double> envelope3DFromInfluence(const Model3D::Lane3D& lane,
@@ -538,11 +858,8 @@ inline std::vector<StageLiveEnvelope3D> compute3DStageLiveEnvelope(
         mc.nodes=m.nodes; mc.constraints=m.constraints;
         mc.creepPhi=m.creepPhi; mc.creepChi=m.creepChi; mc.shrinkageEcs=m.shrinkageEcs;
         for (std::size_t i=0;i<m.elements.size();++i) if(active[i]) mc.elements.push_back(m.elements[i]);
-        std::map<int,bool> connected;
-        for(const auto& e:mc.elements){connected[e.n1]=true;connected[e.n2]=true;}
-        bool hasBeam=false; for(const auto& e:mc.elements) if(e.type=="BEAM"){hasBeam=true;break;}
-        const int dofPerNode=hasBeam?6:3;
-        for(const auto& [id,x]:m.nodes) if(!connected[id]) for(int dof=1;dof<=dofPerNode;++dof) mc.constraints.push_back({id,dof});
+        constrainDisconnected3D(mc);
+
         double maxAll=-1e300,minAll=1e300;
         for(const auto& lane:m.lanes){
             auto eta=compute3DInfluence(mc,spec,lane);
@@ -557,19 +874,17 @@ inline std::vector<StageLiveEnvelope3D> compute3DStageLiveEnvelope(
 inline std::vector<Camber3D> compute3DCamber(const Model3D& m,
                                              const std::vector<StageResult3D>& stages) {
     if (stages.empty()) return {};
-    bool hasBeam = false;
-    for (const auto& e : m.elements) if (e.type == "BEAM") { hasBeam = true; break; }
-    const int dofPerNode = hasBeam ? 6 : 3;
+    const DofMap3D dm = buildDofMap3D(m);
+    const std::vector<double>& Ulast = stages.back().U;
     std::vector<Camber3D> out;
-    std::map<int,int> idx; int n=0;
-    for (const auto& [id,x] : m.nodes) idx[id]=n++;
-    for (const auto& [id,x] : m.nodes) {
-        for (int dof=1; dof<=dofPerNode; ++dof) {
-            out.push_back({id,dof,-stages.back().U[dofPerNode*idx[id]+dof-1]});
-        }
+    for (const auto& [id, x] : m.nodes) {
+        for (int k = 0; k < dm.count(id); ++k)
+            out.push_back({id, k + 1, -Ulast[dm.dof(id, k)]});
     }
     return out;
 }
+
+// ==================== 输入文件读取 ====================
 
 inline Model3D readModel3D(const std::string& path) {
     std::ifstream in(path);
@@ -661,11 +976,15 @@ inline Model3D readModel3D(const std::string& path) {
             areas[id]=A;
             realIy[id]=Iy; realIz[id]=Iz; realJ[id]=J; realG[id]=G;
         } else if (section == "*BOUNDARY") {
-            int node; std::string ds; if (ss >> node >> ds) {
+            // 格式：<节点> <dof 或 a-b> [指定位移值]
+            // 第三列可选，缺省 0；非零即支座沉降 / 强制位移。
+            int node; std::string ds; double val = 0.0;
+            if (ss >> node >> ds) {
+                ss >> val;
                 if (ds.find('-') != std::string::npos) {
                     int a=std::stoi(ds.substr(0,ds.find('-'))); int b=std::stoi(ds.substr(ds.find('-')+1));
-                    for (int d=a; d<=b; ++d) m.constraints.push_back({node,d});
-                } else m.constraints.push_back({node,std::stoi(ds)});
+                    for (int d=a; d<=b; ++d) m.constraints.push_back({node,d,val});
+                } else m.constraints.push_back({node,std::stoi(ds),val});
             }
         } else if (section == "*CLOAD") {
             int node,dof; double val; if (ss >> node >> dof >> val) m.loads.push_back({node,dof,val});
@@ -735,70 +1054,6 @@ inline Model3D readModel3D(const std::string& path) {
         }
     }
     return m;
-}
-
-inline std::vector<double> solveModel3D(const Model3D& m) {
-    std::map<int, int> idx;
-    int n = 0;
-    for (const auto& [id, x] : m.nodes) idx[id] = n++;
-    bool hasBeam = false;
-    for (const auto& e : m.elements) if (e.type == "BEAM") { hasBeam = true; break; }
-    const int dofPerNode = hasBeam ? 6 : 3;
-    const int nd = dofPerNode * n;
-    std::vector<Eigen::Triplet<double>> trips;
-    for (const auto& e : m.elements) {
-        const double Eeff = e.E / (1.0 + m.creepChi * m.creepPhi);
-        const int i1 = idx.at(e.n1), i2 = idx.at(e.n2);
-        if (e.type == "BEAM") {
-            const Vec3 p1 = m.nodes.at(e.n1), p2 = m.nodes.at(e.n2);
-            const double L = (p2-p1).norm();
-            const auto Kl = beam3DLocalStiffness(Eeff,e.A,e.Iy,e.Iz,e.J,e.G,L);
-            const auto T = beam3DTransformation(p1,p2);
-            const auto Ke = T.transpose() * Kl * T;
-            const int g[12] = {dofPerNode*i1+0,dofPerNode*i1+1,dofPerNode*i1+2,dofPerNode*i1+3,dofPerNode*i1+4,dofPerNode*i1+5,
-                               dofPerNode*i2+0,dofPerNode*i2+1,dofPerNode*i2+2,dofPerNode*i2+3,dofPerNode*i2+4,dofPerNode*i2+5};
-            for (int a=0;a<12;++a)
-                for (int b=0;b<12;++b)
-                    if (Ke(a,b)!=0.0) trips.emplace_back(g[a],g[b],Ke(a,b));
-        } else {
-            const Eigen::Matrix<double, 6, 6> Ke = truss3DStiffness(Eeff, e.A, m.nodes.at(e.n1), m.nodes.at(e.n2));
-            const int g[6] = {dofPerNode*i1+0,dofPerNode*i1+1,dofPerNode*i1+2,dofPerNode*i2+0,dofPerNode*i2+1,dofPerNode*i2+2};
-            for (int a=0;a<6;++a)
-                for (int b=0;b<6;++b)
-                if (Ke(a,b) != 0.0) trips.emplace_back(g[a], g[b], Ke(a,b));
-        }
-    }
-    SparseMat3D K(nd, nd);
-    K.setFromTriplets(trips.begin(), trips.end());
-    Eigen::VectorXd F = Eigen::VectorXd::Zero(nd);
-    for (const auto& [node, dof, val] : m.loads) F(dofPerNode*idx.at(node)+dof-1) += val;
-    for (const auto& e : m.elements) {
-        if (e.istrn == 0.0 && m.shrinkageEcs == 0.0) continue;
-        const Vec3 p1 = m.nodes.at(e.n1), p2 = m.nodes.at(e.n2);
-        const Vec3 d = p2 - p1;
-        const double L = std::max(d.norm(), 1e-12);
-        const Vec3 c = d / L;
-        const double Eeff = e.E / (1.0 + m.creepChi * m.creepPhi);
-        const double P = Eeff * e.A * (e.istrn - m.shrinkageEcs);
-        const int i1 = idx.at(e.n1), i2 = idx.at(e.n2);
-        for (int k=0; k<3; ++k) {
-            F(dofPerNode*i1+k) += P*c(k);
-            F(dofPerNode*i2+k) -= P*c(k);
-        }
-    }
-    for (const auto& [node, dof] : m.constraints) {
-        const int d = dofPerNode*idx.at(node)+dof-1;
-        for (int col = 0; col < K.outerSize(); ++col)
-            for (SparseMat3D::InnerIterator it(K,col); it; ++it)
-                if (it.row()==d || it.col()==d) it.valueRef() = (it.row()==it.col()) ? 1.0 : 0.0;
-        K.coeffRef(d, d) = 1.0;
-        F(d) = 0.0;
-    }
-    Eigen::MatrixXd Kd = K;
-    Eigen::FullPivLU<Eigen::MatrixXd> lu(Kd);
-    if (!lu.isInvertible()) throw std::runtime_error("三维桁架求解失败");
-    Eigen::VectorXd U = lu.solve(F);
-    return std::vector<double>(U.data(), U.data()+nd);
 }
 
 } // namespace fem

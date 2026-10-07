@@ -93,6 +93,15 @@ function(fem_link_cholmod target)
     endif()
 endfunction()
 
+# ---- 测试 ----
+# enable_testing() 后可用 `ctest` 跑回归；解析解断言测试会校验数值结果，
+# 而不只是检查程序有没有崩溃。
+enable_testing()
+
+# 解析解断言测试：用材料力学闭式解校验梁/桁架单元与求解器。
+fem_add_executable(test_analytical test_analytical.cpp)
+add_test(NAME analytical_exact_solutions COMMAND test_analytical)
+
 # 原始的一维杆示例。
 fem_add_executable(fem_solver One-dimension.cpp)
 

@@ -1,0 +1,387 @@
+// ============================================================
+// 解析解断言测试
+//
+// 目的：run_tests.ps1 原先只校验"程序退出码 == 0"，任何数值回归
+// （梁刚度系数写错、符号翻转、坐标变换出错）都不会被发现。这里用
+// 材料力学闭式解做断言，使数值错误能被自动检出。
+//
+// 说明：欧拉-伯努利梁单元对"节点荷载"和"一致荷载向量"给出的节点
+// 位移/转角/杆端力都是精确的，因此下面的比较应当达到机器精度量级。
+// 判据取相对误差 1e-8 —— 远小于任何实际建模错误会引入的偏差。
+// ============================================================
+
+#include "fem_io.hpp"
+#include "fem_3d.hpp"
+
+#include <cmath>
+#include <cstdio>
+#include <fstream>
+#include <string>
+#include <vector>
+
+using namespace fem;
+
+namespace {
+
+int g_pass = 0;
+int g_fail = 0;
+
+void check(const std::string& name, double got, double exact, double tol = 1e-8) {
+    const double denom = std::max(1.0, std::abs(exact));
+    const double rel = std::abs(got - exact) / denom;
+    if (rel <= tol) {
+        ++g_pass;
+        std::printf("  [PASS] %-44s got=%14.8g  exact=%14.8g  rel=%.2e\n",
+                    name.c_str(), got, exact, rel);
+    } else {
+        ++g_fail;
+        std::printf("  [FAIL] %-44s got=%14.8g  exact=%14.8g  rel=%.2e (tol=%.0e)\n",
+                    name.c_str(), got, exact, rel, tol);
+    }
+}
+
+// 等分直梁：nElem 个 BEAM 单元，沿 +X 布置，节点号 1..nElem+1。
+Model2D straightBeam(double L, int nElem, double E, double A, double I) {
+    Model2D m;
+    m.title = "straight beam";
+    for (int i = 0; i <= nElem; ++i)
+        m.nodes[i + 1] = Eigen::Vector2d(L * i / static_cast<double>(nElem), 0.0);
+    for (int e = 0; e < nElem; ++e) {
+        Model2D::Element el;
+        el.id = e + 1;
+        el.type = "BEAM";
+        el.E = E; el.A = A; el.I = I;
+        el.conn = {e + 1, e + 2};
+        m.elements.push_back(el);
+    }
+    return m;
+}
+
+double nodalDisp(const Model2D& m, const ModelResult& r, int node, int dof) {
+    std::vector<int> ids;
+    for (const auto& [id, c] : m.nodes) ids.push_back(id);
+    for (std::size_t i = 0; i < ids.size(); ++i)
+        if (ids[i] == node) return r.U(3 * static_cast<int>(i) + (dof - 1));
+    throw std::runtime_error("节点不存在: " + std::to_string(node));
+}
+
+double nodalReaction(const Model2D& m, const ModelResult& r, int node, int dof) {
+    std::vector<int> ids;
+    for (const auto& [id, c] : m.nodes) ids.push_back(id);
+    for (std::size_t i = 0; i < ids.size(); ++i)
+        if (ids[i] == node) return r.R(3 * static_cast<int>(i) + (dof - 1));
+    throw std::runtime_error("节点不存在: " + std::to_string(node));
+}
+
+constexpr double E  = 2.0e11;   // Pa（钢）
+constexpr double A  = 0.02;     // m^2
+constexpr double I  = 8.0e-4;   // m^4
+constexpr double L  = 30.0;     // m
+constexpr double P  = 1.0e5;    // N
+constexpr double q  = 2.0e4;    // N/m
+
+// ---- 1. 简支梁跨中集中力：δ = P L³ / (48 E I) ----
+void testSimplySupportedPointLoad() {
+    std::printf("\n[1] 简支梁 跨中集中力 P\n");
+    const int n = 2;
+    Model2D m = straightBeam(L, n, E, A, I);
+    m.constraints.push_back({1, 1, 0.0});      // 左铰：u
+    m.constraints.push_back({1, 2, 0.0});      // 左铰：v
+    m.constraints.push_back({n + 1, 2, 0.0});  // 右滚：v
+    const int mid = n / 2 + 1;                 // 节点 2
+    m.loads.push_back({mid, 2, -P});
+
+    const ModelResult r = solveModel2D(m);
+    const double exact = -P * L * L * L / (48.0 * E * I);
+    check("跨中挠度  δ=PL³/(48EI)", nodalDisp(m, r, mid, 2), exact);
+
+    // 支座反力各 P/2
+    check("左支座反力  R=P/2", nodalReaction(m, r, 1, 2), P / 2.0);
+    check("右支座反力  R=P/2", nodalReaction(m, r, n + 1, 2), P / 2.0);
+}
+
+// ---- 2. 悬臂梁端部集中力：δ = P L³ / (3 E I)，θ = P L² / (2 E I) ----
+void testCantileverPointLoad() {
+    std::printf("\n[2] 悬臂梁 端部集中力 P\n");
+    const int n = 1;
+    Model2D m = straightBeam(L, n, E, A, I);
+    m.constraints.push_back({1, 1, 0.0});
+    m.constraints.push_back({1, 2, 0.0});
+    m.constraints.push_back({1, 3, 0.0});   // 固定端
+    m.loads.push_back({n + 1, 2, -P});
+
+    const ModelResult r = solveModel2D(m);
+    check("端部挠度  δ=PL³/(3EI)", nodalDisp(m, r, n + 1, 2), -P * L * L * L / (3.0 * E * I));
+    check("端部转角  θ=PL²/(2EI)", nodalDisp(m, r, n + 1, 3), -P * L * L / (2.0 * E * I));
+    check("固定端反力  R=P",       nodalReaction(m, r, 1, 2), P);
+}
+
+// ---- 3. 简支梁均布荷载：δ = 5 q L⁴ / (384 E I)，M中 = q L² / 8 ----
+void testSimplySupportedUDL() {
+    std::printf("\n[3] 简支梁 均布荷载 q\n");
+    const int n = 4;
+    Model2D m = straightBeam(L, n, E, A, I);
+    m.constraints.push_back({1, 1, 0.0});
+    m.constraints.push_back({1, 2, 0.0});
+    m.constraints.push_back({n + 1, 2, 0.0});
+    for (int e = 1; e <= n; ++e)
+        m.elemLoads.push_back({e, "GY", -q, -q});
+
+    const ModelResult r = solveModel2D(m);
+    const int mid = n / 2 + 1;
+    check("跨中挠度  δ=5qL⁴/(384EI)", nodalDisp(m, r, mid, 2),
+          -5.0 * q * L * L * L * L / (384.0 * E * I));
+    check("支座反力  R=qL/2",         nodalReaction(m, r, 1, 2), q * L / 2.0);
+
+    // 跨中弯矩（取绝对值比较，避免符号约定纠缠）
+    double mMax = 0.0;
+    for (const auto& f : elementForces2D(m, r.U))
+        mMax = std::max(mMax, std::max(std::abs(f.M1), std::abs(f.M2)));
+    check("跨中弯矩  |M|=qL²/8", mMax, q * L * L / 8.0);
+}
+
+// ---- 4. 悬臂梁均布荷载：δ = q L⁴ / (8 E I) ----
+void testCantileverUDL() {
+    std::printf("\n[4] 悬臂梁 均布荷载 q\n");
+    const int n = 4;
+    Model2D m = straightBeam(L, n, E, A, I);
+    m.constraints.push_back({1, 1, 0.0});
+    m.constraints.push_back({1, 2, 0.0});
+    m.constraints.push_back({1, 3, 0.0});
+    for (int e = 1; e <= n; ++e)
+        m.elemLoads.push_back({e, "GY", -q, -q});
+
+    const ModelResult r = solveModel2D(m);
+    check("端部挠度  δ=qL⁴/(8EI)", nodalDisp(m, r, n + 1, 2),
+          -q * L * L * L * L / (8.0 * E * I));
+    check("固定端弯矩  |M|=qL²/2",
+          std::abs(elementForces2D(m, r.U).front().M1), q * L * L / 2.0);
+}
+
+// ---- 5. 轴力杆：δ = P L / (E A) ----
+void testAxialBar() {
+    std::printf("\n[5] 桁架杆 轴向拉伸\n");
+    Model2D m;
+    m.nodes[1] = Eigen::Vector2d(0.0, 0.0);
+    m.nodes[2] = Eigen::Vector2d(L, 0.0);
+    Model2D::Element el;
+    el.id = 1; el.type = "TRUSS"; el.E = E; el.A = A; el.conn = {1, 2};
+    m.elements.push_back(el);
+    m.constraints.push_back({1, 1, 0.0});
+    m.constraints.push_back({1, 2, 0.0});
+    m.constraints.push_back({2, 2, 0.0});
+    m.loads.push_back({2, 1, P});
+
+    const ModelResult r = solveModel2D(m);
+    check("轴向伸长  δ=PL/(EA)", nodalDisp(m, r, 2, 1), P * L / (E * A));
+
+    const auto forces = elementForces2D(m, r.U);
+    check("轴力  N=P", forces.front().N1, P);
+}
+
+// ---- 6. 两跨连续梁（超静定）：中支座反力 = 5qL/8（每跨 q、跨度 L）----
+// 用于验证组装与约束处理在多跨体系下仍然正确。
+void testContinuousBeam() {
+    std::printf("\n[6] 两跨连续梁 均布荷载（超静定）\n");
+    const int nPerSpan = 4;
+    const int n = 2 * nPerSpan;
+    Model2D m = straightBeam(2.0 * L, n, E, A, I);
+    const int left = 1, midNode = nPerSpan + 1, right = n + 1;
+    m.constraints.push_back({left, 1, 0.0});
+    m.constraints.push_back({left, 2, 0.0});
+    m.constraints.push_back({midNode, 2, 0.0});
+    m.constraints.push_back({right, 2, 0.0});
+    for (int e = 1; e <= n; ++e)
+        m.elemLoads.push_back({e, "GY", -q, -q});
+
+    const ModelResult r = solveModel2D(m);
+    // 两跨等跨等载：中支座反力 1.25 qL，端支座 0.375 qL，合计 2qL
+    check("中支座反力  R=1.25qL", nodalReaction(m, r, midNode, 2), 1.25 * q * L, 1e-6);
+    check("端支座反力  R=0.375qL", nodalReaction(m, r, left, 2), 0.375 * q * L, 1e-6);
+    const double total = nodalReaction(m, r, left, 2) + nodalReaction(m, r, midNode, 2)
+                       + nodalReaction(m, r, right, 2);
+    check("反力合计  ΣR=2qL（整体平衡）", total, 2.0 * q * L, 1e-6);
+}
+
+// ==================== 三维部分 ====================
+
+// 沿 +X 的等分直梁（BEAM）。
+Model3D straightBeam3D(double Lb, int nElem, double Em, double Am, double Im) {
+    Model3D m;
+    for (int i = 0; i <= nElem; ++i)
+        m.nodes[i + 1] = Vec3(Lb * i / static_cast<double>(nElem), 0.0, 0.0);
+    for (int e = 0; e < nElem; ++e) {
+        Element3D el;
+        el.id = e + 1;
+        el.type = "BEAM";
+        el.E = Em; el.A = Am;
+        el.Iy = Im; el.Iz = Im; el.J = 1.0e-5; el.G = 8.0e10;
+        el.n1 = e + 1; el.n2 = e + 2;
+        m.elements.push_back(el);
+    }
+    return m;
+}
+
+// ---- 7. 三维悬臂梁端部集中力：δ = P L³ / (3 E Iz) ----
+void test3DCantilever() {
+    std::printf("\n[7] 三维悬臂梁 端部集中力\n");
+    const int n = 1;
+    Model3D m = straightBeam3D(L, n, E, A, I);
+    for (int d = 1; d <= 6; ++d) m.constraints.push_back({1, d, 0.0});
+    m.loads.push_back({n + 1, 2, -P});
+
+    const std::vector<double> U = solveModel3D(m);
+    // 梁沿 X、荷载沿 Y：弯曲发生在 X-Y 面内，用 Iz。
+    check("端部挠度  δ=PL³/(3EIz)", U[6 * n + 1], -P * L * L * L / (3.0 * E * I));
+}
+
+// ---- 8. 三维桁架杆：δ = P L / (E A) ----
+void test3DAxialBar() {
+    std::printf("\n[8] 三维桁架杆 轴向拉伸\n");
+    Model3D m;
+    m.nodes[1] = Vec3(0.0, 0.0, 0.0);
+    m.nodes[2] = Vec3(L, 0.0, 0.0);
+    Element3D el;
+    el.id = 1; el.type = "TRUSS"; el.E = E; el.A = A; el.n1 = 1; el.n2 = 2;
+    m.elements.push_back(el);
+    for (int d = 1; d <= 3; ++d) m.constraints.push_back({1, d, 0.0});
+    m.constraints.push_back({2, 2, 0.0});
+    m.constraints.push_back({2, 3, 0.0});
+    m.loads.push_back({2, 1, P});
+
+    const std::vector<double> U = solveModel3D(m);
+    // 纯桁架节点只有 3 个自由度：节点 2 起始于全局第 3 个自由度。
+    check("轴向伸长  δ=PL/(EA)", U[3], P * L / (E * A));
+}
+
+// ---- 9. 支座沉降（非零指定位移）----
+// 旧实现的 Model3D 约束只有 (node, dof)，且求解时硬编码 F(d)=0，
+// 三维模型完全无法施加支座沉降。
+void test3DSupportSettlement() {
+    std::printf("\n[9] 三维 支座沉降（非零指定位移）\n");
+    const int n = 1;
+    const double settle = -0.005;
+    Model3D m = straightBeam3D(L, n, E, A, I);
+    m.constraints.push_back({1, 1, 0.0});
+    m.constraints.push_back({1, 2, settle});   // 固定端竖向沉降 5 mm
+    for (int d = 3; d <= 6; ++d) m.constraints.push_back({1, d, 0.0});
+    // 不施加任何荷载：梁随支座整体下沉，且内部无变形。
+
+    const std::vector<double> U = solveModel3D(m);
+    check("固定端位移 = 沉降量", U[1], settle);
+    check("自由端随支座整体下沉", U[6 * n + 1], settle);
+    check("自由端无转角（无内力）", U[6 * n + 5], 0.0);
+}
+
+// ---- 10. 梁+桁架混合：按节点分配自由度 ----
+// 旧实现"存在一个 BEAM 就给所有节点 6 个自由度"，纯桁架节点的转动
+// 自由度恒为零刚度，总体矩阵奇异 —— 这个算例在旧实现下会直接报错。
+void test3DMixedBeamTruss() {
+    std::printf("\n[10] 三维 梁+桁架混合（按节点分配自由度）\n");
+    const double Lb = 10.0, Lt = 10.0;
+    Model3D m;
+    m.nodes[1] = Vec3(0.0, 0.0, 0.0);
+    m.nodes[2] = Vec3(Lb, 0.0, 0.0);
+    m.nodes[3] = Vec3(Lb + Lt, 0.0, 0.0);
+    Element3D beam;
+    beam.id = 1; beam.type = "BEAM"; beam.E = E; beam.A = A;
+    beam.Iy = I; beam.Iz = I; beam.J = 1.0e-5; beam.G = 8.0e10;
+    beam.n1 = 1; beam.n2 = 2;
+    Element3D truss;
+    truss.id = 2; truss.type = "TRUSS"; truss.E = E; truss.A = A;
+    truss.n1 = 2; truss.n2 = 3;
+    m.elements.push_back(beam);
+    m.elements.push_back(truss);
+
+    for (int d = 1; d <= 6; ++d) m.constraints.push_back({1, d, 0.0});
+    m.constraints.push_back({3, 2, 0.0});   // 桁架端节点只约束横向
+    m.constraints.push_back({3, 3, 0.0});
+    m.loads.push_back({3, 1, P});
+
+    // 梁轴向刚度与桁架轴向刚度串联：δ = P·(Lb/(EA) + Lt/(EA))
+    const std::vector<double> U = solveModel3D(m);
+    const double exact = P * (Lb / (E * A) + Lt / (E * A));
+    // 节点 3 为纯桁架节点（3 自由度），起始于全局第 12 个自由度。
+    check("串联轴向变形  δ=P(Lb+Lt)/(EA)", U[12], exact);
+}
+
+// ---- 11. 影响面横向维度 ----
+// 旧实现的内层循环不使用 yn，同一条一维影响线被复制 N 遍。
+// 这里验证不同横向位置会得到不同的影响值。
+void test3DInfluenceSurfaceTransverse() {
+    std::printf("\n[11] 三维 影响面横向维度\n");
+    const char* cands[] = {"../verify_3d_influence_surface.dat",
+                           "verify_3d_influence_surface.dat",
+                           "../../verify_3d_influence_surface.dat"};
+    std::string path;
+    for (const char* c : cands) {
+        std::ifstream probe(c);
+        if (probe) { path = c; break; }
+    }
+    if (path.empty()) {
+        std::printf("  [SKIP] 未找到 verify_3d_influence_surface.dat\n");
+        return;
+    }
+
+    const Model3D m = readModel3D(path);
+    const Model3D::Influence3D spec = m.influences.at(0);
+    const auto vals = compute3DInfluenceSurface(m, spec, m.laneSurface);
+
+    // 该算例中两条纵向桁架互相独立：
+    //   加载在 y=0 线上的节点 2 → 影响本线，eta = L/(EA)
+    //   加载在 y=1 线上的节点 4 → 与响应点无连接，eta = 0
+    double eta_x2y1 = 0.0, eta_x2y3 = 0.0;
+    bool hasA = false, hasB = false;
+    for (auto [xn, yn, v] : vals) {
+        if (xn == 2 && yn == 1) { eta_x2y1 = v; hasA = true; }
+        if (xn == 2 && yn == 3) { eta_x2y3 = v; hasB = true; }
+    }
+    if (!hasA || !hasB) {
+        std::printf("  [SKIP] 影响面输出缺少预期的 (x=2,y=1)/(x=2,y=3) 组合\n");
+        return;
+    }
+
+    const double kAxial = 1.0 / (200.0e9 * 0.001);   // L/(EA)，L=1
+    check("同纵向、y=0 横向：eta=L/(EA)", eta_x2y1, kAxial, 1e-6);
+    check("同纵向、y=1 横向：eta=0（横向维度生效）", eta_x2y3, 0.0, 1e-6);
+    if (std::abs(eta_x2y1 - eta_x2y3) < 1e-15) {
+        ++g_fail;
+        std::printf("  [FAIL] 不同横向位置得到相同影响值：横向维度未生效\n");
+    } else {
+        ++g_pass;
+        std::printf("  [PASS] 不同横向位置影响值不同：横向维度已生效\n");
+    }
+}
+
+} // namespace
+
+int main() {
+    setupConsoleUTF8();
+    std::printf("========== 解析解断言测试 ==========\n");
+
+    try {
+        testSimplySupportedPointLoad();
+        testCantileverPointLoad();
+        testSimplySupportedUDL();
+        testCantileverUDL();
+        testAxialBar();
+        testContinuousBeam();
+        test3DCantilever();
+        test3DAxialBar();
+        test3DSupportSettlement();
+        test3DMixedBeamTruss();
+        test3DInfluenceSurfaceTransverse();
+    } catch (const std::exception& e) {
+        std::printf("\n[ERROR] 异常: %s\n", e.what());
+        ++g_fail;
+    }
+
+    std::printf("\n====================================\n");
+    std::printf("通过 %d 项，失败 %d 项\n", g_pass, g_fail);
+    if (g_fail != 0) {
+        std::printf("结果：FAIL —— 数值结果与解析解不符\n");
+        return 1;
+    }
+    std::printf("结果：ALL PASS —— 数值结果与解析解一致\n");
+    return 0;
+}

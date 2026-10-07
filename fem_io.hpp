@@ -2091,6 +2091,163 @@ inline ModelResult solveModel2DNonlinear(const Model2D& m,
     return result;
 }
 
+// ==================== 线性系统的装配（供多次求解复用）====================
+
+// 给定激活状态，装配总体刚度矩阵 K 与荷载向量 F（尚未施加约束）。
+// solveModel2D 与影响线扫描共用这一段，避免两处逻辑走偏。
+inline void assembleLinear2D(const Model2D& m,
+                             const std::vector<char>& active,
+                             const std::map<int, int>& index,
+                             int nDofs,
+                             SparseMat& K, DenseVec& F) {
+    std::vector<Eigen::Triplet<double>> triplets;
+    for (std::size_t ei = 0; ei < m.elements.size(); ++ei) {
+        if (!active[ei]) continue;
+        const auto& e = m.elements[ei];
+        if (e.conn.size() != 2)
+            throw std::runtime_error("二维单元必须有两个节点");
+        const int i1 = index.at(e.conn[0]);
+        const int i2 = index.at(e.conn[1]);
+        const Eigen::Vector2d p1 = m.nodes.at(e.conn[0]);
+        const Eigen::Vector2d p2 = m.nodes.at(e.conn[1]);
+
+        if (isAxial(e.type)) {
+            TrussElement te{e.E, e.A, 2,
+                            Eigen::Vector3d(p1(0), p1(1), 0.0),
+                            Eigen::Vector3d(p2(0), p2(1), 0.0)};
+            const DenseMat Ke = te.stiffness(); // 4x4
+            const std::vector<int> g = {3 * i1, 3 * i1 + 1, 3 * i2, 3 * i2 + 1};
+            scatter(Ke, g, triplets);
+        } else if (e.type == "RIGID_PIN") {
+            const DenseMat Ke = rigidPinStiffness(p1, p2);
+            const std::vector<int> g = {3 * i1, 3 * i1 + 1, 3 * i1 + 2,
+                                        3 * i2, 3 * i2 + 1, 3 * i2 + 2};
+            scatter(Ke, g, triplets);
+        } else if (e.type == "BEAM" || e.type == "RIGID") {
+            EulerBeam2D be{e.E, e.A, e.I, p1, p2};
+            const DenseMat Ke = be.stiffness(); // 6x6
+            const std::vector<int> g = {3 * i1, 3 * i1 + 1, 3 * i1 + 2,
+                                        3 * i2, 3 * i2 + 1, 3 * i2 + 2};
+            scatter(Ke, g, triplets);
+        } else {
+            throw std::runtime_error("未知单元类型: " + e.type);
+        }
+    }
+    if (!m.ces.empty())
+        appendConstraintPenaltyTriplets(m, index, nDofs, m.cePenalty, triplets);
+    K.resize(nDofs, nDofs);
+    K.setFromTriplets(triplets.begin(), triplets.end());
+    K.makeCompressed();
+
+    F = DenseVec::Zero(nDofs);
+    for (const auto& l : m.loads) {
+        if (l.dof < 1 || l.dof > 3)
+            throw std::runtime_error("载荷自由度必须在 1~3 之间");
+        F(3 * index.at(l.node) + (l.dof - 1)) += l.value;
+    }
+    for (std::size_t ei = 0; ei < m.elements.size(); ++ei) {
+        if (!active[ei]) continue;
+        const auto& e = m.elements[ei];
+        const int i1 = index.at(e.conn[0]), i2 = index.at(e.conn[1]);
+        const Eigen::Vector2d p1 = m.nodes.at(e.conn[0]);
+        const Eigen::Vector2d p2 = m.nodes.at(e.conn[1]);
+        const DenseVec fe = elementEquivalentLoad(m, e, p1, p2);
+        addElementLoad(elementGdofs2D(e.type, i1, i2), fe, F);
+    }
+    if (!m.ces.empty())
+        F += constraintPenaltyConstantForce(m, index, nDofs, m.cePenalty);
+}
+
+// 自动约束"无转动刚度的转角自由度"。
+// 二维统一按每节点 3 个自由度 [u, v, θ] 编号，但 TRUSS/CABLE/STRUT 只贡献
+// 平动刚度。纯桁架节点的 θ 对角元恒为 0，若不由用户显式约束，总体矩阵必然
+// 奇异，且报错信息对使用者很不友好。这里自动补零约束（等价于 ANSYS 等软件
+// 对未用自由度的处理），平移自由度仍然保持严格的零刚度检查。
+inline void autoConstrainFreeRotations(const SparseMat& K, int nDofs,
+                                       const std::vector<int>& baseCdofs,
+                                       const std::vector<double>& baseCvals,
+                                       std::vector<int>& cdofs,
+                                       std::vector<double>& cvals) {
+    cdofs = baseCdofs;
+    cvals = baseCvals;
+    std::vector<char> isC(nDofs, 0);
+    for (int d : cdofs) isC[d] = 1;
+    for (int d = 2; d < nDofs; d += 3) {   // 每节点的第 3 个自由度 = 转角 θ
+        if (isC[d]) continue;
+        if (K.coeff(d, d) == 0.0) {
+            cdofs.push_back(d);
+            cvals.push_back(0.0);
+            isC[d] = 1;
+        }
+    }
+}
+
+// 装配结果：影响线/车道扫描可复用同一份 K 的分解，避免逐位置重新装配+重新分解。
+struct Assembled2D {
+    SparseMat K0;                 // 未施加约束（反力 = K0*U - F0）
+    DenseVec  F0;
+    SparseMat K;                  // 已施加 Dirichlet，可直接分解
+    DenseVec  F;                  // 已施加 Dirichlet
+    std::vector<int> cdofs;
+    std::vector<double> cvals;
+    std::vector<char> isConstrained;
+    std::vector<int> ids;         // 0-based 索引 -> 节点号
+    std::map<int, int> index;
+    int nDofs = 0;
+};
+
+// 一次性装配（全部单元激活）+ 施加 Dirichlet。
+// 仅适用于线性模型；含 CABLE/STRUT 时激活状态依赖位移，必须逐次迭代。
+inline Assembled2D assembleModel2DLinear(const Model2D& m) {
+    Assembled2D a;
+    for (const auto& [id, c] : m.nodes) {
+        a.index[id] = static_cast<int>(a.ids.size());
+        a.ids.push_back(id);
+    }
+    a.nDofs = 3 * static_cast<int>(a.ids.size());
+
+    const std::vector<char> active(m.elements.size(), 1);
+    SparseMat K;
+    DenseVec F;
+    assembleLinear2D(m, active, a.index, a.nDofs, K, F);
+    a.K0 = K;
+    a.F0 = F;
+
+    a.isConstrained.assign(a.nDofs, 0);
+    for (const auto& c : m.constraints) {
+        if (c.dof < 1 || c.dof > 3)
+            throw std::runtime_error("约束自由度必须在 1~3 之间");
+        const int d = 3 * a.index.at(c.node) + (c.dof - 1);
+        a.cdofs.push_back(d);
+        a.cvals.push_back(c.value);
+        a.isConstrained[d] = 1;
+    }
+    std::vector<int> cd;
+    std::vector<double> cv;
+    autoConstrainFreeRotations(K, a.nDofs, a.cdofs, a.cvals, cd, cv);
+    a.cdofs = cd;
+    a.cvals = cv;
+    a.isConstrained.assign(a.nDofs, 0);
+    for (int d : a.cdofs) a.isConstrained[d] = 1;
+
+    a.K = K;
+    a.F = F;
+    applyDirichlet(a.K, a.F, a.cdofs, a.cvals);
+    return a;
+}
+
+// 由位移与装配结果构造 ModelResult（含反力），供响应计算复用。
+inline ModelResult makeResult2D(const Model2D& m, const Assembled2D& a,
+                                const DenseVec& U, const DenseVec& F0) {
+    ModelResult r;
+    r.U = U;
+    r.R = a.K0 * U - F0;
+    r.nodeIds = a.ids;
+    r.coords.reserve(a.ids.size());
+    for (int id : a.ids) r.coords.push_back(m.nodes.at(id));
+    return r;
+}
+
 // 组装并求解二维结构（默认 SimplicialLDLT）。
 inline ModelResult solveModel2D(const Model2D& m,
                                 SolverType type = SolverType::SimplicialLDLT,
@@ -2127,68 +2284,17 @@ inline ModelResult solveModel2D(const Model2D& m,
     const int maxIter = 100;
 
     for (int iter = 0; ; ++iter) {
-        // 组装 K（只含激活单元）。
-        std::vector<Eigen::Triplet<double>> triplets;
-        for (std::size_t ei = 0; ei < m.elements.size(); ++ei) {
-            if (!active[ei]) continue;
-            const auto& e = m.elements[ei];
-            if (e.conn.size() != 2)
-                throw std::runtime_error("二维单元必须有两个节点");
-            const int i1 = index.at(e.conn[0]);
-            const int i2 = index.at(e.conn[1]);
-            const Eigen::Vector2d p1 = m.nodes.at(e.conn[0]);
-            const Eigen::Vector2d p2 = m.nodes.at(e.conn[1]);
-
-            if (isAxial(e.type)) {
-                TrussElement te{e.E, e.A, 2,
-                                Eigen::Vector3d(p1(0), p1(1), 0.0),
-                                Eigen::Vector3d(p2(0), p2(1), 0.0)};
-                const DenseMat Ke = te.stiffness(); // 4x4
-                const std::vector<int> g = {3 * i1, 3 * i1 + 1, 3 * i2, 3 * i2 + 1};
-                scatter(Ke, g, triplets);
-            } else if (e.type == "RIGID_PIN") {
-                const DenseMat Ke = rigidPinStiffness(p1, p2);
-                const std::vector<int> g = {3 * i1, 3 * i1 + 1, 3 * i1 + 2,
-                                            3 * i2, 3 * i2 + 1, 3 * i2 + 2};
-                scatter(Ke, g, triplets);
-            } else if (e.type == "BEAM" || e.type == "RIGID") {
-                EulerBeam2D be{e.E, e.A, e.I, p1, p2};
-                const DenseMat Ke = be.stiffness(); // 6x6
-                const std::vector<int> g = {3 * i1, 3 * i1 + 1, 3 * i1 + 2,
-                                            3 * i2, 3 * i2 + 1, 3 * i2 + 2};
-                scatter(Ke, g, triplets);
-            } else {
-                throw std::runtime_error("未知单元类型: " + e.type);
-            }
-        }
-        if (!m.ces.empty())
-            appendConstraintPenaltyTriplets(m, index, nDofs, m.cePenalty, triplets);
-        SparseMat K(nDofs, nDofs);
-        K.setFromTriplets(triplets.begin(), triplets.end());
-        K.makeCompressed();
-
-        // 组装 F：集中荷载 + 激活单元的等效荷载。
-        DenseVec F = DenseVec::Zero(nDofs);
-        for (const auto& l : m.loads) {
-            if (l.dof < 1 || l.dof > 3)
-                throw std::runtime_error("载荷自由度必须在 1~3 之间");
-            F(3 * index.at(l.node) + (l.dof - 1)) += l.value;
-        }
-        for (std::size_t ei = 0; ei < m.elements.size(); ++ei) {
-            if (!active[ei]) continue;
-            const auto& e = m.elements[ei];
-            const int i1 = index.at(e.conn[0]), i2 = index.at(e.conn[1]);
-            const Eigen::Vector2d p1 = m.nodes.at(e.conn[0]);
-            const Eigen::Vector2d p2 = m.nodes.at(e.conn[1]);
-            const DenseVec fe = elementEquivalentLoad(m, e, p1, p2);
-            addElementLoad(elementGdofs2D(e.type, i1, i2), fe, F);
-        }
-        if (!m.ces.empty())
-            F += constraintPenaltyConstantForce(m, index, nDofs, m.cePenalty);
+        // 组装 K / F（只含激活单元）。
+        SparseMat K;
+        DenseVec F;
+        assembleLinear2D(m, active, index, nDofs, K, F);
 
         K0 = K;   // 施加约束前，用于反力计算
         F0 = F;
-        applyDirichlet(K, F, cdofs, cvals);
+        std::vector<int> cd;
+        std::vector<double> cv;
+        autoConstrainFreeRotations(K, nDofs, cdofs, cvals, cd, cv);
+        applyDirichlet(K, F, cd, cv);
 
         // 诊断：零对角线自由度。
         for (int d = 0; d < nDofs; ++d) {
@@ -3128,24 +3234,64 @@ inline InfluenceCurve computeInfluenceCurve(const Model2D& m,
     out.s.reserve(lane.nodes.size());
     out.eta.reserve(lane.nodes.size());
 
-    // 先求解无单位移动荷载的基准响应，保证影响线只表示单位荷载增量。
-    const ModelResult base = solveModel2D(m, type);
-    const double baseValue = evaluateInfluenceResponse(m, base, spec);
-
     const int loadDof = (lane.dir == "GX") ? 1 : 2;
+
+    // 车道纵向里程（与求解方式无关，先算出来）。
     double s = 0.0;
     for (std::size_t k = 0; k < lane.nodes.size(); ++k) {
         if (k > 0) {
-            const Eigen::Vector2d a = m.nodes.at(lane.nodes[k - 1]);
-            const Eigen::Vector2d b = m.nodes.at(lane.nodes[k]);
-            s += (b - a).norm();
+            const Eigen::Vector2d pa = m.nodes.at(lane.nodes[k - 1]);
+            const Eigen::Vector2d pb = m.nodes.at(lane.nodes[k]);
+            s += (pb - pa).norm();
         }
         out.s.push_back(s);
+    }
 
-        Model2D mc = m;
-        mc.loads.push_back({lane.nodes[k], loadDof, 1.0});
-        const ModelResult r = solveModel2D(mc, type);
-        out.eta.push_back(evaluateInfluenceResponse(m, r, spec) - baseValue);
+    // 索/压杆的激活状态依赖位移，且非线性分析每步都要重算切线，
+    // 这两种情况只能逐位置重新求解。
+    bool needsReSolve = (m.analysisType == "NONLINEAR");
+    for (const auto& e : m.elements)
+        if (e.type == "CABLE" || e.type == "STRUT") { needsReSolve = true; break; }
+
+    if (needsReSolve) {
+        const ModelResult base = solveModel2D(m, type);
+        const double baseValue = evaluateInfluenceResponse(m, base, spec);
+        for (std::size_t k = 0; k < lane.nodes.size(); ++k) {
+            Model2D mc = m;
+            mc.loads.push_back({lane.nodes[k], loadDof, 1.0});
+            const ModelResult r = solveModel2D(mc, type);
+            out.eta.push_back(evaluateInfluenceResponse(m, r, spec) - baseValue);
+        }
+    } else {
+        // 线性模型：K 与加载位置无关，装配一次、分解一次，
+        // 之后每个位置只做一次三角回代（旧实现每个位置都重新装配+重新分解）。
+        const Assembled2D a = assembleModel2DLinear(m);
+
+        Eigen::SimplicialLDLT<SparseMat> ldlt;
+        ldlt.compute(a.K);
+        if (ldlt.info() != Eigen::Success)
+            throw std::runtime_error("影响线：刚度矩阵分解失败");
+
+        const DenseVec Ubase = ldlt.solve(a.F);
+        if (ldlt.info() != Eigen::Success)
+            throw std::runtime_error("影响线：基准工况求解失败");
+        const ModelResult base = makeResult2D(m, a, Ubase, a.F0);
+        const double baseValue = evaluateInfluenceResponse(m, base, spec);
+
+        DenseVec F0k(a.nDofs), Fk(a.nDofs);
+        for (std::size_t k = 0; k < lane.nodes.size(); ++k) {
+            F0k = a.F0;
+            Fk  = a.F;
+            const int d = 3 * a.index.at(lane.nodes[k]) + (loadDof - 1);
+            // 加载点若被约束，单位荷载由支座直接承担，对结构无影响。
+            if (!a.isConstrained[d]) { F0k(d) += 1.0; Fk(d) += 1.0; }
+            const DenseVec U = ldlt.solve(Fk);
+            if (ldlt.info() != Eigen::Success)
+                throw std::runtime_error("影响线：第 " + std::to_string(k + 1) +
+                                         " 个加载位置求解失败");
+            const ModelResult r = makeResult2D(m, a, U, F0k);
+            out.eta.push_back(evaluateInfluenceResponse(m, r, spec) - baseValue);
+        }
     }
 
     out.vmax = out.eta[0];

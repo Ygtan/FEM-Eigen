@@ -4,6 +4,8 @@ $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $bin = Join-Path $root "build"
 
 $tests = @(
+  # 解析解断言：校验数值结果本身，而不只是"程序没崩"
+  @{ exe="test_analytical.exe"; args=@() },
   @{ exe="example_1d_bar.exe"; args=@() },
   @{ exe="example_2d_truss.exe"; args=@() },
   @{ exe="example_2d_plane.exe"; args=@() },
