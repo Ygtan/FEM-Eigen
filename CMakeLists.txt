@@ -33,10 +33,41 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/amgcl/amgcl/amg.hpp")
 endif()
 
 # ---- SuiteSparse CHOLMOD（可选，通过 MSYS2 pacman 安装）----
-find_path(CHOLMOD_INCLUDE_DIR cholmod.h
-    PATHS "C:/msys64/mingw64/include/suitesparse" "C:/msys64/ucrt64/include/suitesparse")
-if(CHOLMOD_INCLUDE_DIR)
-    message(STATUS "找到 CHOLMOD 头文件: ${CHOLMOD_INCLUDE_DIR}")
+# 注意：必须同时定位"头文件"与"库文件"。只 find_path 头文件会导致链接期
+# `cannot find -lcholmod`，因此这里由头文件路径推导库目录并逐个 find_library，
+# 任一库缺失即整体禁用 CHOLMOD，避免产生必然失败的链接目标。
+option(FEM_USE_CHOLMOD "启用 SuiteSparse CHOLMOD 后端（未安装时自动禁用）" ON)
+
+set(FEM_CHOLMOD_READY FALSE)
+if(FEM_USE_CHOLMOD)
+    find_path(CHOLMOD_INCLUDE_DIR cholmod.h
+        PATHS "C:/msys64/mingw64/include/suitesparse" "C:/msys64/ucrt64/include/suitesparse")
+    if(CHOLMOD_INCLUDE_DIR)
+        # <prefix>/include/suitesparse  ->  <prefix>/lib
+        get_filename_component(_cholmod_inc_parent "${CHOLMOD_INCLUDE_DIR}" DIRECTORY)
+        get_filename_component(_cholmod_prefix "${_cholmod_inc_parent}" DIRECTORY)
+        set(_cholmod_lib_hints "${_cholmod_prefix}/lib")
+
+        set(FEM_CHOLMOD_LIBS "")
+        set(_cholmod_missing "")
+        foreach(_lib cholmod suitesparseconfig amd colamd camd ccolamd openblas)
+            find_library(CHOLMOD_LIB_${_lib} NAMES ${_lib} HINTS "${_cholmod_lib_hints}")
+            if(CHOLMOD_LIB_${_lib})
+                list(APPEND FEM_CHOLMOD_LIBS "${CHOLMOD_LIB_${_lib}}")
+            else()
+                list(APPEND _cholmod_missing "${_lib}")
+            endif()
+        endforeach()
+
+        if(_cholmod_missing)
+            message(STATUS "CHOLMOD: 缺少库 ${_cholmod_missing}，已禁用 CHOLMOD 后端")
+        else()
+            set(FEM_CHOLMOD_READY TRUE)
+            message(STATUS "找到 CHOLMOD: 头文件 ${CHOLMOD_INCLUDE_DIR}，库目录 ${_cholmod_lib_hints}")
+        endif()
+    else()
+        message(STATUS "未找到 CHOLMOD 头文件，已禁用 CHOLMOD 后端")
+    endif()
 endif()
 
 # 添加可执行目标的便捷函数。
@@ -54,12 +85,11 @@ function(fem_add_executable target source)
 endfunction()
 
 # 仅为真正使用 CHOLMOD 的目标链接 SuiteSparse（避免其它示例产生 DLL 依赖）。
+# 使用 find_library 得到的绝对路径，而不是裸 -l 名称。
 function(fem_link_cholmod target)
-    if(CHOLMOD_INCLUDE_DIR)
+    if(FEM_CHOLMOD_READY)
         target_include_directories(${target} PRIVATE "${CHOLMOD_INCLUDE_DIR}")
-        target_link_libraries(${target} PRIVATE
-            cholmod suitesparseconfig amd colamd camd ccolamd
-            openblas gomp mingwthrd)
+        target_link_libraries(${target} PRIVATE ${FEM_CHOLMOD_LIBS})
     endif()
 endfunction()
 
@@ -86,11 +116,11 @@ fem_add_executable(example_solvers example_solvers.cpp)
 fem_link_cholmod(example_solvers)
 fem_add_executable(example_amgcl example_amgcl.cpp)
 fem_link_cholmod(example_amgcl)
-if(CHOLMOD_INCLUDE_DIR)
+if(FEM_CHOLMOD_READY)
     fem_add_executable(example_cholmod example_cholmod.cpp)
     fem_link_cholmod(example_cholmod)
 else()
-    message(STATUS "未找到 CHOLMOD，跳过 example_cholmod")
+    message(STATUS "CHOLMOD 不可用，跳过 example_cholmod")
 endif()
 fem_add_executable(example_mixed example_mixed.cpp)
 fem_link_cholmod(example_mixed)

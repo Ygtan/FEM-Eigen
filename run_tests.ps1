@@ -1,6 +1,7 @@
 $env:PATH = "C:\msys64\mingw64\bin;C:\msys64\usr\bin;$env:PATH"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$bin = Join-Path $root "build_debug"
+# 统一使用构建目录 build（清理后已移除 build_cable/build_debug/build_local/build_make）
+$bin = Join-Path $root "build"
 
 $tests = @(
   @{ exe="example_1d_bar.exe"; args=@() },
