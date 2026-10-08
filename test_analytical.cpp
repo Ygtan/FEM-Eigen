@@ -806,6 +806,122 @@ void testSolverReuse() {
     check("多右端项 第3列 = 零右端 → 零解", X.col(2).norm(), 0.0, 1e-12);
 }
 
+// ---- 17. 梁温度荷载：均匀升温 / 温度梯度 ----
+// 温度等效荷载此前只靠"与旧基线逐字节一致"兜底，从未用闭式解验证过符号与数值。
+// 这里补两个最基础、最无歧义的解析解，锁定均匀升温轴力与温度梯度反拱。
+void testBeamTemperature() {
+    std::printf("\n[17] 梁温度荷载\n");
+    const double alpha = 1.2e-5;  // 热膨胀系数
+    const double h = 0.5;         // 梁高
+    const double dT = 30.0;       // 温升 / 温差
+
+    // 17a. 两端固定梁均匀升温：轴向被约束 → 轴力 N = -E·A·α·ΔT（受压）
+    {
+        Model2D m = straightBeam(L, 1, E, A, I);
+        m.elements[0].alpha = alpha;
+        m.constraints.push_back({1, 1, 0.0});
+        m.constraints.push_back({1, 2, 0.0});
+        m.constraints.push_back({1, 3, 0.0});
+        m.constraints.push_back({2, 1, 0.0});
+        m.constraints.push_back({2, 2, 0.0});
+        m.constraints.push_back({2, 3, 0.0});
+        m.uniformTemp = dT;
+
+        const ModelResult r = solveModel2D(m);
+        const auto f = elementForces2D(m, r.U).front();
+        check("两端固定 均匀升温 N=-EAαΔT", f.N1, -E * A * alpha * dT);
+        check("两端固定 均匀升温 N2=N1", f.N2, -E * A * alpha * dT);
+    }
+
+    // 17b. 简支梁温度梯度：端弯矩应为 0，跨中反拱 |δ|=α·ΔT·L²/(8h)
+    {
+        const int n = 4;
+        Model2D m = straightBeam(L, n, E, A, I);
+        for (auto& e : m.elements) { e.alpha = alpha; e.h = h; }
+        m.constraints.push_back({1, 1, 0.0});
+        m.constraints.push_back({1, 2, 0.0});
+        m.constraints.push_back({n + 1, 2, 0.0});
+        for (int e = 1; e <= n; ++e)
+            m.elemTemps.push_back({e, "GRADIENT", dT});
+
+        const ModelResult r = solveModel2D(m);
+        const auto forces = elementForces2D(m, r.U);
+        const double MT = E * I * alpha * dT / h;   // 温度梯度等效弯矩
+        double mMax = 0.0;
+        for (const auto& f : forces)
+            mMax = std::max(mMax, std::max(std::abs(f.M1), std::abs(f.M2)));
+        check("温度梯度 端弯矩≈0", mMax / MT, 0.0, 1e-8);
+
+        const int mid = n / 2 + 1;
+        check("温度梯度 跨中反拱 |δ|=αΔTL²/(8h)",
+              std::abs(nodalDisp(m, r, mid, 2)),
+              alpha * dT * L * L / (8.0 * h));
+    }
+}
+
+// ---- 18. 均布荷载梁端力符号 ----
+// 补锁均布荷载下的 V1/V2/M1/M2 符号（此前只在集中力工况下锁定过）。
+void testUDLSignConvention() {
+    std::printf("\n[18] 均布荷载梁端力符号\n");
+    const int n = 4;
+    Model2D m = straightBeam(L, n, E, A, I);
+    m.constraints.push_back({1, 1, 0.0});
+    m.constraints.push_back({1, 2, 0.0});
+    m.constraints.push_back({n + 1, 2, 0.0});
+    for (int e = 1; e <= n; ++e)
+        m.elemLoads.push_back({e, "GY", -q, -q});
+
+    const ModelResult r = solveModel2D(m);
+    const auto forces = elementForces2D(m, r.U);
+    const double Mscale = q * L * L / 8.0;
+    // 左端单元（单元1）的节点1端 = 左支座：M=0，V=+qL/2
+    check("左支座 M1=0", forces.front().M1 / Mscale, 0.0, 1e-8);
+    check("左支座 V1=+qL/2", forces.front().V1, q * L / 2.0);
+    // 右端单元（单元n）的节点2端 = 右支座：M=0，V=-qL/2
+    check("右支座 M2=0", forces.back().M2 / Mscale, 0.0, 1e-8);
+    check("右支座 V2=-qL/2", forces.back().V2, -q * L / 2.0);
+}
+
+// ---- 19. 梁 P-Δ / 几何刚度（屈曲放大）----
+// 悬臂柱：轴压 P + 端部横力 Q。轴压会软化弯曲刚度，使挠度按
+// 1/(1-P/Pcr) 放大（Pcr = 悬臂欧拉临界力 π²EI/(4L²)）。
+// 线性解无此效应，非线性解（含几何刚度）应有放大。
+void testBeamPDelta() {
+    std::printf("\n[19] 梁 P-Δ 几何刚度\n");
+    const int n = 10;
+    Model2D m = straightBeam(L, n, E, A, I);
+    m.constraints.push_back({1, 1, 0.0});
+    m.constraints.push_back({1, 2, 0.0});
+    m.constraints.push_back({1, 3, 0.0});
+
+    const double pi = 3.14159265358979323846;
+    const double Pcr = pi * pi * E * I / (4.0 * L * L);
+    const double P = 0.25 * Pcr;
+    const double Q = 1.0e3;
+
+    Model2D mlin = m;
+    mlin.loads.push_back({n + 1, 1, -P});
+    mlin.loads.push_back({n + 1, 2, -Q});
+    mlin.analysisType = "LINEAR";
+    const double dLin = nodalDisp(mlin, solveModel2D(mlin), n + 1, 2);
+
+    Model2D mnl = m;
+    mnl.loads.push_back({n + 1, 1, -P});
+    mnl.loads.push_back({n + 1, 2, -Q});
+    mnl.analysisType = "NONLINEAR";
+    mnl.nonlinearLoadSteps = 4;
+    const double dNl = nodalDisp(mnl, solveModel2D(mnl), n + 1, 2);
+
+    check("挠度放大系数 ≈ 1/(1-P/Pcr)", dNl / dLin, 1.0 / (1.0 - P / Pcr), 0.03);
+    if (std::abs(dNl) > std::abs(dLin)) {
+        ++g_pass;
+        std::printf("  [PASS] P-Δ 使挠度增大（受压软化）  dNl/dLin=%.4f\n", dNl / dLin);
+    } else {
+        ++g_fail;
+        std::printf("  [FAIL] P-Δ 未增大挠度  dLin=%g dNl=%g\n", dLin, dNl);
+    }
+}
+
 } // namespace
 
 int main() {
@@ -829,6 +945,9 @@ int main() {
         testCreepAEMM();
         testNonlinearTwoBarTruss();
         testSolverReuse();
+        testBeamTemperature();
+        testUDLSignConvention();
+        testBeamPDelta();
     } catch (const std::exception& e) {
         std::printf("\n[ERROR] 异常: %s\n", e.what());
         ++g_fail;

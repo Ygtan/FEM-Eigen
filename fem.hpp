@@ -853,4 +853,21 @@ struct EulerBeam2D {
     }
 };
 
+// 2D 梁几何刚度矩阵（一致式），轴力 N（受拉为正），杆长 L。
+// 局部自由度 [u1,v1,θ1,u2,v2,θ2]；仅横向 v/θ 自由度非零，用于 P-Δ / 屈曲。
+// 该矩阵与 EulerBeam2D::localStiffness 叠加后即为一阶 P-Δ 切线刚度。
+inline DenseMat beamGeometricStiffness2D(double N, double L) {
+    DenseMat Kg = DenseMat::Zero(6, 6);
+    const double a = N / L;
+    Kg(1, 1) = Kg(4, 4) = 6.0 / 5.0 * a;
+    Kg(1, 2) = Kg(2, 1) = L / 10.0 * a;
+    Kg(1, 4) = Kg(4, 1) = -6.0 / 5.0 * a;
+    Kg(1, 5) = Kg(5, 1) = L / 10.0 * a;
+    Kg(2, 2) = Kg(5, 5) = 2.0 * L * L / 15.0 * a;
+    Kg(2, 4) = Kg(4, 2) = -L / 10.0 * a;
+    Kg(2, 5) = Kg(5, 2) = -L * L / 30.0 * a;
+    Kg(4, 5) = Kg(5, 4) = -L / 10.0 * a;
+    return Kg;
+}
+
 } // namespace fem

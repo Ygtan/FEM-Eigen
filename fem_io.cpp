@@ -1575,12 +1575,25 @@ ModelResult solveModel2DNonlinear(const Model2D& m,
                 ug << Ucur(3 * i1 + 0), Ucur(3 * i1 + 1), Ucur(3 * i1 + 2),
                       Ucur(3 * i2 + 0), Ucur(3 * i2 + 1), Ucur(3 * i2 + 2);
                 const DenseMat Ke = be.stiffness();
-                const DenseVec fint = Ke * ug;
                 DenseVec fext = elementExternalEquivalentLoad(m, e, p1, p2);
                 fext *= loadScale;
+                DenseMat Kt = Ke;
+                DenseVec fint = Ke * ug;
+                if (e.type == "BEAM") {
+                    // 一阶 P-Δ / 几何刚度：轴力 N 会软化（受压）或增强（受拉）弯曲刚度。
+                    // N 取当前构形下的物理轴力 = 机械轴力 + 局部等效轴力（含温度/自重轴向分量）。
+                    const DenseMat T = be.transformation();
+                    const Eigen::VectorXd ul = T * ug;
+                    const double L = (p2 - p1).norm();
+                    const Eigen::VectorXd fel = T * fext;   // 已按 loadScale 缩放
+                    const double N = e.E * e.A / L * (ul(3) - ul(0)) + fel(0);
+                    const DenseMat Kgg = T.transpose() * beamGeometricStiffness2D(N, L) * T;
+                    Kt += Kgg;
+                    fint = Kt * ug;
+                }
                 addElementLoad(g, fext, Fext);
                 addElementLoad(g, fint, Fint);
-                if (triplets) scatter(Ke, g, *triplets);
+                if (triplets) scatter(Kt, g, *triplets);
             } else {
                 throw std::runtime_error("未知单元类型: " + e.type);
             }
