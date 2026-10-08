@@ -1,4 +1,4 @@
-$env:PATH = "C:\msys64\mingw64\bin;C:\msys64\usr\bin;$env:PATH"
+﻿$env:PATH = "C:\msys64\mingw64\bin;C:\msys64\usr\bin;$env:PATH"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 # 统一使用构建目录 build（清理后已移除 build_cable/build_debug/build_local/build_make）
 $bin = Join-Path $root "build"
@@ -42,6 +42,30 @@ foreach ($t in $tests) {
         Write-Host "[FAIL] $($t.exe) $($t.args -join ' ')"
         $failed++
     }
+}
+
+# ---- .dat byte-for-byte regression vs golden baselines in tests/regression/baselines ----
+$regScript = Join-Path $root "tests\regression\compare_regression.py"
+$baseline  = Join-Path $root "tests\regression\baselines"
+if (Test-Path $regScript) {
+    $py = Get-Command python -ErrorAction SilentlyContinue
+    if ($py) {
+        Write-Host ""
+        Write-Host "== .dat byte-for-byte regression =="
+        & python $regScript --bin $bin --src $root --baseline $baseline
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[PASS] .dat byte regression"
+        } else {
+            Write-Host "[FAIL] .dat byte regression"
+            $failed++
+        }
+    } else {
+        Write-Host "[MISS] python not found, skip .dat byte regression"
+        $failed++
+    }
+} else {
+    Write-Host "[MISS] regression script missing: $regScript"
+    $failed++
 }
 
 if ($failed -eq 0) { Write-Host "ALL TESTS PASSED" } else { Write-Host "$failed TEST(S) FAILED"; exit 1 }
