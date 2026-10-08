@@ -1,7 +1,6 @@
 #pragma once
 
 // 复用 fem.hpp 中的稀疏求解器与 Dirichlet 处理（applyDirichlet / solve）。
-// zengjia zhushi
 #include "fem.hpp"
 
 #include <Eigen/Dense>
