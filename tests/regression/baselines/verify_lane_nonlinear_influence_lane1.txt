@@ -1,0 +1,9 @@
+# 影响线（单位荷载沿 GY 方向）
+# LANE 1  q=-10  P=-100
+
+# DISP id=1 node=2 dof=2
+# max=2.5e-07 @s=1  min=0 @s=0
+s	eta
+0	0
+1	2.5e-07
+2	0

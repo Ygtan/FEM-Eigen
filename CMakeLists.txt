@@ -118,6 +118,23 @@ enable_testing()
 fem_add_executable(test_analytical test_analytical.cpp)
 add_test(NAME analytical_exact_solutions COMMAND test_analytical)
 
+# .dat 逐字节回归比对：用当前构建重算 verify_*.dat，并与其黄金基线逐字节比对。
+# 依赖 Python3；未安装时仅跳过该测试，不影响编译与其它测试。
+find_package(Python3 QUIET COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME dat_byte_regression
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/regression/compare_regression.py
+                     --bin ${CMAKE_CURRENT_BINARY_DIR}
+                     --src ${CMAKE_CURRENT_SOURCE_DIR}
+                     --baseline ${CMAKE_CURRENT_SOURCE_DIR}/tests/regression/baselines)
+    set_tests_properties(dat_byte_regression PROPERTIES
+        TIMEOUT 900
+        LABELS "regression")
+else()
+    message(STATUS "未找到 Python3，跳过 .dat 逐字节回归 CTest")
+endif()
+
 # 原始的一维杆示例。
 fem_add_executable(fem_solver One-dimension.cpp)
 

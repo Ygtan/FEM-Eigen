@@ -41,3 +41,7 @@ _test_*
 .idea/
 .DS_Store
 Thumbs.db
+
+# ---- 回归测试基线（黄金文件，需入库，覆盖上面的忽略规则）----
+!tests/regression/baselines/
+!tests/regression/baselines/**

@@ -1,0 +1,2 @@
+node	dof	original	final_displacement	camber	installation
+2	2	0	-0.0274628190104	0.0274628190104	0.0274628190104
