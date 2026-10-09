@@ -812,19 +812,20 @@ struct EulerBeam2D {
     int numNodes() const { return 2; }
 
     // 局部刚度矩阵（轴向 + 弯曲），局部自由度 [u1,v1,θ1,u2,v2,θ2]。
-    DenseMat localStiffness() const {
+    // Phi 为剪切参数 Φ=12EI/(G·As·L²)；Φ=0 退化为欧拉-伯努利梁。
+    DenseMat localStiffness(double Phi = 0.0) const {
         const Eigen::Vector2d d = x1 - x0;
         const double L = d.norm();
         if (L <= 0.0) throw std::runtime_error("梁单元长度为零");
-        const double k = E * I / (L * L * L); // 弯曲主系数 EI/L^3
+        const double k = E * I / (L * L * L * (1.0 + Phi)); // 弯曲主系数
 
         DenseMat Kl = DenseMat::Zero(6, 6);
         Kl << E * A / L, 0.0, 0.0, -E * A / L, 0.0, 0.0,
               0.0, 12.0 * k, 6.0 * k * L, 0.0, -12.0 * k, 6.0 * k * L,
-              0.0, 6.0 * k * L, 4.0 * k * L * L, 0.0, -6.0 * k * L, 2.0 * k * L * L,
+              0.0, 6.0 * k * L, (4.0 + Phi) * k * L * L, 0.0, -6.0 * k * L, (2.0 - Phi) * k * L * L,
               -E * A / L, 0.0, 0.0, E * A / L, 0.0, 0.0,
               0.0, -12.0 * k, -6.0 * k * L, 0.0, 12.0 * k, -6.0 * k * L,
-              0.0, 6.0 * k * L, 2.0 * k * L * L, 0.0, -6.0 * k * L, 4.0 * k * L * L;
+              0.0, 6.0 * k * L, (2.0 - Phi) * k * L * L, 0.0, -6.0 * k * L, (4.0 + Phi) * k * L * L;
         return Kl;
     }
 
@@ -846,9 +847,9 @@ struct EulerBeam2D {
         return T;
     }
 
-    DenseMat stiffness() const {
+    DenseMat stiffness(double Phi = 0.0) const {
         const DenseMat T = transformation();
-        const DenseMat Kl = localStiffness();
+        const DenseMat Kl = localStiffness(Phi);
         return T.transpose() * Kl * T;
     }
 };

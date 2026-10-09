@@ -62,7 +62,12 @@ struct Model2D {
         double dens = 0.0;  // 材料密度（自动自重）
         double addmass = 0.0; // 附加质量 kg/m（自动自重）
         double istrn = 0.0; // 初应变（cable/strut/truss 预应力）
+        double nu = 0.0;    // 泊松比（>0 时梁按 Timoshenko 考虑剪切变形）
+        double K = 5.0 / 6.0; // 剪切修正系数（矩形默认 5/6）
         std::vector<int> conn; // 两个节点号
+        // 端部释放：被释放的局部自由度索引（0=u_i,1=v_i,2=θ_i,3=u_j,4=v_j,5=θ_j）。
+        // 仅对 BEAM 有意义；M 释放=铰（θ 释放），V=剪力释放，N=轴力释放。
+        std::vector<int> releases;
     };
     std::vector<Element> elements;
 
@@ -272,6 +277,7 @@ struct Model2D {
         double E = 0.0;      // 弹性模量
         double alpha = 0.0;  // 热膨胀系数
         double dens = 0.0;   // 密度（自重备用）
+        double nu = 0.0;     // 泊松比（Timoshenko 剪切用）
     };
     std::map<int, Material> materials;
 
@@ -283,6 +289,7 @@ struct Model2D {
         double h = 0.0;   // 截面高度（梁温度梯度）
         double addmass = 0.0; // 附加质量 kg/m
         double istrn = 0.0;   // 初应变（cable/strut 预应力）
+        double K = 5.0 / 6.0; // 剪切修正系数
     };
     std::map<int, RealConst> realConsts;
 
@@ -568,6 +575,23 @@ DenseVec distributedLoadEquivalent(const std::string& type,
 // 仅含分布荷载与自重（不含温度梯度——温度梯度产生的是常弯矩，不产生抛物线项）。
 double localTransverseUDL(const Model2D& m, const Model2D::Element& e,
                           const Eigen::Vector2d& p1, const Eigen::Vector2d& p2) ;
+
+// 梁剪切参数 Φ = 12EI/(G·As·L²) = 24(1+ν)·I/(K·A·L²)。
+// ν<=0 或 K<=0 或 A<=0 时返回 0（退化为欧拉-伯努利梁）。
+double beamShearParameter(const Model2D::Element& e, double L) ;
+
+// 梁端部释放：静态凝聚。输入局部刚度 Kl(6x6)、局部等效荷载 Fq(6)、释放的局部自由度。
+// 释放的局部自由度内力被强制为 0（M 释放=铰、V=剪力释放、N=轴力释放）。
+struct BeamRelease2D {
+    DenseMat Kl;                 // 凝聚后局部刚度
+    std::vector<int> freeLocal;  // 保留的局部自由度索引
+    DenseVec Fq;                 // 凝聚后局部等效荷载
+    DenseMat KrrInvKrf;          // K_rr^{-1} K_rf（内力反算用）
+    DenseMat KrrInv;             // K_rr^{-1}
+    std::vector<int> relLocal;   // 释放的局部自由度索引
+};
+BeamRelease2D releaseBeam2D(const DenseMat& Kl, const DenseVec& Fq,
+                            const std::vector<int>& releasedLocal);
 
 // 均匀温度变化等效节点荷载（轴力）。
 DenseVec uniformTempEquivalent(const std::string& type, double E, double A, double alpha,

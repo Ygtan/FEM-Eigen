@@ -922,6 +922,55 @@ void testBeamPDelta() {
     }
 }
 
+// ---- 20. 梁端部释放（铰）----
+// 一端固定、一端铰支（moment release）的固支-铰支梁（propped cantilever）。
+// 均布荷载 q 下解析解：固定端弯矩 |M1|=qL²/8，铰端 M2=0。
+void testBeamEndRelease() {
+    std::printf("\n[20] 梁端部释放（铰）\n");
+    Model2D m = straightBeam(L, 1, E, A, I);
+    m.elements[0].releases.push_back(5);   // 释放 j 端 θ（局部自由度 5 = 铰）
+    m.constraints.push_back({1, 1, 0.0});  // 固定端 u
+    m.constraints.push_back({1, 2, 0.0});  // 固定端 v
+    m.constraints.push_back({1, 3, 0.0});  // 固定端 θ
+    m.constraints.push_back({2, 1, 0.0});  // 铰支端 u
+    m.constraints.push_back({2, 2, 0.0});  // 铰支端 v
+    for (int e = 1; e <= 1; ++e)
+        m.elemLoads.push_back({e, "GY", -q, -q});
+
+    const ModelResult r = solveModel2D(m);
+    const auto f = elementForces2D(m, r.U).front();
+    check("固支-铰支梁 固定端 |M1|=qL²/8", std::abs(f.M1), q * L * L / 8.0);
+    check("固支-铰支梁 铰端 M2=0", f.M2, 0.0, 1e-8);
+}
+
+// ---- 21. Timoshenko 梁（剪切变形）----
+// 深梁（h/L=0.4，剪切显著）：简支梁跨中集中力挠度
+//   δ = PL³/(48EI) + PL/(4G·As)，G=E/(2(1+ν))，As=K·A。
+void testBeamTimoshenko() {
+    std::printf("\n[21] Timoshenko 梁（剪切变形）\n");
+    const double Ld = 1.0;           // 短跨深梁
+    const double b = 0.1, h = 0.4;   // 矩形截面
+    const double Ad = b * h;         // A
+    const double Id = b * h * h * h / 12.0; // I
+    const double nu = 0.3, K = 5.0 / 6.0;
+    const double Pd = 1.0e6;         // 集中力
+
+    const int n = 4;
+    Model2D m = straightBeam(Ld, n, E, Ad, Id);
+    for (auto& e : m.elements) { e.nu = nu; e.K = K; }
+    m.constraints.push_back({1, 1, 0.0});
+    m.constraints.push_back({1, 2, 0.0});
+    m.constraints.push_back({n + 1, 2, 0.0});
+    const int mid = n / 2 + 1;
+    m.loads.push_back({mid, 2, -Pd});
+
+    const ModelResult r = solveModel2D(m);
+    const double G = E / (2.0 * (1.0 + nu));
+    const double As = K * Ad;
+    const double exact = -Pd * Ld * Ld * Ld / (48.0 * E * Id) - Pd * Ld / (4.0 * G * As);
+    check("深梁跨中挠度（含剪切）", nodalDisp(m, r, mid, 2), exact);
+}
+
 } // namespace
 
 int main() {
@@ -948,6 +997,8 @@ int main() {
         testBeamTemperature();
         testUDLSignConvention();
         testBeamPDelta();
+        testBeamEndRelease();
+        testBeamTimoshenko();
     } catch (const std::exception& e) {
         std::printf("\n[ERROR] 异常: %s\n", e.what());
         ++g_fail;

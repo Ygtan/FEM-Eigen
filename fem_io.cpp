@@ -134,6 +134,117 @@ double localTransverseUDL(const Model2D& m, const Model2D::Element& e,
     return -qy;   // 向下为正（产生下缘受拉的正弯矩）
 }
 
+double beamShearParameter(const Model2D::Element& e, double L) {
+    if (e.nu <= 0.0 || e.K <= 0.0 || e.A <= 0.0) return 0.0;
+    return 24.0 * (1.0 + e.nu) * e.I / (e.K * e.A * L * L);
+}
+
+BeamRelease2D releaseBeam2D(const DenseMat& Kl, const DenseVec& Fq,
+                            const std::vector<int>& releasedLocal) {
+    BeamRelease2D out;
+    out.relLocal = releasedLocal;
+    for (int i = 0; i < 6; ++i)
+        if (std::find(releasedLocal.begin(), releasedLocal.end(), i) == releasedLocal.end())
+            out.freeLocal.push_back(i);
+    if (releasedLocal.empty()) {
+        out.Kl = Kl;
+        out.Fq = Fq;
+        return out;
+    }
+
+    const int nf = static_cast<int>(out.freeLocal.size());
+    const int nr = static_cast<int>(releasedLocal.size());
+    DenseMat Kff(nf, nf), Kfr(nf, nr), Krr(nr, nr);
+    DenseVec Ff(nf), Fr(nr);
+    for (int a = 0; a < nf; ++a) {
+        Ff(a) = Fq(out.freeLocal[a]);
+        for (int b = 0; b < nf; ++b) Kff(a, b) = Kl(out.freeLocal[a], out.freeLocal[b]);
+        for (int b = 0; b < nr; ++b) Kfr(a, b) = Kl(out.freeLocal[a], releasedLocal[b]);
+    }
+    for (int a = 0; a < nr; ++a) {
+        Fr(a) = Fq(releasedLocal[a]);
+        for (int b = 0; b < nr; ++b) Krr(a, b) = Kl(releasedLocal[a], releasedLocal[b]);
+    }
+
+    out.KrrInv = Krr.inverse();
+    const DenseMat Krf = Kfr.transpose();
+    out.KrrInvKrf = out.KrrInv * Krf;           // K_rr^{-1} K_rf
+    out.Kl = Kff - Kfr * out.KrrInvKrf;         // 凝聚刚度
+    out.Fq = Ff - Kfr * (out.KrrInv * Fr);      // 凝聚等效荷载
+    return out;
+}
+
+namespace {
+// 带端部释放的梁：凝聚后的全局刚度 / 全局自由度 / 全局等效荷载。
+struct CondensedBeamGlobal {
+    DenseMat Ke;
+    std::vector<int> gdofs;
+    DenseVec feq;
+};
+CondensedBeamGlobal condenseBeamGlobal(const Model2D::Element& e,
+                                       const Eigen::Vector2d& p1, const Eigen::Vector2d& p2,
+                                       int i1, int i2, const DenseVec& fe) {
+    EulerBeam2D be{e.E, e.A, e.I, p1, p2};
+    const DenseMat T = be.transformation();
+    const DenseVec Fq = T * fe;   // 全局 -> 局部
+    const double Phi = beamShearParameter(e, (p2 - p1).norm());
+    const BeamRelease2D rel = releaseBeam2D(be.localStiffness(Phi), Fq, e.releases);
+    const int nf = static_cast<int>(rel.freeLocal.size());
+    DenseMat Tc(nf, 6);
+    for (int a = 0; a < nf; ++a)
+        for (int b = 0; b < 6; ++b)
+            Tc(a, b) = T(rel.freeLocal[a], b);
+    CondensedBeamGlobal out;
+    out.Ke = Tc.transpose() * rel.Kl * Tc;
+    out.feq = Tc.transpose() * rel.Fq;
+    for (int d : rel.freeLocal)
+        out.gdofs.push_back(d < 3 ? 3 * i1 + d : 3 * i2 + (d - 3));
+    return out;
+}
+
+// 带端部释放的梁：反算 6 个局部杆端力（释放端内力强制为 0）。
+DenseVec releasedBeamLocalForces(const Model2D& m, const Model2D::Element& e,
+                                 const DenseVec& U, int i1, int i2,
+                                 const Eigen::Vector2d& p1, const Eigen::Vector2d& p2) {
+    EulerBeam2D be{e.E, e.A, e.I, p1, p2};
+    const DenseMat T = be.transformation();
+    const DenseMat Kl = be.localStiffness(beamShearParameter(e, (p2 - p1).norm()));
+    const DenseVec Fq = T * elementEquivalentLoad(m, e, p1, p2);
+    const BeamRelease2D rel = releaseBeam2D(Kl, Fq, e.releases);
+
+    Eigen::VectorXd ug(6);
+    for (int b = 0; b < 6; ++b)
+        ug(b) = (b < 3) ? U(3 * i1 + b) : U(3 * i2 + (b - 3));
+
+    const int nf = static_cast<int>(rel.freeLocal.size());
+    const int nr = static_cast<int>(rel.relLocal.size());
+    Eigen::VectorXd uf(nf);
+    for (int a = 0; a < nf; ++a) {
+        const int d = rel.freeLocal[a];
+        double s = 0.0;
+        for (int b = 0; b < 6; ++b) s += T(d, b) * ug(b);
+        uf(a) = s;
+    }
+    Eigen::VectorXd Fr(nr), KrfUf(nr);
+    for (int a = 0; a < nr; ++a) {
+        Fr(a) = Fq(rel.relLocal[a]);
+        double s = 0.0;
+        for (int b = 0; b < nf; ++b)
+            s += Kl(rel.freeLocal[b], rel.relLocal[a]) * uf(b);
+        KrfUf(a) = s;
+    }
+    const Eigen::VectorXd ur = rel.KrrInv * (Fr - KrfUf);
+
+    Eigen::VectorXd ul(6);
+    for (int a = 0; a < nf; ++a) ul(rel.freeLocal[a]) = uf(a);
+    for (int a = 0; a < nr; ++a) ul(rel.relLocal[a]) = ur(a);
+
+    DenseVec fl = Kl * ul - Fq;
+    for (int r : rel.relLocal) fl(r) = 0.0;
+    return fl;
+}
+} // namespace
+
 DenseVec uniformTempEquivalent(const std::string& type, double E, double A, double alpha,
                                       double dT, const Eigen::Vector2d& p1, const Eigen::Vector2d& p2) {
     const double NT = E * A * alpha * dT;
@@ -678,6 +789,7 @@ Model2D readModel2D(const std::string& path) {
                     e.E = mit->second.E;
                     e.alpha = mit->second.alpha;
                     e.dens = mit->second.dens;
+                    e.nu = mit->second.nu;
                     e.A = rit->second.A;
                     e.I = rit->second.I;
                     e.Wt = rit->second.Wt;
@@ -685,6 +797,7 @@ Model2D readModel2D(const std::string& path) {
                     e.h = rit->second.h;
                     e.addmass = rit->second.addmass;
                     e.istrn = rit->second.istrn;
+                    e.K = rit->second.K;
                     e.conn = {ni, nj};
                     if (e.type == "BEAM" && e.I <= 0.0)
                         throw std::runtime_error("梁单元缺少实常数 I");
@@ -903,6 +1016,7 @@ Model2D readModel2D(const std::string& path) {
             auto it = p.find("E"); if (it != p.end()) mat.E = std::stod(it->second);
             it = p.find("ALPX"); if (it != p.end()) mat.alpha = std::stod(it->second);
             it = p.find("DENS"); if (it != p.end()) mat.dens = std::stod(it->second);
+            it = p.find("NU"); if (it != p.end()) mat.nu = std::stod(it->second);
             m.materials[id] = mat;
         } else if (section == "*R") {
             int id = 0;
@@ -919,6 +1033,7 @@ Model2D readModel2D(const std::string& path) {
             it = p.find("H"); if (it != p.end()) rc.h = std::stod(it->second);
             it = p.find("ADDMASS"); if (it != p.end()) rc.addmass = std::stod(it->second);
             it = p.find("ISTRN"); if (it != p.end()) rc.istrn = std::stod(it->second);
+            it = p.find("K"); if (it != p.end()) rc.K = std::stod(it->second);
             m.realConsts[id] = rc;
         } else if (section == "*BOUNDARY") {
             std::string ns, ds, vs;
@@ -928,6 +1043,34 @@ Model2D readModel2D(const std::string& path) {
             for (int node : detail::parseRange(ns))
                 for (int dof : detail::parseRange(ds))
                     m.constraints.push_back({node, dof, value});
+        } else if (section == "*RELEASE") {
+            // 端部释放：<eid> <END=1/I|2/J> <TYPE=N/V/M> [<TYPE>...]
+            std::string es, ends;
+            if (!(ss >> es >> ends))
+                throw std::runtime_error("RELEASE 行格式错误: " + t);
+            const std::string eup = detail::toUpper(detail::trim(ends));
+            const int end = (eup == "1" || eup == "I") ? 0 : 1;
+            if (!(eup == "1" || eup == "I" || eup == "2" || eup == "J"))
+                throw std::runtime_error("RELEASE 的 END 必须是 1/I 或 2/J: " + ends);
+            const int eid = std::stoi(es);
+            auto it = std::find_if(m.elements.begin(), m.elements.end(),
+                                   [&](const Model2D::Element& e) { return e.id == eid; });
+            if (it == m.elements.end())
+                throw std::runtime_error("RELEASE 引用了不存在的单元: " + es);
+            if (it->type != "BEAM")
+                throw std::runtime_error("端部释放仅支持 BEAM 单元（单元 " + es + "）");
+            std::string typ;
+            while (ss >> typ) {
+                const std::string tt = detail::toUpper(detail::trim(typ));
+                int dof = -1;
+                if (tt == "N" || tt == "AXIAL" || tt == "U") dof = 0;
+                else if (tt == "V" || tt == "SHEAR") dof = 1;
+                else if (tt == "M" || tt == "MOMENT" || tt == "ROT") dof = 2;
+                else throw std::runtime_error("RELEASE 未知释放类型: " + typ + "（应为 N/V/M）");
+                const int ld = end * 3 + dof;
+                if (std::find(it->releases.begin(), it->releases.end(), ld) == it->releases.end())
+                    it->releases.push_back(ld);
+            }
         } else if (section == "*CLOAD") {
             std::string ns, ds, vs;
             if (!(ss >> ns >> ds >> vs))
@@ -1508,6 +1651,10 @@ ModelResult solveModel2DNonlinear(const Model2D& m,
                                          const std::vector<char>* active0,
                                          NonlinearDiag* diagOut,
                                          ReusableSolver* reuse) {
+    for (const auto& e : m.elements)
+        if (!e.releases.empty())
+            throw std::runtime_error("端部释放暂不支持 NONLINEAR 分析（单元 " +
+                                     std::to_string(e.id) + "）");
     std::vector<int> ids;
     std::map<int, int> index;
     for (const auto& [id, c] : m.nodes) {
@@ -1611,7 +1758,8 @@ ModelResult solveModel2DNonlinear(const Model2D& m,
                 Eigen::VectorXd ug(6);
                 ug << Ucur(3 * i1 + 0), Ucur(3 * i1 + 1), Ucur(3 * i1 + 2),
                       Ucur(3 * i2 + 0), Ucur(3 * i2 + 1), Ucur(3 * i2 + 2);
-                const DenseMat Ke = be.stiffness();
+                const double Phi = beamShearParameter(e, (p2 - p1).norm());
+                const DenseMat Ke = be.stiffness(Phi);
                 DenseVec fext = elementExternalEquivalentLoad(m, e, p1, p2);
                 fext *= loadScale;
                 DenseMat Kt = Ke;
@@ -1922,11 +2070,18 @@ void assembleLinear2D(const Model2D& m,
                                         3 * i2, 3 * i2 + 1, 3 * i2 + 2};
             scatter(Ke, g, triplets);
         } else if (e.type == "BEAM" || e.type == "RIGID") {
-            EulerBeam2D be{e.E, e.A, e.I, p1, p2};
-            const DenseMat Ke = be.stiffness(); // 6x6
-            const std::vector<int> g = {3 * i1, 3 * i1 + 1, 3 * i1 + 2,
-                                        3 * i2, 3 * i2 + 1, 3 * i2 + 2};
-            scatter(Ke, g, triplets);
+            if (e.type == "BEAM" && !e.releases.empty()) {
+                const CondensedBeamGlobal cb = condenseBeamGlobal(e, p1, p2, i1, i2,
+                                                                  DenseVec::Zero(6));
+                scatter(cb.Ke, cb.gdofs, triplets);
+            } else {
+                EulerBeam2D be{e.E, e.A, e.I, p1, p2};
+                const double Phi = beamShearParameter(e, (p2 - p1).norm());
+                const DenseMat Ke = be.stiffness(Phi); // 6x6
+                const std::vector<int> g = {3 * i1, 3 * i1 + 1, 3 * i1 + 2,
+                                            3 * i2, 3 * i2 + 1, 3 * i2 + 2};
+                scatter(Ke, g, triplets);
+            }
         } else {
             throw std::runtime_error("未知单元类型: " + e.type);
         }
@@ -1952,7 +2107,12 @@ void assembleLinear2D(const Model2D& m,
         const Eigen::Vector2d p1 = m.nodes.at(e.conn[0]);
         const Eigen::Vector2d p2 = m.nodes.at(e.conn[1]);
         const DenseVec fe = elementEquivalentLoad(m, e, p1, p2);
-        addElementLoad(elementGdofs2D(e.type, i1, i2), fe, F);
+        if (e.type == "BEAM" && !e.releases.empty()) {
+            const CondensedBeamGlobal cb = condenseBeamGlobal(e, p1, p2, i1, i2, fe);
+            addElementLoad(cb.gdofs, cb.feq, F);
+        } else {
+            addElementLoad(elementGdofs2D(e.type, i1, i2), fe, F);
+        }
     }
     if (!m.ces.empty())
         F += constraintPenaltyConstantForce(m, index, nDofs, m.cePenalty);
@@ -2162,9 +2322,17 @@ std::vector<ElementForce> elementForces2D(const Model2D& m, const DenseVec& U) {
             if (e.type == "CABLE" && f.N1 <= 0.0) { f.N1 = 0.0; f.N2 = 0.0; }
             else if (e.type == "STRUT" && f.N1 >= 0.0) { f.N1 = 0.0; f.N2 = 0.0; }
         } else if (e.type == "BEAM") {
+            if (!e.releases.empty()) {
+                const DenseVec fphys = releasedBeamLocalForces(m, e, U, i1, i2, p1, p2);
+                f.N1 = -fphys(0); f.N2 = fphys(3);
+                f.V1 = fphys(1);  f.V2 = -fphys(4);
+                f.M1 = -fphys(2); f.M2 = fphys(5);
+                forces.push_back(f);
+                continue;
+            }
             EulerBeam2D be{e.E, e.A, e.I, p1, p2};
             const DenseMat T = be.transformation();
-            const DenseMat Kl = be.localStiffness();
+            const DenseMat Kl = be.localStiffness(beamShearParameter(e, (p2 - p1).norm()));
             Eigen::VectorXd ug(6);
             ug << U(3 * i1 + 0), U(3 * i1 + 1), U(3 * i1 + 2),
                   U(3 * i2 + 0), U(3 * i2 + 1), U(3 * i2 + 2);
