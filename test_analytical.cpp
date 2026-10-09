@@ -12,6 +12,7 @@
 
 #include "fem_io.hpp"
 #include "fem_3d.hpp"
+#include "section.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -1077,6 +1078,26 @@ void testImpactCoefficient() {
     check("冲击系数 f=20Hz（上限 0.45）", impactCoefficientFromFrequency(20.0), 0.45, 1e-12);
 }
 
+// ---- 27. 纤维截面模型 ----
+// 矩形截面纤维积分 vs 解析解：A=bh、Iz=bh³/12、Iy=hb³/12、Wtop=bh²/6；
+// 温度梯度 Mz=EαΔT·Iz/h、N=0。
+void testFiberSection() {
+    std::printf("\n[27] 纤维截面模型\n");
+    const double b = 0.4, h = 1.2, E = 2.0e11, alpha = 1.2e-5;
+    const auto fibers = makeRectangularFibers(b, h, 40, 40, E);
+    const SectionProperties p = computeSectionProperties(fibers);
+    check("矩形截面 面积 A=bh", p.A, b * h, 1e-12);
+    check("矩形截面 形心 cy=0", p.cy, 0.0, 1e-12);
+    check("矩形截面 惯性矩 Iz=bh³/12", p.Iz, b * h * h * h / 12.0, 1e-3);
+    check("矩形截面 惯性矩 Iy=hb³/12", p.Iy, h * b * b * b / 12.0, 1e-3);
+    check("矩形截面 Wtop=bh²/6", p.Wtop(), b * h * h / 6.0, 1e-3);
+
+    const double dT = 30.0;
+    const SectionResultants sr = sectionTemperatureGradient(fibers, alpha, dT, h);
+    check("温度梯度 Mz=EαΔT·Iz/h", sr.Mz, E * alpha * dT * p.Iz / h, 1e-3);
+    check("温度梯度 N=0（对称截面）", sr.N, 0.0, 1e-9);
+}
+
 } // namespace
 
 int main() {
@@ -1110,6 +1131,7 @@ int main() {
         testNaturalFrequency();
         testBuckling();
         testImpactCoefficient();
+        testFiberSection();
     } catch (const std::exception& e) {
         std::printf("\n[ERROR] 异常: %s\n", e.what());
         ++g_fail;
