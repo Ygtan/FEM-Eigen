@@ -1007,6 +1007,31 @@ void test3DBeamEnvelope() {
     check("3D 包络 MzMax=0（j 端自由）", env[0].MzMax, 0.0, 1e-9);
 }
 
+// ---- 23. 3D 梁扭转剪应力 ----
+// 悬臂梁端部施加绕 x 轴扭矩 Mx：梁内扭矩恒为 Mx，扭转剪应力 τ=T/Wt=Mx/Wt。
+void test3DTorsion() {
+    std::printf("\n[23] 3D 梁扭转剪应力\n");
+    Model3D m;
+    m.nodes[1] = Vec3(0.0, 0.0, 0.0);
+    m.nodes[2] = Vec3(L, 0.0, 0.0);
+    Element3D e;
+    e.id = 1; e.type = "BEAM";
+    e.E = E; e.A = A; e.Iy = I; e.Iz = I;
+    e.J = 1.0e-4; e.G = E / 2.6;
+    e.Wtop = 1.0e-4; e.Wbot = 1.0e-4; e.Wy = 1.0e-4; e.Wt = 2.0e-4;
+    e.n1 = 1; e.n2 = 2;
+    m.elements.push_back(e);
+    for (int dof = 1; dof <= 6; ++dof) m.constraints.push_back({1, dof, 0.0});
+    const double Mx = 1.0e5;
+    m.loads.push_back({2, 4, Mx});   // dof4 = θx（绕 x 轴扭矩）
+
+    const std::vector<double> U = solveModel3D(m);
+    const DofMap3D dm = buildDofMap3D(m);
+    const Eigen::VectorXd fl = beam3DLocalEndForces(m, dm, e, U);
+    check("3D 扭矩 T=Mx", -fl(3), Mx);
+    check("3D 扭转剪应力 τ=T/Wt", -fl(3) / e.Wt, Mx / e.Wt);
+}
+
 } // namespace
 
 int main() {
@@ -1036,6 +1061,7 @@ int main() {
         testBeamEndRelease();
         testBeamTimoshenko();
         test3DBeamEnvelope();
+        test3DTorsion();
     } catch (const std::exception& e) {
         std::printf("\n[ERROR] 异常: %s\n", e.what());
         ++g_fail;

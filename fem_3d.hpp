@@ -97,6 +97,7 @@ struct Element3D {
     double istrn = 0.0;
     double Wtop = 0.0, Wbot = 0.0;
     double Wy = 0.0;   // 绕 y 轴截面模量（水平弯曲 My 用）
+    double Wt = 0.0;   // 扭转截面模量 J/r_max（扭转剪应力 τ=T/Wt 用）
     int n1 = 0, n2 = 0;
 };
 
@@ -807,6 +808,12 @@ inline std::vector<double> compute3DBeamStressInfluence(const Model3D& m, int el
             const double N  = (end == 1) ? -fl(0)  : fl(6);
             const double My = (end == 1) ? -fl(4)  : fl(10);  // 水平弯曲（右缘受拉正）
             const double Mz = (end == 1) ? -fl(5)  : fl(11);  // 竖向弯曲（下缘受拉正）
+            const double T  = (end == 1) ? -fl(3)  : fl(9);   // 扭矩
+            if (comp == "TORSION") {
+                if (e.Wt <= 0)
+                    throw std::runtime_error("梁扭转剪应力需要 WT（扭转截面模量）");
+                return T / e.Wt;   // τ = T / Wt
+            }
             if (comp == "TOP" || comp == "BOT" || comp == "MAX" || comp == "MIN") {
                 if (e.Wtop <= 0 || e.Wbot <= 0)
                     throw std::runtime_error("梁应力需要 WT/WB");
@@ -1019,7 +1026,7 @@ inline Model3D readModel3D(const std::string& path) {
     std::map<int, double> areas;
     std::map<int, double> realIy, realIz, realJ, realG;
     std::map<int, double> realIstrn;
-    std::map<int,double> realWtop, realWbot, realWy;
+    std::map<int,double> realWtop, realWbot, realWy, realWt;
     int activeType = 0, activeMat = 0, activeReal = 0;
     std::string section;
     std::string line;
@@ -1040,7 +1047,7 @@ inline Model3D readModel3D(const std::string& path) {
                         Element3D e; e.id=id; e.type=types[activeType]; e.E=mats[activeMat]; e.A=areas[activeReal]; e.n1=n1; e.n2=n2;
                         e.Iy=realIy[activeReal]; e.Iz=realIz[activeReal]; e.J=realJ[activeReal]; e.G=realG[activeReal];
                         e.istrn=realIstrn[activeReal];
-                        e.Wtop=realWtop[activeReal]; e.Wbot=realWbot[activeReal]; e.Wy=realWy[activeReal];
+                        e.Wtop=realWtop[activeReal]; e.Wbot=realWbot[activeReal]; e.Wy=realWy[activeReal]; e.Wt=realWt[activeReal];
                         m.elements.push_back(e);
                     }
                 }
@@ -1097,6 +1104,7 @@ inline Model3D readModel3D(const std::string& path) {
                 else if (kv.rfind("WT=",0)==0) realWtop[id]=std::stod(kv.substr(3));
                 else if (kv.rfind("WB=",0)==0) realWbot[id]=std::stod(kv.substr(3));
                 else if (kv.rfind("WY=",0)==0) realWy[id]=std::stod(kv.substr(3));
+                else if (kv.rfind("WTORS=",0)==0) realWt[id]=std::stod(kv.substr(7));
             }
             areas[id]=A;
             realIy[id]=Iy; realIz[id]=Iz; realJ[id]=J; realG[id]=G;
