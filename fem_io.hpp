@@ -824,6 +824,23 @@ struct Assembled2D {
 // 仅适用于线性模型；含 CABLE/STRUT 时激活状态依赖位移，必须逐次迭代。
 Assembled2D assembleModel2DLinear(const Model2D& m) ;
 
+// 一致质量矩阵（全局稀疏，nDofs×nDofs）。线质量密度 = dens·A + addmass。
+SparseMat assembleMassMatrix2D(const Model2D& m) ;
+
+// 广义特征值问题 K·φ = λ·M·φ 的自振频率（Hz，升序）与振型。
+struct ModalResult2D {
+    std::vector<double> frequencies;  // Hz，升序
+    std::vector<DenseVec> modes;      // 全局振型（约束自由度处为 0）
+};
+ModalResult2D computeNaturalFrequencies2D(const Model2D& m, int nModes = 6) ;
+
+// 线性屈曲荷载因子：参考荷载由 m.loads 指定，返回前 n 阶屈曲因子 λ（P_cr = λ·P_ref）。
+// 仅考虑 BEAM 的轴力几何刚度（P-Δ）；受压为负、受拉为正。
+std::vector<double> computeBucklingFactors2D(const Model2D& m, int nModes = 3) ;
+
+// 冲击系数（按基频 f，Hz）：JTG D60 简支梁/连续梁近似。
+double impactCoefficientFromFrequency(double fHz) ;
+
 // 由位移与装配结果构造 ModelResult（含反力），供响应计算复用。
 ModelResult makeResult2D(const Model2D& m, const Assembled2D& a,
                                 const DenseVec& U, const DenseVec& F0) ;

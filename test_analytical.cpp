@@ -1032,6 +1032,51 @@ void test3DTorsion() {
     check("3D 扭转剪应力 τ=T/Wt", -fl(3) / e.Wt, Mx / e.Wt);
 }
 
+// ---- 24. 自振频率（质量矩阵 + 广义特征值）----
+// 简支梁基频 f1 = π/(2L²)·√(EI/(ρA))（欧拉-伯努利梁闭式解）。
+void testNaturalFrequency() {
+    std::printf("\n[24] 自振频率（质量矩阵 + 特征值）\n");
+    const double dens = 7850.0;
+    const int n = 16;
+    Model2D m = straightBeam(L, n, E, A, I);
+    for (auto& e : m.elements) e.dens = dens;
+    m.constraints.push_back({1, 1, 0.0});
+    m.constraints.push_back({1, 2, 0.0});
+    m.constraints.push_back({n + 1, 2, 0.0});
+
+    const ModalResult2D mr = computeNaturalFrequencies2D(m, 3);
+    const double rhoA = dens * A;
+    const double f1 = kPi / (2.0 * L * L) * std::sqrt(E * I / rhoA);
+    check("简支梁基频 f1=π/(2L²)√(EI/ρA)", mr.frequencies[0], f1, 1e-3);
+    // 二阶频率应为 4 倍基频（简支梁 f_n = n²·f1）
+    check("简支梁二阶频率 f2=4·f1", mr.frequencies[1], 4.0 * f1, 1e-3);
+}
+
+// ---- 25. 线性屈曲（欧拉临界力）----
+// 两端铰支柱轴压：欧拉临界力 Pcr = π²EI/L²。
+void testBuckling() {
+    std::printf("\n[25] 线性屈曲（欧拉临界力）\n");
+    const int n = 16;
+    Model2D m = straightBeam(L, n, E, A, I);
+    m.constraints.push_back({1, 1, 0.0});       // 左端 u=0
+    m.constraints.push_back({1, 2, 0.0});       // 左端 v=0
+    m.constraints.push_back({n + 1, 2, 0.0});   // 右端 v=0（滚轴）
+    m.loads.push_back({n + 1, 1, -1.0});        // 参考轴压 P_ref=1
+
+    const auto bf = computeBucklingFactors2D(m, 1);
+    const double Pcr = kPi * kPi * E * I / (L * L);
+    check("简支柱屈曲 Pcr=π²EI/L²", bf[0], Pcr, 1e-3);
+}
+
+// ---- 26. 冲击系数（按基频）----
+void testImpactCoefficient() {
+    std::printf("\n[26] 冲击系数（按基频）\n");
+    check("冲击系数 f=5Hz", impactCoefficientFromFrequency(5.0),
+          0.1767 * std::log(5.0) - 0.0157, 1e-12);
+    check("冲击系数 f=1Hz（下限 0.05）", impactCoefficientFromFrequency(1.0), 0.05, 1e-12);
+    check("冲击系数 f=20Hz（上限 0.45）", impactCoefficientFromFrequency(20.0), 0.45, 1e-12);
+}
+
 } // namespace
 
 int main() {
@@ -1062,6 +1107,9 @@ int main() {
         testBeamTimoshenko();
         test3DBeamEnvelope();
         test3DTorsion();
+        testNaturalFrequency();
+        testBuckling();
+        testImpactCoefficient();
     } catch (const std::exception& e) {
         std::printf("\n[ERROR] 异常: %s\n", e.what());
         ++g_fail;

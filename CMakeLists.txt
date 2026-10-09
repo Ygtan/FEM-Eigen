@@ -175,6 +175,7 @@ fem_link_cholmod(example_stage_viz)
 fem_add_executable(example_stage_envelope example_stage_envelope.cpp)
 fem_link_cholmod(example_stage_envelope)
 fem_add_executable(example_viz example_viz.cpp)
+fem_add_executable(example_modal example_modal.cpp)
 
 # ---- 核心静态库（fem_io.cpp + 头文件）----
 # 将 fem_io.hpp 中的实现提取到 fem_io.cpp，减少编译时间并实现二进制隔离。

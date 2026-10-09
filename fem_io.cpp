@@ -2156,6 +2156,187 @@ Assembled2D assembleModel2DLinear(const Model2D& m) {
     return a;
 }
 
+SparseMat assembleMassMatrix2D(const Model2D& m) {
+    std::map<int, int> index;
+    for (const auto& [id, c] : m.nodes) index[id] = static_cast<int>(index.size());
+    const int nDofs = 3 * static_cast<int>(index.size());
+
+    std::vector<Eigen::Triplet<double>> trips;
+    for (const auto& e : m.elements) {
+        if (e.conn.size() != 2) continue;
+        const double rhoA = e.dens * e.A + e.addmass;
+        if (rhoA <= 0.0) continue;
+        const int i1 = index.at(e.conn[0]), i2 = index.at(e.conn[1]);
+        const Eigen::Vector2d p1 = m.nodes.at(e.conn[0]);
+        const Eigen::Vector2d p2 = m.nodes.at(e.conn[1]);
+
+        if (isAxial(e.type)) {
+            const double L = (p2 - p1).norm();
+            const DenseMat Me = truss2DConsistentMassMatrix(rhoA, L);
+            const std::vector<int> g = {3 * i1, 3 * i1 + 1, 3 * i2, 3 * i2 + 1};
+            for (int a = 0; a < 4; ++a)
+                for (int b = 0; b < 4; ++b)
+                    if (Me(a, b) != 0.0) trips.emplace_back(g[a], g[b], Me(a, b));
+        } else if (e.type == "BEAM") {
+            EulerBeam2D be{e.E, e.A, e.I, p1, p2};
+            const DenseMat Me = be.consistentMassMatrixGlobal(rhoA);
+            const std::vector<int> g = {3 * i1, 3 * i1 + 1, 3 * i1 + 2,
+                                        3 * i2, 3 * i2 + 1, 3 * i2 + 2};
+            for (int a = 0; a < 6; ++a)
+                for (int b = 0; b < 6; ++b)
+                    if (Me(a, b) != 0.0) trips.emplace_back(g[a], g[b], Me(a, b));
+        }
+        // RIGID / RIGID_PIN 为建模约束，不贡献质量。
+    }
+    SparseMat M(nDofs, nDofs);
+    M.setFromTriplets(trips.begin(), trips.end());
+    M.makeCompressed();
+    return M;
+}
+
+ModalResult2D computeNaturalFrequencies2D(const Model2D& m, int nModes) {
+    std::map<int, int> index;
+    std::vector<int> ids;
+    for (const auto& [id, c] : m.nodes) { index[id] = static_cast<int>(ids.size()); ids.push_back(id); }
+    const int nDofs = 3 * static_cast<int>(ids.size());
+
+    // K（未施加 Dirichlet）与 M
+    std::vector<char> active(m.elements.size(), 1);
+    SparseMat K;
+    DenseVec F;
+    assembleLinear2D(m, active, index, nDofs, K, F);
+    const SparseMat M = assembleMassMatrix2D(m);
+
+    // 约束自由度 + 自动约束零刚度转角
+    std::vector<int> cdofs;
+    std::vector<double> cvals;
+    for (const auto& c : m.constraints) {
+        if (c.dof < 1 || c.dof > 3) continue;
+        cdofs.push_back(3 * index.at(c.node) + (c.dof - 1));
+        cvals.push_back(c.value);
+    }
+    std::vector<int> cd2;
+    std::vector<double> cv2;
+    autoConstrainFreeRotations(K, nDofs, cdofs, cvals, cd2, cv2);
+    std::vector<char> isC(nDofs, 0);
+    for (int d : cd2) isC[d] = 1;
+
+    std::vector<int> free;
+    for (int d = 0; d < nDofs; ++d) if (!isC[d]) free.push_back(d);
+    const int nf = static_cast<int>(free.size());
+
+    Eigen::MatrixXd Kd(nf, nf), Md(nf, nf);
+    for (int a = 0; a < nf; ++a)
+        for (int b = 0; b < nf; ++b) {
+            Kd(a, b) = K.coeff(free[a], free[b]);
+            Md(a, b) = M.coeff(free[a], free[b]);
+        }
+
+    ModalResult2D out;
+    if (nf == 0) return out;
+    Eigen::GeneralizedSelfAdjointEigenSolver<Eigen::MatrixXd> ges(Kd, Md);
+    const int n = std::min(nModes, nf);
+    for (int i = 0; i < n; ++i) {
+        const double lam = ges.eigenvalues()(i);
+        const double f = (lam > 0.0) ? std::sqrt(lam) / (2.0 * kPi) : 0.0;
+        out.frequencies.push_back(f);
+        DenseVec mode = DenseVec::Zero(nDofs);
+        for (int a = 0; a < nf; ++a) mode(free[a]) = ges.eigenvectors()(a, i);
+        out.modes.push_back(mode);
+    }
+    return out;
+}
+
+std::vector<double> computeBucklingFactors2D(const Model2D& m, int nModes) {
+    const ModelResult r = solveModel2D(m);   // 参考荷载下的线性位移
+
+    std::map<int, int> index;
+    std::vector<int> ids;
+    for (const auto& [id, c] : m.nodes) { index[id] = static_cast<int>(ids.size()); ids.push_back(id); }
+    const int nDofs = 3 * static_cast<int>(ids.size());
+
+    std::vector<char> active(m.elements.size(), 1);
+    SparseMat K;
+    DenseVec F;
+    assembleLinear2D(m, active, index, nDofs, K, F);
+
+    // 几何刚度：由各梁的轴力（受拉正）组装
+    std::vector<Eigen::Triplet<double>> trips;
+    for (const auto& e : m.elements) {
+        if (e.type != "BEAM") continue;
+        const int i1 = index.at(e.conn[0]), i2 = index.at(e.conn[1]);
+        const Eigen::Vector2d p1 = m.nodes.at(e.conn[0]);
+        const Eigen::Vector2d p2 = m.nodes.at(e.conn[1]);
+        const double L = (p2 - p1).norm();
+        EulerBeam2D be{e.E, e.A, e.I, p1, p2};
+        const DenseMat T = be.transformation();
+        Eigen::VectorXd ug(6);
+        ug << r.U(3 * i1), r.U(3 * i1 + 1), r.U(3 * i1 + 2),
+              r.U(3 * i2), r.U(3 * i2 + 1), r.U(3 * i2 + 2);
+        const Eigen::VectorXd ul = T * ug;
+        const double N = e.E * e.A / L * (ul(3) - ul(0));
+        const DenseMat Kg = T.transpose() * beamGeometricStiffness2D(N, L) * T;
+        const std::vector<int> g = {3 * i1, 3 * i1 + 1, 3 * i1 + 2,
+                                    3 * i2, 3 * i2 + 1, 3 * i2 + 2};
+        for (int a = 0; a < 6; ++a)
+            for (int b = 0; b < 6; ++b)
+                if (Kg(a, b) != 0.0) trips.emplace_back(g[a], g[b], Kg(a, b));
+    }
+    SparseMat Kg(nDofs, nDofs);
+    Kg.setFromTriplets(trips.begin(), trips.end());
+    Kg.makeCompressed();
+
+    std::vector<int> cdofs;
+    std::vector<double> cvals;
+    for (const auto& c : m.constraints) {
+        if (c.dof < 1 || c.dof > 3) continue;
+        cdofs.push_back(3 * index.at(c.node) + (c.dof - 1));
+        cvals.push_back(c.value);
+    }
+    std::vector<int> cd2;
+    std::vector<double> cv2;
+    autoConstrainFreeRotations(K, nDofs, cdofs, cvals, cd2, cv2);
+    std::vector<char> isC(nDofs, 0);
+    for (int d : cd2) isC[d] = 1;
+
+    std::vector<int> free;
+    for (int d = 0; d < nDofs; ++d) if (!isC[d]) free.push_back(d);
+    const int nf = static_cast<int>(free.size());
+
+    std::vector<double> out;
+    if (nf == 0) return out;
+    Eigen::MatrixXd Kd(nf, nf), Kgd(nf, nf);
+    for (int a = 0; a < nf; ++a)
+        for (int b = 0; b < nf; ++b) {
+            Kd(a, b) = K.coeff(free[a], free[b]);
+            Kgd(a, b) = Kg.coeff(free[a], free[b]);
+        }
+
+    // (K + λ·Kg)·φ = 0。用 K = L·L^T 的 Cholesky 变换化为标准对称特征值：
+    //   A·ψ = μ·ψ，A = L^{-1}·Kg·L^{-T}，λ = -1/μ（μ<0 为屈曲模态）。
+    // （Kg 轴向零刚度 → 半正定，不能直接喂给广义自伴求解器。）
+    Eigen::LLT<Eigen::MatrixXd> llt(Kd);
+    if (llt.info() != Eigen::Success) return {};
+    const Eigen::MatrixXd L = llt.matrixL();
+    const Eigen::MatrixXd Linv = L.inverse();
+    const Eigen::MatrixXd A = Linv * Kgd * Linv.transpose();
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> ses(A);
+    const int n = std::min(nModes, nf);
+    std::vector<double> mu;
+    for (int i = 0; i < ses.eigenvalues().size() && static_cast<int>(mu.size()) < n; ++i) {
+        const double m = ses.eigenvalues()(i);   // 升序，最负的屈曲模态在前
+        if (m < -1e-14 && std::isfinite(m)) mu.push_back(m);
+    }
+    for (double m : mu) out.push_back(-1.0 / m);
+    return out;
+}
+
+double impactCoefficientFromFrequency(double fHz) {
+    if (fHz < 1.5) return 0.05;
+    if (fHz <= 14.0) return 0.1767 * std::log(fHz) - 0.0157;
+    return 0.45;
+}
+
 ModelResult makeResult2D(const Model2D& m, const Assembled2D& a,
                                 const DenseVec& U, const DenseVec& F0) {
     ModelResult r;

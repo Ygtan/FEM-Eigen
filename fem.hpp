@@ -2,6 +2,7 @@
 
 #include <Eigen/Dense>
 #include <Eigen/Sparse>
+#include <Eigen/Eigenvalues>
 
 #include <algorithm>
 #include <cassert>
@@ -852,7 +853,40 @@ struct EulerBeam2D {
         const DenseMat Kl = localStiffness(Phi);
         return T.transpose() * Kl * T;
     }
+
+    // 一致质量矩阵（局部坐标 [u1,v1,θ1,u2,v2,θ2]），rhoA 为线质量密度 kg/m。
+    DenseMat consistentMassMatrix(double rhoA) const {
+        const double L = (x1 - x0).norm();
+        const double m = rhoA * L;
+        const double c = m / 420.0;
+        DenseMat Me = DenseMat::Zero(6, 6);
+        Me << 140.0,   0.0,    0.0,     70.0,    0.0,      0.0,
+               0.0, 156.0,  22.0 * L,   0.0,   54.0,  -13.0 * L,
+               0.0,  22.0 * L, 4.0 * L * L, 0.0, 13.0 * L, -3.0 * L * L,
+              70.0,   0.0,    0.0,    140.0,    0.0,      0.0,
+               0.0,  54.0,  13.0 * L,   0.0,  156.0,  -22.0 * L,
+               0.0, -13.0 * L, -3.0 * L * L, 0.0, -22.0 * L, 4.0 * L * L;
+        return c * Me;
+    }
+
+    DenseMat consistentMassMatrixGlobal(double rhoA) const {
+        const DenseMat T = transformation();
+        const DenseMat Me = consistentMassMatrix(rhoA);
+        return T.transpose() * Me * T;
+    }
 };
+
+// 2D 桁架单元一致质量矩阵（局部/全局相同，dof [u1,v1,u2,v2]）。
+inline DenseMat truss2DConsistentMassMatrix(double rhoA, double L) {
+    const double m = rhoA * L;
+    const double c = m / 6.0;
+    DenseMat Me = DenseMat::Zero(4, 4);
+    Me << 2.0 * c, 0.0, 1.0 * c, 0.0,
+          0.0, 2.0 * c, 0.0, 1.0 * c,
+          1.0 * c, 0.0, 2.0 * c, 0.0,
+          0.0, 1.0 * c, 0.0, 2.0 * c;
+    return Me;
+}
 
 // 2D 梁几何刚度矩阵（一致式），轴力 N（受拉为正），杆长 L。
 // 局部自由度 [u1,v1,θ1,u2,v2,θ2]；仅横向 v/θ 自由度非零，用于 P-Δ / 屈曲。
