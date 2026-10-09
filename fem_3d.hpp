@@ -96,6 +96,7 @@ struct Element3D {
     double Iy = 0.0, Iz = 0.0, J = 0.0, G = 0.0;
     double istrn = 0.0;
     double Wtop = 0.0, Wbot = 0.0;
+    double Wy = 0.0;   // 绕 y 轴截面模量（水平弯曲 My 用）
     int n1 = 0, n2 = 0;
 };
 
@@ -591,7 +592,8 @@ struct DisplacementEnvelope3D {
 struct BeamEnvelope3D {
     int id = 0;
     double Nmin=0,Nmax=0,VyMin=0,VyMax=0,VzMin=0,VzMax=0;
-    double MyMin=0,MyMax=0,MzMin=0,MzMax=0;
+    double Tmin=0,Tmax=0,MyMin=0,MyMax=0,MzMin=0,MzMax=0;
+    bool valid=false;
 };
 
 // 梁单元的局部杆端力：fl = Kl · (T · ug)
@@ -612,6 +614,28 @@ inline Eigen::VectorXd beam3DLocalEndForces(const Model3D& m, const DofMap3D& dm
     return Kl * (T * ug);
 }
 
+// 累积一个截面内力样本（首个样本初始化，避免 0 初值吞掉负值极值）。
+static inline void accumBeamEnv(BeamEnvelope3D& r,
+                                double N, double Vy, double Vz, double T,
+                                double My, double Mz) {
+    if (!r.valid) {
+        r.Nmin = r.Nmax = N;
+        r.VyMin = r.VyMax = Vy;
+        r.VzMin = r.VzMax = Vz;
+        r.Tmin = r.Tmax = T;
+        r.MyMin = r.MyMax = My;
+        r.MzMin = r.MzMax = Mz;
+        r.valid = true;
+        return;
+    }
+    r.Nmin = std::min(r.Nmin, N);   r.Nmax = std::max(r.Nmax, N);
+    r.VyMin = std::min(r.VyMin, Vy); r.VyMax = std::max(r.VyMax, Vy);
+    r.VzMin = std::min(r.VzMin, Vz); r.VzMax = std::max(r.VzMax, Vz);
+    r.Tmin = std::min(r.Tmin, T);   r.Tmax = std::max(r.Tmax, T);
+    r.MyMin = std::min(r.MyMin, My); r.MyMax = std::max(r.MyMax, My);
+    r.MzMin = std::min(r.MzMin, Mz); r.MzMax = std::max(r.MzMax, Mz);
+}
+
 inline std::vector<BeamEnvelope3D> compute3DBeamEnvelope(
     const Model3D& m, const std::vector<StageResult3D>& stages) {
     std::map<int, BeamEnvelope3D> env;
@@ -622,15 +646,14 @@ inline std::vector<BeamEnvelope3D> compute3DBeamEnvelope(
             // 本阶段该梁是否激活：两端节点都得有转动自由度（6 自由度）才算。
             if (dm.safeDof(e.n1, 5) < 0 || dm.safeDof(e.n2, 5) < 0) continue;
             const Eigen::VectorXd fl = beam3DLocalEndForces(m, dm, e, sr.U);
-            const double N  = -fl(0);
-            const double Vy = fl(1),  Vz = fl(2);
-            const double My = fl(4),  Mz = fl(5);
             auto& r = env[e.id]; r.id = e.id;
-            r.Nmin  = std::min(r.Nmin,  N);   r.Nmax  = std::max(r.Nmax,  N);
-            r.VyMin = std::min(r.VyMin, Vy);  r.VyMax = std::max(r.VyMax, Vy);
-            r.VzMin = std::min(r.VzMin, Vz);  r.VzMax = std::max(r.VzMax, Vz);
-            r.MyMin = std::min(r.MyMin, My);  r.MyMax = std::max(r.MyMax, My);
-            r.MzMin = std::min(r.MzMin, Mz);  r.MzMax = std::max(r.MzMax, Mz);
+            // 截面内力（成员端力，两端同一约定）：
+            //   N(受拉正) = -fl(0) / +fl(6)
+            //   Vy,Vz     = +fl(1) / -fl(7), +fl(2) / -fl(8)
+            //   T(扭转)   = -fl(3) / +fl(9)
+            //   My,Mz     = -fl(4)/+fl(10), -fl(5)/+fl(11)   (下侧受拉正)
+            accumBeamEnv(r, -fl(0),  fl(1),  fl(2), -fl(3), -fl(4), -fl(5));  // i 端
+            accumBeamEnv(r,  fl(6), -fl(7), -fl(8),  fl(9),  fl(10), fl(11)); // j 端
         }
     }
     std::vector<BeamEnvelope3D> out;
@@ -779,16 +802,30 @@ inline std::vector<double> compute3DBeamShearInfluence(const Model3D& m, int ele
 inline std::vector<double> compute3DBeamStressInfluence(const Model3D& m, int elemId,
                                                         const std::string& comp, int end,
                                                         const Model3D::Lane3D& lane) {
-    if (comp != "TOP" && comp != "BOT")
-        throw std::runtime_error("未知应力分量: " + comp);
     return compute3DBeamResponseInfluence(m, elemId,
         [comp, end](const Eigen::VectorXd& fl, const Element3D& e) {
-            if (e.Wtop <= 0 || e.Wbot <= 0)
-                throw std::runtime_error("梁应力需要 WT/WB");
             const double N  = (end == 1) ? -fl(0)  : fl(6);
-            const double Mz = (end == 1) ?  fl(5)  : fl(11);
-            return (comp == "TOP") ? (N / e.A - Mz / e.Wtop)
-                                   : (N / e.A + Mz / e.Wbot);
+            const double My = (end == 1) ? -fl(4)  : fl(10);  // 水平弯曲（右缘受拉正）
+            const double Mz = (end == 1) ? -fl(5)  : fl(11);  // 竖向弯曲（下缘受拉正）
+            if (comp == "TOP" || comp == "BOT" || comp == "MAX" || comp == "MIN") {
+                if (e.Wtop <= 0 || e.Wbot <= 0)
+                    throw std::runtime_error("梁应力需要 WT/WB");
+            }
+            if (comp == "LEFT" || comp == "RIGHT" || comp == "MAX" || comp == "MIN") {
+                if (e.Wy <= 0)
+                    throw std::runtime_error("梁水平应力需要 WY");
+            }
+            if (comp == "TOP")   return N / e.A - Mz / e.Wtop;
+            if (comp == "BOT")   return N / e.A + Mz / e.Wbot;
+            if (comp == "LEFT")  return N / e.A - My / e.Wy;
+            if (comp == "RIGHT") return N / e.A + My / e.Wy;
+            // MAX/MIN：四角点组合应力
+            const double s1 = N / e.A - Mz / e.Wtop - My / e.Wy;  // 左上
+            const double s2 = N / e.A - Mz / e.Wtop + My / e.Wy;  // 右上
+            const double s3 = N / e.A + Mz / e.Wbot - My / e.Wy;  // 左下
+            const double s4 = N / e.A + Mz / e.Wbot + My / e.Wy;  // 右下
+            if (comp == "MAX") return std::max(std::max(s1, s2), std::max(s3, s4));
+            return std::min(std::min(s1, s2), std::min(s3, s4));   // MIN
         }, lane);
 }
 
@@ -900,8 +937,9 @@ inline std::pair<double,double> envelope3DFromSurface(
     // 用户显式指定了 REDUCTION= 则完全尊重用户输入，不再覆盖。
     if (factor == 1.0 && surface.laneCount > 1) {
         if (surface.laneCount == 2) factor = 1.0;
-        else if (surface.laneCount == 3) factor = 0.9;
-        else if (surface.laneCount >= 4) factor = 0.8;
+        else if (surface.laneCount == 3) factor = 0.78;   // JTG D60 横向多车道折减
+        else if (surface.laneCount == 4) factor = 0.67;
+        else if (surface.laneCount >= 5) factor = 0.60;
     }
 
     return {surface.impact * factor * (surface.q * qMaxArea + surface.p * pMaxOrd),
@@ -981,7 +1019,7 @@ inline Model3D readModel3D(const std::string& path) {
     std::map<int, double> areas;
     std::map<int, double> realIy, realIz, realJ, realG;
     std::map<int, double> realIstrn;
-    std::map<int,double> realWtop, realWbot;
+    std::map<int,double> realWtop, realWbot, realWy;
     int activeType = 0, activeMat = 0, activeReal = 0;
     std::string section;
     std::string line;
@@ -1002,7 +1040,7 @@ inline Model3D readModel3D(const std::string& path) {
                         Element3D e; e.id=id; e.type=types[activeType]; e.E=mats[activeMat]; e.A=areas[activeReal]; e.n1=n1; e.n2=n2;
                         e.Iy=realIy[activeReal]; e.Iz=realIz[activeReal]; e.J=realJ[activeReal]; e.G=realG[activeReal];
                         e.istrn=realIstrn[activeReal];
-                        e.Wtop=realWtop[activeReal]; e.Wbot=realWbot[activeReal];
+                        e.Wtop=realWtop[activeReal]; e.Wbot=realWbot[activeReal]; e.Wy=realWy[activeReal];
                         m.elements.push_back(e);
                     }
                 }
@@ -1058,6 +1096,7 @@ inline Model3D readModel3D(const std::string& path) {
                 else if (kv.rfind("ISTRN=",0)==0) realIstrn[id]=std::stod(kv.substr(6));
                 else if (kv.rfind("WT=",0)==0) realWtop[id]=std::stod(kv.substr(3));
                 else if (kv.rfind("WB=",0)==0) realWbot[id]=std::stod(kv.substr(3));
+                else if (kv.rfind("WY=",0)==0) realWy[id]=std::stod(kv.substr(3));
             }
             areas[id]=A;
             realIy[id]=Iy; realIz[id]=Iz; realJ[id]=J; realG[id]=G;

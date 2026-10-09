@@ -42,8 +42,11 @@
 
 ```text
 *R
-1 A=0.01 IY=1e-8 IZ=1e-8 J=1e-8 G=80e9 WT=1e-4 WB=1e-4 ISTRN=0.0001
+1 A=0.01 IY=1e-8 IZ=1e-8 J=1e-8 G=80e9 WT=1e-4 WB=1e-4 WY=1e-4 ISTRN=0.0001
 ```
+
+- `WT`/`WB`：绕 z 轴（竖向弯曲 Mz）的上/下缘截面模量。
+- `WY`：绕 y 轴（水平弯曲 My）的截面模量；用于 `LEFT`/`RIGHT`/`MAX`/`MIN` 应力分量。
 
 ## 单元生成
 

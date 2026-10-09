@@ -971,6 +971,42 @@ void testBeamTimoshenko() {
     check("深梁跨中挠度（含剪切）", nodalDisp(m, r, mid, 2), exact);
 }
 
+// ---- 22. 3D 梁内力包络与应力符号 ----
+// 悬臂梁（固定 i 端、自由 j 端）+ 向下的端部集中力：
+//   固定端截面弯矩（下缘受拉正）应为 -P·L（上缘受拉），自由端为 0。
+//   该负值必须被包络正确捕获（验证"0 初值吞负值"已修），且上缘应力为 +PL/Wtop。
+void test3DBeamEnvelope() {
+    std::printf("\n[22] 3D 梁内力包络与应力符号\n");
+    Model3D m;
+    m.nodes[1] = Vec3(0.0, 0.0, 0.0);
+    m.nodes[2] = Vec3(L, 0.0, 0.0);
+    Element3D e;
+    e.id = 1; e.type = "BEAM";
+    e.E = E; e.A = A; e.Iy = I; e.Iz = I;
+    e.J = 1.0e-3; e.G = E / 2.6;   // 非零扭转刚度，避免 θx 零刚度自由度
+    e.Wtop = 1.0e-4; e.Wbot = 1.0e-4; e.Wy = 1.0e-4;
+    e.n1 = 1; e.n2 = 2;
+    m.elements.push_back(e);
+    for (int dof = 1; dof <= 6; ++dof) m.constraints.push_back({1, dof, 0.0});
+    m.loads.push_back({2, 2, -P});   // 节点2 dof2（y 向）向下
+
+    const std::vector<double> U = solveModel3D(m);
+    const DofMap3D dm = buildDofMap3D(m);
+    const Eigen::VectorXd fl = beam3DLocalEndForces(m, dm, e, U);
+
+    // 恢复端力 fl(5)=+P·L（外反力），截面弯矩（下缘受拉正）= -fl(5) = -P·L。
+    check("3D 悬臂 截面弯矩 Mz=-PL", -fl(5), -P * L);
+    // 上缘应力 σ_top = N/A - Mz/Wtop = +PL/Wtop（受拉）
+    check("3D 悬臂 上缘受拉 σ=PL/Wtop", -(-fl(5)) / e.Wtop, P * L / e.Wtop);
+
+    std::vector<StageResult3D> stages;
+    StageResult3D sr; sr.stage = 1; sr.dm = dm; sr.U = U;
+    stages.push_back(sr);
+    const auto env = compute3DBeamEnvelope(m, stages);
+    check("3D 包络 MzMin=-PL（负值被捕获）", env[0].MzMin, -P * L);
+    check("3D 包络 MzMax=0（j 端自由）", env[0].MzMax, 0.0, 1e-9);
+}
+
 } // namespace
 
 int main() {
@@ -999,6 +1035,7 @@ int main() {
         testBeamPDelta();
         testBeamEndRelease();
         testBeamTimoshenko();
+        test3DBeamEnvelope();
     } catch (const std::exception& e) {
         std::printf("\n[ERROR] 异常: %s\n", e.what());
         ++g_fail;
