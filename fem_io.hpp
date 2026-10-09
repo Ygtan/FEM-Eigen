@@ -564,6 +564,11 @@ DenseVec distributedLoadEquivalent(const std::string& type,
                                           const Eigen::Vector2d& gdir,
                                           double q1, double q2) ;
 
+// 梁单元局部横向分布荷载（向下为正），取 i/j 两端平均值；用于弯矩图的抛物线修正。
+// 仅含分布荷载与自重（不含温度梯度——温度梯度产生的是常弯矩，不产生抛物线项）。
+double localTransverseUDL(const Model2D& m, const Model2D::Element& e,
+                          const Eigen::Vector2d& p1, const Eigen::Vector2d& p2) ;
+
 // 均匀温度变化等效节点荷载（轴力）。
 DenseVec uniformTempEquivalent(const std::string& type, double E, double A, double alpha,
                                       double dT, const Eigen::Vector2d& p1, const Eigen::Vector2d& p2) ;

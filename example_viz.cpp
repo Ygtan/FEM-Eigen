@@ -206,6 +206,10 @@ static int runViz(int argc, char** argv) {
         for (const auto& s : stresses) if (s.id == id) return s;
         throw std::runtime_error("internal: element not found");
     };
+    auto findElem = [&](int id) -> const Model2D::Element& {
+        for (const auto& e : model.elements) if (e.id == id) return e;
+        throw std::runtime_error("internal: element not found");
+    };
 
     const std::string ttl = model.title.empty() ? path : model.title;
 
@@ -218,10 +222,21 @@ static int runViz(int argc, char** argv) {
     // 弯矩图
     {
         std::vector<Seg> segs;
+        const int nSub = 4;
         for (const auto& e : elems) {
             if (e.type != "BEAM") continue;
             const auto& f = findF(e.id);
-            segs.push_back({e.id, e.p1, e.p2, f.M1, f.M2});
+            const auto& me = findElem(e.id);
+            const double qd = localTransverseUDL(model, me, e.p1, e.p2);  // 向下为正
+            const Eigen::Vector2d dir = e.p2 - e.p1;
+            const double L = dir.norm();
+            // 弯矩 = 端弯矩线性插值 + 分布荷载的“简支”抛物线项 qd·x·(L-x)/2
+            for (int k = 0; k < nSub; ++k) {
+                const double x0 = L * k / nSub, x1 = L * (k + 1) / nSub;
+                const double m0 = f.M1 + (f.M2 - f.M1) * (x0 / L) + qd * x0 * (L - x0) / 2.0;
+                const double m1 = f.M1 + (f.M2 - f.M1) * (x1 / L) + qd * x1 * (L - x1) / 2.0;
+                segs.push_back({e.id, e.p1 + dir * (x0 / L), e.p1 + dir * (x1 / L), m0, m1});
+            }
         }
         writeDiagramFigure(base + "_moment.svg", ttl + " - 弯矩图", model, elems, segs, "#ff8c00");
     }

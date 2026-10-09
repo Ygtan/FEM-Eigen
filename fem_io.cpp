@@ -97,6 +97,43 @@ DenseVec distributedLoadEquivalent(const std::string& type,
     return be.transformation().transpose() * fl;
 }
 
+double localTransverseUDL(const Model2D& m, const Model2D::Element& e,
+                          const Eigen::Vector2d& p1, const Eigen::Vector2d& p2) {
+    const Eigen::Vector2d d = p2 - p1;
+    const double L = d.norm();
+    if (L <= 0.0) return 0.0;
+    const double c = d(0) / L, s = d(1) / L;
+
+    double qy = 0.0;   // 局部横向（+局部 y，向下为负）
+    auto add = [&](const Eigen::Vector2d& gdir, double q) {
+        const double ly = -s * gdir(0) + c * gdir(1);
+        qy += q * ly;
+    };
+
+    // 单元均布/梯形荷载（取两端平均，近似为均布）
+    for (const auto& el : m.elemLoads) {
+        if (el.elem != e.id) continue;
+        add(resolveDir(el.dir, p1, p2), 0.5 * (el.q1 + el.q2));
+    }
+
+    // 自重（自动 + 显式）
+    const double gmag = std::sqrt(m.gx * m.gx + m.gy * m.gy);
+    if (gmag > 0.0) {
+        const Eigen::Vector2d gdir(m.gx / gmag, m.gy / gmag);
+        const double wAuto = (e.dens * e.A + e.addmass) * gmag;
+        if (wAuto > 0.0) add(gdir, wAuto);
+        for (const auto& sw : m.selfWeights) {
+            if (!sw.all && sw.elem != e.id) continue;
+            double w = 0.0;
+            if (sw.rule == "RHO") w = sw.value * gmag * e.A;
+            else if (sw.rule == "MASS") w = sw.value * gmag;
+            add(gdir, w);
+        }
+    }
+
+    return -qy;   // 向下为正（产生下缘受拉的正弯矩）
+}
+
 DenseVec uniformTempEquivalent(const std::string& type, double E, double A, double alpha,
                                       double dT, const Eigen::Vector2d& p1, const Eigen::Vector2d& p2) {
     const double NT = E * A * alpha * dT;
