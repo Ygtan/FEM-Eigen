@@ -1,6 +1,7 @@
 #pragma once
 
 #include "fem.hpp"
+#include "section.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -44,6 +45,15 @@
 // 二维结构统一按“每节点 3 个自由度 [u, v, θ]”编号；桁架只贡献 u/v，
 // 梁贡献 u/v/θ，因此可以混合使用。
 namespace fem {
+
+// 由纤维截面构造 2D 梁单元（换算截面：E=Eref，A=A*，I=Iz*）。
+// 组合截面时 Eref·A* = Σ E_i·A_i、Eref·Iz* = Σ E_i·(y_i-cy)²·A_i，即真实轴向/抗弯刚度。
+inline EulerBeam2D beamFromSection2D(const Section& sec,
+                                     const Eigen::Vector2d& x0, const Eigen::Vector2d& x1) {
+    const SectionProperties p = computeTransformedProperties(sec);
+    const double E = (sec.Eref > 0.0) ? sec.Eref : 1.0;
+    return EulerBeam2D{E, p.A, p.Iz, x0, x1};
+}
 
 struct Model2D {
     std::string title;

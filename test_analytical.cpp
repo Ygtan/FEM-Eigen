@@ -1098,6 +1098,93 @@ void testFiberSection() {
     check("温度梯度 N=0（对称截面）", sr.N, 0.0, 1e-9);
 }
 
+// ---- 28. 组合截面（等效模量法）----
+// 1×1 方形：上半混凝土 E_c、下半钢 E_s。换算截面（E_ref=E_c）：
+//   A* = bh/2·(1+n)，形心 cy = (h/4)(1-n)/(1+n)（n=E_s/E_c）。
+void testCompositeSection() {
+    std::printf("\n[28] 组合截面（等效模量法）\n");
+    const double b = 1.0, h = 1.0;
+    const double Ec = 3.0e10, Es = 2.0e11;
+    Section sec;
+    sec.Eref = Ec;
+    addRectFibers(sec.fibers, -h / 2.0, -b / 2.0, h / 2.0, b, 40, 40, Es); // 下半钢
+    addRectFibers(sec.fibers, 0.0, -b / 2.0, h / 2.0, b, 40, 40, Ec);      // 上半混凝土
+
+    const double n = Es / Ec;
+    const SectionProperties p = computeTransformedProperties(sec);
+    check("换算面积 A*=bh/2·(1+n)", p.A, b * h / 2.0 * (1.0 + n), 1e-3);
+    const double yc = (h / 4.0) * (1.0 - n) / (1.0 + n);
+    check("换算形心 cy=(h/4)(1-n)/(1+n)", p.cy, yc, 1e-3);
+
+    // 纯轴拉 N=1：混凝土纤维 σ=N/A*，钢纤维 σ=n·N/A*（应力恢复）
+    const auto sig = sectionFiberStresses(sec, 1.0, 0.0, 0.0);
+    double sConcrete = 0.0, sSteel = 0.0;
+    for (std::size_t i = 0; i < sec.fibers.size(); ++i) {
+        if (sec.fibers[i].E == Ec) sConcrete = sig[i];
+        else sSteel = sig[i];
+    }
+    check("混凝土纤维应力 σ=N/A*", sConcrete, 1.0 / p.A, 1e-3);
+    check("钢纤维应力 σ=n·N/A*", sSteel, n / p.A, 1e-3);
+}
+
+// ---- 29. 变截面（沿梁长插值截面属性）----
+// 两端截面线性渐变：中点截面属性 = 两端平均。
+void testVariableSection() {
+    std::printf("\n[29] 变截面（沿梁长插值）\n");
+    const double E = 2.0e11;
+    const auto p0 = computeSectionProperties(makeRectangularFibers(0.4, 1.2, 40, 40, E));
+    const auto p1 = computeSectionProperties(makeRectangularFibers(0.4, 0.8, 40, 40, E));
+    VariableSection vs;
+    vs.control = {{0.0, p0}, {10.0, p1}};
+    const SectionProperties pm = sectionAt(vs, 5.0);
+    check("变截面 中点 A=两端平均", pm.A, 0.5 * (p0.A + p1.A), 1e-12);
+    check("变截面 中点 Iz=两端平均", pm.Iz, 0.5 * (p0.Iz + p1.Iz), 1e-12);
+}
+
+// ---- 30. 截面接入梁单元 ----
+// 矩形截面构造的梁，其 A/I 与手输一致，刚度矩阵与手动梁一致。
+void testSectionIntegration() {
+    std::printf("\n[30] 截面接入梁单元\n");
+    const double b = 0.4, h = 1.2, E = 2.0e11;
+    Section sec;
+    sec.Eref = E;
+    sec.fibers = makeRectangularFibers(b, h, 40, 40, E);
+    const Eigen::Vector2d x0(0.0, 0.0), x1(L, 0.0);
+    const EulerBeam2D beSec = beamFromSection2D(sec, x0, x1);
+    const EulerBeam2D beManual{E, b * h, b * h * h * h / 12.0, x0, x1};
+    check("截面梁 A=手动 A", beSec.A, b * h, 1e-12);
+    check("截面梁 I=手动 I", beSec.I, b * h * h * h / 12.0, 1e-3);
+    const double Kref = beManual.localStiffness().norm();
+    check("截面梁刚度=手动梁刚度",
+          (beSec.localStiffness() - beManual.localStiffness()).norm() / Kref, 0.0, 1e-3);
+}
+
+// ---- 31. 截面材料非线性（纤维本构 + 切线）----
+// 矩形钢截面：弹性轴拉 N=EAε0、切线 D11=EA；屈服后 N≈fy·A；纯弯 Mz=EIz·κz。
+void testSectionNonlinear() {
+    std::printf("\n[31] 截面材料非线性\n");
+    const double b = 0.4, h = 1.2, E = 2.0e11, fy = 3.45e8;
+    auto fibers = makeRectangularFibers(b, h, 40, 40, E);
+    for (auto& f : fibers) f.mat = 0;
+    Section sec;
+    sec.Eref = E;
+    sec.fibers = fibers;
+    const std::vector<MaterialModel> mats = {{E, fy, 0.0, "STEEL"}};
+
+    const double eps0 = 1.0e-4;
+    const SectionResponse rel = sectionResponse(sec, mats, eps0, 0.0, 0.0);
+    check("弹性轴拉 N=EAε0", rel.N, E * b * h * eps0, 1e-3);
+    check("弹性切线 D11=EA", rel.D11, E * b * h, 1e-3);
+
+    const double epsY = 10.0 * fy / E;
+    const SectionResponse ry = sectionResponse(sec, mats, epsY, 0.0, 0.0);
+    check("钢屈服后 N≈fy·A", ry.N, fy * b * h, 1e-3);
+
+    const double kz = 1.0e-4;
+    const SectionResponse rb = sectionResponse(sec, mats, 0.0, kz, 0.0);
+    check("纯弯 Mz=EIz·κz", rb.Mz, E * (b * h * h * h / 12.0) * kz, 1e-3);
+}
+
 } // namespace
 
 int main() {
@@ -1132,6 +1219,10 @@ int main() {
         testBuckling();
         testImpactCoefficient();
         testFiberSection();
+        testCompositeSection();
+        testVariableSection();
+        testSectionIntegration();
+        testSectionNonlinear();
     } catch (const std::exception& e) {
         std::printf("\n[ERROR] 异常: %s\n", e.what());
         ++g_fail;
