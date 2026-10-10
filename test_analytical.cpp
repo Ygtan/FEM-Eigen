@@ -1752,6 +1752,47 @@ void test3DBeam7Torsion() {
     }
 }
 
+// ---- BEAM7 影响线打通：跨中弯矩影响线 + 与 6 自由度梁一致 ----
+void test3DBeam7Influence() {
+    std::printf("\n[7 自由度梁] 影响线打通（跨中弯矩）\n");
+    const double E = 2.06e11, G = 7.9e10, L = 10.0;
+    const int n = 10;
+
+    auto makeBeam = [&](const std::string& type) {
+        Model3D m;
+        for (int i = 0; i <= n; ++i) m.nodes[i + 1] = Vec3(L * i / n, 0.0, 0.0);
+        for (int i = 1; i <= n; ++i) {
+            Element3D e;
+            e.id = i; e.type = type; e.E = E; e.A = 0.18;
+            e.Iy = 0.4; e.Iz = 0.6; e.J = 0.3; e.G = G; e.Iw = 0.05;
+            e.n1 = i; e.n2 = i + 1;
+            m.elements.push_back(e);
+        }
+        m.constraints.push_back({1, 1, 0.0});   // u
+        m.constraints.push_back({1, 2, 0.0});   // v
+        m.constraints.push_back({1, 3, 0.0});   // w
+        m.constraints.push_back({1, 4, 0.0});   // θx（除刚体扭转）
+        m.constraints.push_back({n + 1, 2, 0.0});
+        m.constraints.push_back({n + 1, 3, 0.0});
+        return m;
+    };
+
+    Model3D::Lane3D lane;
+    for (int i = 1; i <= n + 1; ++i) lane.nodes.push_back(i);
+    lane.dof = 2;
+
+    const auto eta7 = compute3DBeamMomentInfluence(makeBeam("BEAM7"), 5, "MZ", 2, lane);
+    const auto eta6 = compute3DBeamMomentInfluence(makeBeam("BEAM"), 5, "MZ", 2, lane);
+
+    double peak = 0.0, maxDiff = 0.0;
+    for (std::size_t k = 0; k < eta7.size(); ++k) {
+        peak = std::max(peak, std::abs(eta7[k]));
+        maxDiff = std::max(maxDiff, std::abs(eta7[k] - eta6[k]));
+    }
+    check("BEAM7 跨中弯矩影响线峰值 L/4", peak, L / 4.0, 1e-9);
+    check("BEAM7 与 BEAM 弯矩影响线一致", maxDiff, 0.0, 1e-12);
+}
+
 } // namespace
 
 int main() {
@@ -1800,6 +1841,7 @@ int main() {
         testCodeLoadLibrary();
         test3DVariableSection();
         test3DBeam7Torsion();
+        test3DBeam7Influence();
     } catch (const std::exception& e) {
         std::printf("\n[ERROR] 异常: %s\n", e.what());
         ++g_fail;

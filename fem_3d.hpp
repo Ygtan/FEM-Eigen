@@ -1070,24 +1070,57 @@ inline std::vector<double> compute3DBeamAxialInfluence(const Model3D& m,
     return eta;
 }
 
-// 梁单元内力/应力影响线的统一实现：extractor 从局部杆端力取出关注分量。
-// （旧代码 MOMENT / SHEAR / STRESS 三个函数 90% 重复，这里合并。）
+// 梁端截面内力（12/14 自由度统一）：N 轴力、Vy/Vz 剪力、T 扭矩、
+// My/Mz 弯矩、B 双力矩（仅 BEAM7）。
+struct BeamEndForces {
+    double N = 0.0, Vy = 0.0, Vz = 0.0, T = 0.0, My = 0.0, Mz = 0.0, B = 0.0;
+};
+
+// 从局部杆端力向量取出 i 端（end=1）或 j 端（end=2）的截面内力。
+inline BeamEndForces beamEndForcesAt(const Eigen::VectorXd& fl, int dofsPerElem, int end) {
+    BeamEndForces f;
+    if (dofsPerElem == 14) {
+        if (end == 1) {
+            f.N = -fl(0); f.Vy = fl(1); f.Vz = fl(2); f.T = -fl(3);
+            f.My = -fl(4); f.Mz = -fl(5); f.B = -fl(6);
+        } else {
+            f.N = fl(7); f.Vy = -fl(8); f.Vz = -fl(9); f.T = fl(10);
+            f.My = fl(11); f.Mz = fl(12); f.B = fl(13);
+        }
+    } else {
+        if (end == 1) {
+            f.N = -fl(0); f.Vy = fl(1); f.Vz = fl(2); f.T = -fl(3);
+            f.My = -fl(4); f.Mz = -fl(5);
+        } else {
+            f.N = fl(6); f.Vy = -fl(7); f.Vz = -fl(8); f.T = fl(9);
+            f.My = fl(10); f.Mz = fl(11);
+        }
+    }
+    return f;
+}
+
+// 梁单元内力/应力影响线的统一实现：extractor 从梁端截面内力取出关注分量。
 inline std::vector<double> compute3DBeamResponseInfluence(
-    const Model3D& m, int elemId,
-    const std::function<double(const Eigen::VectorXd& fl, const Element3D& e)>& extract,
+    const Model3D& m, int elemId, int end,
+    const std::function<double(const BeamEndForces&, const Element3D&)>& extract,
     const Model3D::Lane3D& lane) {
     const Element3D* target = nullptr;
     for (const auto& e : m.elements) if (e.id == elemId) { target = &e; break; }
-    if (!target || target->type != "BEAM")
+    if (!target || (target->type != "BEAM" && target->type != "BEAM7"))
         throw std::runtime_error("三维梁单元不存在: " + std::to_string(elemId));
 
+    const bool is7 = (target->type == "BEAM7");
+    const int dpe = is7 ? 14 : 12;
     const DofMap3D dm = buildDofMap3D(m);
     std::vector<double> eta(lane.nodes.size(), 0.0);
     scanLane3D(m, lane,
                [&](std::size_t k, const std::vector<double>& U, const std::vector<double>& Ub) {
-                   const auto fl  = beam3DLocalEndForces(m, dm, *target, U);
-                   const auto flb = beam3DLocalEndForces(m, dm, *target, Ub);
-                   eta[k] = extract(fl, *target) - extract(flb, *target);
+                   const Eigen::VectorXd fl  = is7 ? beam7LocalEndForces(m, dm, *target, U)
+                                                   : beam3DLocalEndForces(m, dm, *target, U);
+                   const Eigen::VectorXd flb = is7 ? beam7LocalEndForces(m, dm, *target, Ub)
+                                                   : beam3DLocalEndForces(m, dm, *target, Ub);
+                   eta[k] = extract(beamEndForcesAt(fl, dpe, end), *target)
+                          - extract(beamEndForcesAt(flb, dpe, end), *target);
                });
     return eta;
 }
@@ -1097,11 +1130,9 @@ inline std::vector<double> compute3DBeamMomentInfluence(const Model3D& m, int el
                                                         const Model3D::Lane3D& lane) {
     if (comp != "MY" && comp != "MZ")
         throw std::runtime_error("未知弯矩分量: " + comp);
-    const int baseIdx = (end == 1) ? 4 : 10;
-    const int offset  = (comp == "MY") ? 0 : 1;
-    return compute3DBeamResponseInfluence(m, elemId,
-        [baseIdx, offset](const Eigen::VectorXd& fl, const Element3D&) {
-            return fl(baseIdx + offset);
+    return compute3DBeamResponseInfluence(m, elemId, end,
+        [comp](const BeamEndForces& f, const Element3D&) {
+            return (comp == "MY") ? f.My : f.Mz;
         }, lane);
 }
 
@@ -1110,24 +1141,27 @@ inline std::vector<double> compute3DBeamShearInfluence(const Model3D& m, int ele
                                                        const Model3D::Lane3D& lane) {
     if (comp != "VY" && comp != "VZ")
         throw std::runtime_error("未知剪力分量: " + comp);
-    const int idx = (comp == "VY") ? ((end == 1) ? 1 : 7) : ((end == 1) ? 2 : 8);
-    return compute3DBeamResponseInfluence(m, elemId,
-        [idx](const Eigen::VectorXd& fl, const Element3D&) { return fl(idx); }, lane);
+    return compute3DBeamResponseInfluence(m, elemId, end,
+        [comp](const BeamEndForces& f, const Element3D&) {
+            return (comp == "VY") ? f.Vy : f.Vz;
+        }, lane);
+}
+
+inline std::vector<double> compute3DBeamBimomentInfluence(const Model3D& m, int elemId, int end,
+                                                          const Model3D::Lane3D& lane) {
+    return compute3DBeamResponseInfluence(m, elemId, end,
+        [](const BeamEndForces& f, const Element3D&) { return f.B; }, lane);
 }
 
 inline std::vector<double> compute3DBeamStressInfluence(const Model3D& m, int elemId,
                                                         const std::string& comp, int end,
                                                         const Model3D::Lane3D& lane) {
-    return compute3DBeamResponseInfluence(m, elemId,
-        [comp, end](const Eigen::VectorXd& fl, const Element3D& e) {
-            const double N  = (end == 1) ? -fl(0)  : fl(6);
-            const double My = (end == 1) ? -fl(4)  : fl(10);  // 水平弯曲（右缘受拉正）
-            const double Mz = (end == 1) ? -fl(5)  : fl(11);  // 竖向弯曲（下缘受拉正）
-            const double T  = (end == 1) ? -fl(3)  : fl(9);   // 扭矩
+    return compute3DBeamResponseInfluence(m, elemId, end,
+        [comp](const BeamEndForces& f, const Element3D& e) {
             if (comp == "TORSION") {
                 if (e.Wt <= 0)
                     throw std::runtime_error("梁扭转剪应力需要 WT（扭转截面模量）");
-                return T / e.Wt;   // τ = T / Wt
+                return f.T / e.Wt;   // τ = T / Wt
             }
             if (comp == "TOP" || comp == "BOT" || comp == "MAX" || comp == "MIN") {
                 if (e.Wtop <= 0 || e.Wbot <= 0)
@@ -1137,15 +1171,15 @@ inline std::vector<double> compute3DBeamStressInfluence(const Model3D& m, int el
                 if (e.Wy <= 0)
                     throw std::runtime_error("梁水平应力需要 WY");
             }
-            if (comp == "TOP")   return N / e.A - Mz / e.Wtop;
-            if (comp == "BOT")   return N / e.A + Mz / e.Wbot;
-            if (comp == "LEFT")  return N / e.A - My / e.Wy;
-            if (comp == "RIGHT") return N / e.A + My / e.Wy;
+            if (comp == "TOP")   return f.N / e.A - f.Mz / e.Wtop;
+            if (comp == "BOT")   return f.N / e.A + f.Mz / e.Wbot;
+            if (comp == "LEFT")  return f.N / e.A - f.My / e.Wy;
+            if (comp == "RIGHT") return f.N / e.A + f.My / e.Wy;
             // MAX/MIN：四角点组合应力
-            const double s1 = N / e.A - Mz / e.Wtop - My / e.Wy;  // 左上
-            const double s2 = N / e.A - Mz / e.Wtop + My / e.Wy;  // 右上
-            const double s3 = N / e.A + Mz / e.Wbot - My / e.Wy;  // 左下
-            const double s4 = N / e.A + Mz / e.Wbot + My / e.Wy;  // 右下
+            const double s1 = f.N / e.A - f.Mz / e.Wtop - f.My / e.Wy;  // 左上
+            const double s2 = f.N / e.A - f.Mz / e.Wtop + f.My / e.Wy;  // 右上
+            const double s3 = f.N / e.A + f.Mz / e.Wbot - f.My / e.Wy;  // 左下
+            const double s4 = f.N / e.A + f.Mz / e.Wbot + f.My / e.Wy;  // 右下
             if (comp == "MAX") return std::max(std::max(s1, s2), std::max(s3, s4));
             return std::min(std::min(s1, s2), std::min(s3, s4));   // MIN
         }, lane);

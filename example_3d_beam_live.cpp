@@ -20,7 +20,7 @@ int main(int argc, char** argv) {
         }
     }
     for (const auto& e : m.elements) {
-        if (e.type != "BEAM") continue;
+        if (e.type != "BEAM" && e.type != "BEAM7") continue;
         for (const auto& lane : m.lanes) {
             for (const std::string comp : {"MY","MZ"}) {
                 auto eta = compute3DBeamMomentInfluence(m, e.id, comp, 1, lane);
@@ -41,6 +41,12 @@ int main(int argc, char** argv) {
                     std::cout << "E" << e.id << " " << comp << "1 max=" << env.first << " min=" << env.second << "\n";
                     report << e.id << "," << comp << ",1," << env.first << "," << env.second << "\n";
                 }
+            }
+            if (e.type == "BEAM7") {
+                auto eta = compute3DBeamBimomentInfluence(m, e.id, 1, lane);
+                auto env = envelope3DFromInfluence(lane, eta);
+                std::cout << "E" << e.id << " B1 max=" << env.first << " min=" << env.second << "\n";
+                report << e.id << ",B,1," << env.first << "," << env.second << "\n";
             }
         }
     }
