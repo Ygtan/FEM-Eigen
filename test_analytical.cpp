@@ -1397,6 +1397,43 @@ void testDofMapUnification() {
     checkMat("2D 装配刚度 == 3D 刚度平面内子矩阵", K2.toDense(), K3sub);
 }
 
+// ---- 统一内力：BeamElement.localEndForces == beam3DLocalEndForces ----
+void testUnifiedEndForces() {
+    std::printf("\n[统一内力] BeamElement.localEndForces == beam3DLocalEndForces\n");
+    const double E = 2.06e11, A = 0.18, Iy = 0.4, Iz = 0.6, J = 0.32, G = 7.9e10;
+
+    Model3D m;
+    m.nodes[1] = Vec3(1.0, 2.0, 0.5);
+    m.nodes[2] = Vec3(5.0, -1.0, 3.0);
+    Element3D e;
+    e.id = 1; e.type = "BEAM"; e.E = E; e.A = A; e.Iy = Iy; e.Iz = Iz; e.J = J; e.G = G;
+    e.n1 = 1; e.n2 = 2;
+    m.elements.push_back(e);
+
+    // 任意一组全局位移（含所有 6 个自由度）
+    const DofMap dm = buildDofMap3D(m);
+    std::vector<double> U(dm.nDofs, 0.0);
+    const double vals[6] = {0.001, -0.002, 0.003, 0.004, -0.005, 0.006};
+    for (int k = 0; k < 6; ++k) {
+        U[dm.dof(1, k)] = vals[k];
+        U[dm.dof(2, k)] = -0.5 * vals[k];
+    }
+
+    const Eigen::VectorXd fl3 = beam3DLocalEndForces(m, dm, e, U);
+
+    BeamElement b;
+    b.E = E; b.A = A; b.Iy = Iy; b.Iz = Iz; b.J = J; b.G = G;
+    b.x0 = m.nodes.at(1); b.x1 = m.nodes.at(2);
+    Eigen::Matrix<double, 12, 1> ug;
+    for (int k = 0; k < 6; ++k) {
+        ug(k)     = U[dm.dof(1, k)];
+        ug(6 + k) = U[dm.dof(2, k)];
+    }
+    const Eigen::VectorXd flu = b.localEndForces(ug);
+
+    checkMat("BeamElement.localEndForces == beam3DLocalEndForces", flu, fl3);
+}
+
 } // namespace
 
 int main() {
@@ -1438,6 +1475,7 @@ int main() {
         testBeamElementUnification();
         test3DObliqueCantilever();
         testDofMapUnification();
+        testUnifiedEndForces();
     } catch (const std::exception& e) {
         std::printf("\n[ERROR] 异常: %s\n", e.what());
         ++g_fail;

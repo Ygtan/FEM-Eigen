@@ -1003,6 +1003,12 @@ struct BeamElement {
         return T.transpose() * Kl * T;
     }
 
+    // 局部杆端力：fl = Kl · (T · ug)，ug 为 12 个全局自由度位移。
+    // 与 fem_3d.hpp 的 beam3DLocalEndForces 等价（该函数内部也是 Kl·(T·ug)）。
+    Eigen::Matrix<double, 12, 1> localEndForces(const Eigen::Matrix<double, 12, 1>& ug) const {
+        return localStiffness() * (transformation() * ug);
+    }
+
     // 一致质量矩阵（12×12），rhoA 为线质量密度 kg/m。
     DenseMat consistentMassMatrix(double rhoA) const {
         const double L = length();
