@@ -96,6 +96,7 @@ struct Element3D {
     std::string type = "TRUSS";
     double E = 0.0, A = 0.0;
     double Iy = 0.0, Iz = 0.0, J = 0.0, G = 0.0;
+    double dens = 0.0, addmass = 0.0;   // 密度 kg/m^3、附加线质量 kg/m（模态/自重）
     double istrn = 0.0;
     double Wtop = 0.0, Wbot = 0.0;
     double Wy = 0.0;   // 绕 y 轴截面模量（水平弯曲 My 用）
@@ -469,6 +470,197 @@ inline Assembled3D assembleModel3D(const Model3D& m) {
 inline std::vector<double> solveModel3D(const Model3D& m) {
     const Assembled3D a = assembleModel3D(m);
     return toStdVec(solveSparse3D(a.K, a.F));
+}
+
+// ==================== 3D 模态 / 屈曲 ====================
+
+struct ModalResult3D {
+    std::vector<double> frequencies;              // Hz
+    std::vector<std::vector<double>> modes;       // 每个模态一个全局位移向量
+};
+
+// 3D 桁架一致质量矩阵（6 自由度 [u1,v1,w1,u2,v2,w2]），与 2D 约定一致。
+inline Eigen::Matrix<double, 6, 6> truss3DConsistentMassMatrix(double rhoA, double L) {
+    const double m = rhoA * L;
+    const double c = m / 6.0;
+    Eigen::Matrix<double, 6, 6> Me = Eigen::Matrix<double, 6, 6>::Zero();
+    for (int d : {0, 1, 2}) {
+        Me(d, d) = 2.0 * c; Me(d, d + 3) = c;
+        Me(d + 3, d) = c; Me(d + 3, d + 3) = 2.0 * c;
+    }
+    return Me;
+}
+
+// 未施加 Dirichlet 的刚度矩阵（用于模态/屈曲），与 assembleModel3D 的 K0 一致，
+// 但不做零刚度诊断——模态分析自行丢弃零刚度/无质量自由度。
+inline SparseMat3D assembleStiffness3D(const Model3D& m, DofMap3D& dm) {
+    dm = buildDofMap3D(m);
+    const int nd = dm.nDofs;
+    std::vector<Eigen::Triplet<double>> trips;
+    for (const auto& e : m.elements) {
+        const double Eeff = e.E / (1.0 + m.creepChi * m.creepPhi);
+        const std::vector<int> g = elementGdofs3D(dm, e);
+        if (e.type == "BEAM") {
+            BeamElement b;
+            b.E = Eeff; b.A = e.A; b.Iy = e.Iy; b.Iz = e.Iz; b.J = e.J; b.G = e.G;
+            b.x0 = m.nodes.at(e.n1); b.x1 = m.nodes.at(e.n2);
+            const DenseMat Ke = b.stiffness();
+            const double scale = std::max(1.0, Ke.cwiseAbs().maxCoeff());
+            for (int r = 0; r < 12; ++r)
+                for (int c = 0; c < 12; ++c)
+                    if (std::abs(Ke(r, c)) > 1e-12 * scale)
+                        trips.emplace_back(g[r], g[c], Ke(r, c));
+        } else {
+            const DenseMat Ke = truss3DStiffness(Eeff, e.A, m.nodes.at(e.n1), m.nodes.at(e.n2));
+            const double scale = std::max(1.0, Ke.cwiseAbs().maxCoeff());
+            for (int r = 0; r < 6; ++r)
+                for (int c = 0; c < 6; ++c)
+                    if (std::abs(Ke(r, c)) > 1e-12 * scale)
+                        trips.emplace_back(g[r], g[c], Ke(r, c));
+        }
+    }
+    SparseMat3D K(nd, nd);
+    K.setFromTriplets(trips.begin(), trips.end());
+    K.makeCompressed();
+    return K;
+}
+
+// 未施加 Dirichlet 的一致质量矩阵。线质量密度 = dens·A + addmass。
+inline SparseMat3D assembleMassMatrix3D(const Model3D& m, const DofMap3D& dm) {
+    const int nd = dm.nDofs;
+    std::vector<Eigen::Triplet<double>> trips;
+    for (const auto& e : m.elements) {
+        const double rhoA = e.dens * e.A + e.addmass;
+        if (rhoA <= 0.0) continue;
+        const std::vector<int> g = elementGdofs3D(dm, e);
+        if (e.type == "BEAM") {
+            BeamElement b;
+            b.E = e.E; b.A = e.A; b.Iy = e.Iy; b.Iz = e.Iz; b.J = e.J; b.G = e.G;
+            b.x0 = m.nodes.at(e.n1); b.x1 = m.nodes.at(e.n2);
+            const DenseMat T = b.transformation();
+            const DenseMat Me = T.transpose() * b.consistentMassMatrix(rhoA) * T;
+            for (int r = 0; r < 12; ++r)
+                for (int c = 0; c < 12; ++c)
+                    if (Me(r, c) != 0.0) trips.emplace_back(g[r], g[c], Me(r, c));
+        } else {
+            const double L = (m.nodes.at(e.n2) - m.nodes.at(e.n1)).norm();
+            const DenseMat Me = truss3DConsistentMassMatrix(rhoA, L);
+            for (int r = 0; r < 6; ++r)
+                for (int c = 0; c < 6; ++c)
+                    if (Me(r, c) != 0.0) trips.emplace_back(g[r], g[c], Me(r, c));
+        }
+    }
+    SparseMat3D M(nd, nd);
+    M.setFromTriplets(trips.begin(), trips.end());
+    M.makeCompressed();
+    return M;
+}
+
+// 自由自由度：去掉约束 + 零刚度（+ 可选零质量）自由度。
+inline std::vector<int> freeDofs3D(const Model3D& m, const DofMap3D& dm,
+                                   const SparseMat3D& K, const SparseMat3D* M = nullptr) {
+    const int nd = dm.nDofs;
+    std::vector<char> isC(nd, 0);
+    for (const auto& c : m.constraints) {
+        const int d = dm.safeDof(c.node, c.dof - 1);
+        if (d >= 0) isC[d] = 1;
+    }
+    std::vector<int> free;
+    for (int d = 0; d < nd; ++d) {
+        if (isC[d]) continue;
+        if (K.coeff(d, d) == 0.0) continue;
+        if (M && M->coeff(d, d) == 0.0) continue;
+        free.push_back(d);
+    }
+    return free;
+}
+
+inline ModalResult3D computeNaturalFrequencies3D(const Model3D& m, int nModes = 6) {
+    DofMap3D dm;
+    const SparseMat3D K = assembleStiffness3D(m, dm);
+    const SparseMat3D M = assembleMassMatrix3D(m, dm);
+    const std::vector<int> free = freeDofs3D(m, dm, K, &M);
+    const int nf = static_cast<int>(free.size());
+    ModalResult3D out;
+    if (nf == 0) return out;
+
+    Eigen::MatrixXd Kd(nf, nf), Md(nf, nf);
+    for (int a = 0; a < nf; ++a)
+        for (int b = 0; b < nf; ++b) {
+            Kd(a, b) = K.coeff(free[a], free[b]);
+            Md(a, b) = M.coeff(free[a], free[b]);
+        }
+    Eigen::GeneralizedSelfAdjointEigenSolver<Eigen::MatrixXd> ges(Kd, Md);
+    constexpr double pi = 3.14159265358979323846;
+    const int n = std::min(nModes, nf);
+    for (int i = 0; i < n; ++i) {
+        const double lam = ges.eigenvalues()(i);
+        const double f = (lam > 0.0) ? std::sqrt(lam) / (2.0 * pi) : 0.0;
+        out.frequencies.push_back(f);
+        std::vector<double> mode(dm.nDofs, 0.0);
+        for (int a = 0; a < nf; ++a) mode[free[a]] = ges.eigenvectors()(a, i);
+        out.modes.push_back(std::move(mode));
+    }
+    return out;
+}
+
+inline std::vector<double> computeBucklingFactors3D(const Model3D& m, int nModes = 3) {
+    const std::vector<double> U = solveModel3D(m);   // 参考荷载下的线性位移
+    DofMap3D dm;
+    const SparseMat3D K = assembleStiffness3D(m, dm);
+
+    // 几何刚度：由各梁的轴力（受拉正）组装
+    std::vector<Eigen::Triplet<double>> trips;
+    for (const auto& e : m.elements) {
+        if (e.type != "BEAM") continue;
+        BeamElement b;
+        b.E = e.E; b.A = e.A; b.Iy = e.Iy; b.Iz = e.Iz; b.J = e.J; b.G = e.G;
+        b.x0 = m.nodes.at(e.n1); b.x1 = m.nodes.at(e.n2);
+        const double L = b.length();
+        const DenseMat T = b.transformation();
+        Eigen::VectorXd ug(12);
+        for (int k = 0; k < 6; ++k) {
+            const int d1 = dm.safeDof(e.n1, k), d2 = dm.safeDof(e.n2, k);
+            ug(k)     = (d1 >= 0 && d1 < static_cast<int>(U.size())) ? U[d1] : 0.0;
+            ug(6 + k) = (d2 >= 0 && d2 < static_cast<int>(U.size())) ? U[d2] : 0.0;
+        }
+        const Eigen::VectorXd ul = T * ug;
+        const double N = e.E * e.A / L * (ul(6) - ul(0));
+        const DenseMat Kg = T.transpose() * b.geometricStiffness(N) * T;
+        const std::vector<int> g = elementGdofs3D(dm, e);
+        for (int r = 0; r < 12; ++r)
+            for (int c = 0; c < 12; ++c)
+                if (Kg(r, c) != 0.0) trips.emplace_back(g[r], g[c], Kg(r, c));
+    }
+    SparseMat3D Ksg(dm.nDofs, dm.nDofs);
+    Ksg.setFromTriplets(trips.begin(), trips.end());
+    Ksg.makeCompressed();
+
+    const std::vector<int> free = freeDofs3D(m, dm, K);
+    const int nf = static_cast<int>(free.size());
+    std::vector<double> out;
+    if (nf == 0) return out;
+    Eigen::MatrixXd Kd(nf, nf), Kgd(nf, nf);
+    for (int a = 0; a < nf; ++a)
+        for (int b = 0; b < nf; ++b) {
+            Kd(a, b) = K.coeff(free[a], free[b]);
+            Kgd(a, b) = Ksg.coeff(free[a], free[b]);
+        }
+    // (K + λ·Kg)·φ = 0 → A = L^{-1}·Kg·L^{-T}，λ = -1/μ（μ<0 为屈曲模态）。
+    Eigen::LLT<Eigen::MatrixXd> llt(Kd);
+    if (llt.info() != Eigen::Success) return {};
+    const Eigen::MatrixXd L = llt.matrixL();
+    const Eigen::MatrixXd Linv = L.inverse();
+    const Eigen::MatrixXd A = Linv * Kgd * Linv.transpose();
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> ses(A);
+    const int n = std::min(nModes, nf);
+    std::vector<double> mu;
+    for (int i = 0; i < ses.eigenvalues().size() && static_cast<int>(mu.size()) < n; ++i) {
+        const double mval = ses.eigenvalues()(i);
+        if (mval < -1e-14 && std::isfinite(mval)) mu.push_back(mval);
+    }
+    for (double mval : mu) out.push_back(-1.0 / mval);
+    return out;
 }
 
 // ==================== 施工阶段 ====================
@@ -1008,6 +1200,7 @@ inline Model3D readModel3D(const std::string& path) {
     std::map<int, double> areas;
     std::map<int, double> realIy, realIz, realJ, realG;
     std::map<int, double> realIstrn;
+    std::map<int, double> mpDens, realAddmass;
     std::map<int,double> realWtop, realWbot, realWy, realWt;
     int activeType = 0, activeMat = 0, activeReal = 0;
     std::string section;
@@ -1029,6 +1222,7 @@ inline Model3D readModel3D(const std::string& path) {
                         Element3D e; e.id=id; e.type=types[activeType]; e.E=mats[activeMat]; e.A=areas[activeReal]; e.n1=n1; e.n2=n2;
                         e.Iy=realIy[activeReal]; e.Iz=realIz[activeReal]; e.J=realJ[activeReal]; e.G=realG[activeReal];
                         e.istrn=realIstrn[activeReal];
+                        e.dens=mpDens[activeMat]; e.addmass=realAddmass[activeReal];
                         e.Wtop=realWtop[activeReal]; e.Wbot=realWbot[activeReal]; e.Wy=realWy[activeReal]; e.Wt=realWt[activeReal];
                         m.elements.push_back(e);
                     }
@@ -1067,21 +1261,23 @@ inline Model3D readModel3D(const std::string& path) {
         } else if (section == "*MP") {
             int id; std::string kv;
             ss >> id;
-            double E=0;
+            double E=0, dens=0;
             while (ss >> kv) {
                 if (kv.rfind("E=",0)==0) E=std::stod(kv.substr(2));
+                else if (kv.rfind("DENS=",0)==0) dens=std::stod(kv.substr(5));
             }
-            mats[id]=E;
+            mats[id]=E; mpDens[id]=dens;
         } else if (section == "*R") {
             int id; std::string kv;
             ss >> id;
-            double A=0, Iy=0, Iz=0, J=0, G=0;
+            double A=0, Iy=0, Iz=0, J=0, G=0, addmass=0;
             while (ss >> kv) {
                 if (kv.rfind("A=",0)==0) A=std::stod(kv.substr(2));
                 else if (kv.rfind("IY=",0)==0) Iy=std::stod(kv.substr(3));
                 else if (kv.rfind("IZ=",0)==0) Iz=std::stod(kv.substr(3));
                 else if (kv.rfind("J=",0)==0) J=std::stod(kv.substr(2));
                 else if (kv.rfind("G=",0)==0) G=std::stod(kv.substr(2));
+                else if (kv.rfind("ADDMASS=",0)==0) addmass=std::stod(kv.substr(8));
                 else if (kv.rfind("ISTRN=",0)==0) realIstrn[id]=std::stod(kv.substr(6));
                 else if (kv.rfind("WT=",0)==0) realWtop[id]=std::stod(kv.substr(3));
                 else if (kv.rfind("WB=",0)==0) realWbot[id]=std::stod(kv.substr(3));
@@ -1090,6 +1286,7 @@ inline Model3D readModel3D(const std::string& path) {
             }
             areas[id]=A;
             realIy[id]=Iy; realIz[id]=Iz; realJ[id]=J; realG[id]=G;
+            realAddmass[id]=addmass;
         } else if (section == "*BOUNDARY") {
             // 格式：<节点> <dof 或 a-b> [指定位移值]
             // 第三列可选，缺省 0；非零即支座沉降 / 强制位移。

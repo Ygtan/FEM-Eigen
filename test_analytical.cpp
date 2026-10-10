@@ -1434,6 +1434,66 @@ void testUnifiedEndForces() {
     checkMat("BeamElement.localEndForces == beam3DLocalEndForces", flu, fl3);
 }
 
+// ---- 3D 自振频率与线性屈曲 ----
+void test3DModalAndBuckling() {
+    std::printf("\n[3D] 自振频率与线性屈曲\n");
+    const double E = 2.06e11, A = 0.18, Iy = 0.3, Iz = 0.6, dens = 7850.0;
+    const double L = 10.0;
+    const int n = 20;   // 单元数（一致质量/几何刚度收敛足够快）
+
+    // 简支梁：节点 1 约束 u,v,w,θx；末端约束 v,w,θx（允许 θy/θz 与轴向 u）
+    auto makeModel = [&](double axialLoad) {
+        Model3D m;
+        for (int i = 0; i <= n; ++i)
+            m.nodes[i + 1] = Vec3(L * i / n, 0.0, 0.0);
+        for (int i = 1; i <= n; ++i) {
+            Element3D e;
+            e.id = i; e.type = "BEAM"; e.E = E; e.A = A;
+            e.Iy = Iy; e.Iz = Iz; e.J = 0.0; e.G = 0.0; e.dens = dens;
+            e.n1 = i; e.n2 = i + 1;
+            m.elements.push_back(e);
+        }
+        m.constraints.push_back({1, 1, 0.0});   // 左铰：轴向 u
+        for (int i = 1; i <= n + 1; ++i) {
+            m.constraints.push_back({i, 4, 0.0});   // 全节点约束扭转 θx（桥面系横隔假定）
+            if (i == 1 || i == n + 1) {
+                m.constraints.push_back({i, 2, 0.0});   // v
+                m.constraints.push_back({i, 3, 0.0});   // w
+            }
+        }
+        if (axialLoad != 0.0) m.loads.push_back({n + 1, 1, axialLoad});
+        return m;
+    };
+
+    // 一阶自振频率（弱轴弯曲）：f1 = (π/(2L²))·√(E·Iy/(ρA))
+    {
+        const Model3D m = makeModel(0.0);
+        const ModalResult3D modal = computeNaturalFrequencies3D(m, 1);
+        const double rhoA = dens * A;
+        const double f1 = kPi / (2.0 * L * L) * std::sqrt(E * Iy / rhoA);
+        if (modal.frequencies.empty()) {
+            std::printf("  [FAIL] 3D 自振频率：无结果\n");
+            ++g_fail;
+        } else {
+            check("3D 一阶自振频率 f1", modal.frequencies[0], f1, 1e-3);
+        }
+    }
+
+    // 一阶屈曲因子：Pcr = π²·E·Iy/L²，λ = Pcr/P_ref
+    {
+        const double P_ref = 1.0e5;   // 参考轴压（压缩）
+        const Model3D m = makeModel(-P_ref);
+        const std::vector<double> lam = computeBucklingFactors3D(m, 1);
+        const double Pcr = kPi * kPi * E * Iy / (L * L);
+        if (lam.empty()) {
+            std::printf("  [FAIL] 3D 屈曲因子：无结果\n");
+            ++g_fail;
+        } else {
+            check("3D 一阶屈曲因子 λ=Pcr/P", lam[0], Pcr / P_ref, 1e-3);
+        }
+    }
+}
+
 } // namespace
 
 int main() {
@@ -1476,6 +1536,7 @@ int main() {
         test3DObliqueCantilever();
         testDofMapUnification();
         testUnifiedEndForces();
+        test3DModalAndBuckling();
     } catch (const std::exception& e) {
         std::printf("\n[ERROR] 异常: %s\n", e.what());
         ++g_fail;

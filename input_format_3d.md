@@ -26,8 +26,11 @@
 
 ```text
 *MP
-1 E=200e9
+1 E=200e9 DENS=7850
 ```
+
+- `E`：弹性模量。
+- `DENS`：材料密度 kg/m³（用于质量矩阵/自振频率与自动自重；缺省 0）。
 
 ## 实常数
 
@@ -42,12 +45,13 @@
 
 ```text
 *R
-1 A=0.01 IY=1e-8 IZ=1e-8 J=1e-8 G=80e9 WT=1e-4 WB=1e-4 WY=1e-4 WTORS=2e-4 ISTRN=0.0001
+1 A=0.01 IY=1e-8 IZ=1e-8 J=1e-8 G=80e9 WT=1e-4 WB=1e-4 WY=1e-4 WTORS=2e-4 ISTRN=0.0001 ADDMASS=0
 ```
 
 - `WT`/`WB`：绕 z 轴（竖向弯曲 Mz）的上/下缘截面模量。
 - `WY`：绕 y 轴（水平弯曲 My）的截面模量；用于 `LEFT`/`RIGHT`/`MAX`/`MIN` 应力分量。
 - `WTORS`：扭转截面模量 `J/r_max`；用于 `TORSION` 扭转剪应力 `τ=T/WTORS`。
+- `ADDMASS`：附加线质量 kg/m（质量矩阵用；缺省 0）。
 
 ## 单元生成
 
