@@ -13,6 +13,8 @@
 #include "fem_io.hpp"
 #include "fem_3d.hpp"
 #include "section.hpp"
+#include "prestress_loss.hpp"
+#include "code_loads.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -1559,6 +1561,54 @@ void testElasticSupport() {
     }
 }
 
+// ---- 预应力损失分项 ----
+void testPrestressLosses() {
+    std::printf("\n[预应力损失分项] JTG D62 简化式\n");
+    PrestressLossInput in;
+    in.sigmaCon = 1395.0e6;
+    in.Ep = 1.95e11;
+    in.Ec = 3.45e10;
+    in.anchorageSlip = 0.006;
+    in.tendonLength = 30.0;
+    in.mu = 0.25;
+    in.kappa = 0.0015;
+    in.theta = 0.2;
+    in.x = 15.0;
+    in.sigmaPc = 8.0e6;
+    in.creepPhi = 2.0;
+    in.epsCs = 2.0e-4;
+    in.relaxation = 0.025;
+    const PrestressLossResult r = computePrestressLosses(in);
+
+    const double alphaEp = in.Ep / in.Ec;
+    const double sL1 = in.anchorageSlip / in.tendonLength * in.Ep;
+    const double sL2 = in.sigmaCon * (1.0 - std::exp(-(in.mu * in.theta + in.kappa * in.x)));
+    const double sL4 = alphaEp * in.sigmaPc;
+    const double sL5 = in.relaxation * in.sigmaCon;
+    const double sL6 = alphaEp * in.sigmaPc * in.creepPhi + in.Ep * in.epsCs;
+    check("σl1 锚具回缩", r.sigmaL1, sL1, 1e-9);
+    check("σl2 摩擦", r.sigmaL2, sL2, 1e-9);
+    check("σl4 弹性压缩", r.sigmaL4, sL4, 1e-9);
+    check("σl5 松弛", r.sigmaL5, sL5, 1e-9);
+    check("σl6 收缩徐变", r.sigmaL6, sL6, 1e-9);
+    check("有效预应力 σpe", r.sigmaPe,
+          in.sigmaCon - sL1 - sL2 - sL4 - sL5 - sL6, 1e-9);
+}
+
+// ---- 规范荷载库 ----
+void testCodeLoadLibrary() {
+    std::printf("\n[规范荷载库] JTG D60-2015\n");
+    check("车道均布 qk=10.5kN/m", jtgD60LaneLoadQk(), 10500.0, 1e-12);
+    check("集中力 Pk(L=5)=270kN", jtgD60LaneLoadPk(5.0), 270000.0, 1e-9);
+    check("集中力 Pk(L=50)=360kN", jtgD60LaneLoadPk(50.0), 360000.0, 1e-9);
+    check("集中力 Pk(L=27.5)内插", jtgD60LaneLoadPk(27.5), 315000.0, 1e-9);
+    check("人群荷载 3.0kN/m²", jtgD60PedestrianLoad(), 3000.0, 1e-12);
+    check("折减 1 车道=1.00", jtgD60LaneReduction(1), 1.0, 1e-12);
+    check("折减 3 车道=0.78", jtgD60LaneReduction(3), 0.78, 1e-12);
+    check("折减 5 车道=0.60", jtgD60LaneReduction(5), 0.60, 1e-12);
+    check("折减 8 车道=0.50", jtgD60LaneReduction(8), 0.50, 1e-12);
+}
+
 } // namespace
 
 int main() {
@@ -1603,6 +1653,8 @@ int main() {
         testUnifiedEndForces();
         test3DModalAndBuckling();
         testElasticSupport();
+        testPrestressLosses();
+        testCodeLoadLibrary();
     } catch (const std::exception& e) {
         std::printf("\n[ERROR] 异常: %s\n", e.what());
         ++g_fail;

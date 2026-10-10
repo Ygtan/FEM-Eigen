@@ -2,6 +2,7 @@
 
 // 复用 fem.hpp 中的稀疏求解器与 Dirichlet 处理（applyDirichlet / solve）。
 #include "fem.hpp"
+#include "code_loads.hpp"
 
 #include <Eigen/Dense>
 #include <Eigen/Sparse>
@@ -1130,10 +1131,7 @@ inline std::pair<double,double> envelope3DFromSurface(
     // 仅在 reduction 为默认值 1.0 且 laneCount>1 时，按规范自动折减；
     // 用户显式指定了 REDUCTION= 则完全尊重用户输入，不再覆盖。
     if (factor == 1.0 && surface.laneCount > 1) {
-        if (surface.laneCount == 2) factor = 1.0;
-        else if (surface.laneCount == 3) factor = 0.78;   // JTG D60 横向多车道折减
-        else if (surface.laneCount == 4) factor = 0.67;
-        else if (surface.laneCount >= 5) factor = 0.60;
+        factor = jtgD60LaneReduction(surface.laneCount);
     }
 
     return {surface.impact * factor * (surface.q * qMaxArea + surface.p * pMaxOrd),
