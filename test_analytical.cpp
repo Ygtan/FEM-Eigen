@@ -1609,6 +1609,67 @@ void testCodeLoadLibrary() {
     check("折减 8 车道=0.50", jtgD60LaneReduction(8), 0.50, 1e-12);
 }
 
+// ---- 3D 变截面：截面属性沿梁轴插值 + 锥形悬臂梁挠度 ----
+void test3DVariableSection() {
+    std::printf("\n[3D 变截面] 沿梁轴线性插值截面 + 锥形悬臂梁\n");
+    const double E = 2.06e11, G = 7.9e10, L = 10.0;
+
+    SectionProperties p0, p1;
+    p0.A = 0.18; p0.Iy = 0.3; p0.Iz = 0.6; p0.J = 0.3;
+    p1.A = 0.18; p1.Iy = 0.3; p1.Iz = 0.2; p1.J = 0.15;
+    VariableSection vs;
+    vs.control = {{0.0, p0}, {L, p1}};
+
+    // 中点线性插值
+    const SectionProperties mid = sectionAt(vs, 0.5 * L);
+    check("变截面中点 Iz=(Iz1+Iz2)/2", mid.Iz, 0.5 * (0.6 + 0.2), 1e-12);
+    check("变截面中点 J=(J1+J2)/2", mid.J, 0.5 * (0.3 + 0.15), 1e-12);
+
+    // beamElementFromSection 取中点截面
+    {
+        const BeamElement b = beamElementFromSection(vs, 0.0, L, Vec3(0,0,0), Vec3(L,0,0), E, G);
+        check("beamElementFromSection 中点 Iz", b.Iz, 0.4, 1e-12);
+        check("beamElementFromSection 中点 J", b.J, 0.225, 1e-12);
+    }
+
+    // 锥形悬臂梁：N 段，每段取中点截面；与柔度积分 δ=P/E·∫(L-s)²/Iz(s)ds 对照
+    const double P = 1.0e5;
+    const int n = 50;
+    Model3D m;
+    for (int i = 0; i <= n; ++i)
+        m.nodes[i + 1] = Vec3(L * i / n, 0.0, 0.0);
+    for (int i = 1; i <= n; ++i) {
+        const double s1 = L * (i - 1) / n, s2 = L * i / n;
+        const SectionProperties sec = elementMidSection(vs, s1, s2);
+        Element3D e;
+        e.id = i; e.type = "BEAM"; e.E = E; e.G = G;
+        e.A = sec.A; e.Iy = sec.Iy; e.Iz = sec.Iz; e.J = sec.J;
+        e.n1 = i; e.n2 = i + 1;
+        m.elements.push_back(e);
+    }
+    for (int d = 1; d <= 6; ++d) m.constraints.push_back({1, d, 0.0});
+    for (int i = 2; i <= n + 1; ++i) {
+        m.constraints.push_back({i, 3, 0.0});   // w
+        m.constraints.push_back({i, 4, 0.0});   // θx
+        m.constraints.push_back({i, 5, 0.0});   // θy
+    }
+    m.loads.push_back({n + 1, 2, -P});
+    const std::vector<double> U = solveModel3D(m);
+    const DofMap3D dm = buildDofMap3D(m);
+
+    const int ni = 100000;
+    double integral = 0.0;
+    for (int i = 0; i <= ni; ++i) {
+        const double s = L * i / ni;
+        const double Iz = 0.6 - 0.04 * s;
+        const double w = (i == 0 || i == ni) ? 0.5 : 1.0;
+        integral += w * (L - s) * (L - s) / Iz;
+    }
+    integral *= L / ni;
+    const double exact = P / E * integral;
+    check("3D 锥形悬臂梁挠度（柔度积分）", U[dm.dof(n + 1, 1)], -exact, 5e-3);
+}
+
 } // namespace
 
 int main() {
@@ -1655,6 +1716,7 @@ int main() {
         testElasticSupport();
         testPrestressLosses();
         testCodeLoadLibrary();
+        test3DVariableSection();
     } catch (const std::exception& e) {
         std::printf("\n[ERROR] 异常: %s\n", e.what());
         ++g_fail;

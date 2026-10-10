@@ -24,6 +24,7 @@ struct SectionProperties {
     double cy = 0.0, cz = 0.0;   // 形心（相对参考点）
     double Iy = 0.0, Iz = 0.0;   // 惯性矩（相对形心；Iy=∫z²dA, Iz=∫y²dA）
     double Iyz = 0.0;            // 惯性积（相对形心）
+    double J = 0.0;              // 扭转常数（自由扭转；纤维积分不自动求，需显式给出）
     double yTop = 0.0, yBot = 0.0;   // 上下缘坐标（相对形心）
     double zLeft = 0.0, zRight = 0.0; // 左右缘坐标（相对形心）
 
@@ -202,6 +203,7 @@ inline SectionProperties sectionAt(const VariableSection& vs, double x) {
             p.Iy = a.Iy + (b.Iy - a.Iy) * t;
             p.Iz = a.Iz + (b.Iz - a.Iz) * t;
             p.Iyz = a.Iyz + (b.Iyz - a.Iyz) * t;
+            p.J = a.J + (b.J - a.J) * t;
             p.yTop = a.yTop + (b.yTop - a.yTop) * t;
             p.yBot = a.yBot + (b.yBot - a.yBot) * t;
             p.zLeft = a.zLeft + (b.zLeft - a.zLeft) * t;

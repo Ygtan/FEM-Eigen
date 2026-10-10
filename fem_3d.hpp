@@ -3,6 +3,7 @@
 // 复用 fem.hpp 中的稀疏求解器与 Dirichlet 处理（applyDirichlet / solve）。
 #include "fem.hpp"
 #include "code_loads.hpp"
+#include "section.hpp"
 
 #include <Eigen/Dense>
 #include <Eigen/Sparse>
@@ -85,6 +86,20 @@ inline Eigen::Matrix<double, 6, 6> truss3DStiffness(double E, double A, const Ve
     Ke.block<3, 3>(3, 0) = -K;
     Ke.block<3, 3>(3, 3) = K;
     return Ke;
+}
+
+// 变截面梁单元：截面属性沿梁轴在控制点间线性插值，取 [s1,s2] 中点处截面
+// 作为该单元的等效常截面（与 2D 变截面“单元中点截面”近似一致）。
+inline BeamElement beamElementFromSection(const VariableSection& vs,
+                                          double s1, double s2,
+                                          const Vec3& p1, const Vec3& p2,
+                                          double E, double G) {
+    const SectionProperties sec = elementMidSection(vs, s1, s2);
+    BeamElement b;
+    b.E = E; b.G = G;
+    b.A = sec.A; b.Iy = sec.Iy; b.Iz = sec.Iz; b.J = sec.J;
+    b.x0 = p1; b.x1 = p2;
+    return b;
 }
 
 struct Node3D {
