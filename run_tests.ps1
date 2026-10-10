@@ -92,4 +92,28 @@ if (Test-Path $ansysScript) {
     $failed++
 }
 
+# ---- 真实桥梁 ANSYS 对标基线 vs tests/benchmark/bridge/reference ----
+$bridgeScript = Join-Path $root "tests\benchmark\bridge\compare_bridge.py"
+$bridgeRef    = Join-Path $root "tests\benchmark\bridge\reference"
+if (Test-Path $bridgeScript) {
+    $py = Get-Command python -ErrorAction SilentlyContinue
+    if ($py) {
+        Write-Host ""
+        Write-Host "== Bridge ANSYS benchmark =="
+        & python $bridgeScript --bin $bin --src $root --reference $bridgeRef
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[PASS] Bridge ANSYS benchmark"
+        } else {
+            Write-Host "[FAIL] Bridge ANSYS benchmark"
+            $failed++
+        }
+    } else {
+        Write-Host "[MISS] python not found, skip Bridge ANSYS benchmark"
+        $failed++
+    }
+} else {
+    Write-Host "[MISS] Bridge benchmark script missing: $bridgeScript"
+    $failed++
+}
+
 if ($failed -eq 0) { Write-Host "ALL TESTS PASSED" } else { Write-Host "$failed TEST(S) FAILED"; exit 1 }

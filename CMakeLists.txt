@@ -143,6 +143,17 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(ansys_benchmark PROPERTIES
         TIMEOUT 600
         LABELS "benchmark")
+
+    # 真实桥梁 ANSYS 对标基线：80m 系杆拱桥的节点位移 + 单元内力。
+    add_test(NAME bridge_benchmark
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/bridge/compare_bridge.py
+                     --bin ${CMAKE_CURRENT_BINARY_DIR}
+                     --src ${CMAKE_CURRENT_SOURCE_DIR}
+                     --reference ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/bridge/reference)
+    set_tests_properties(bridge_benchmark PROPERTIES
+        TIMEOUT 600
+        LABELS "benchmark")
 else()
     message(STATUS "未找到 Python3，跳过 .dat 逐字节回归 CTest")
 endif()
