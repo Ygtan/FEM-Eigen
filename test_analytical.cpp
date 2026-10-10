@@ -1494,6 +1494,71 @@ void test3DModalAndBuckling() {
     }
 }
 
+// ---- 弹性支承：悬臂梁 + 端部弹簧 ----
+void testElasticSupport() {
+    std::printf("\n[弹性支承] 悬臂梁端部弹簧\n");
+    const double E = 2.0e11, A = 0.02, I = 1.0e-4, L = 5.0;
+    const double k = 1.0e6, P = 1.0e4;
+    const double kBeam = 3.0 * E * I / (L * L * L);   // 悬臂端部刚度
+
+    // 2D：端部集中力 + 端部弹簧
+    {
+        Model2D m;
+        m.nodes[1] = Eigen::Vector2d(0.0, 0.0);
+        m.nodes[2] = Eigen::Vector2d(L, 0.0);
+        Model2D::Element el;
+        el.id = 1; el.type = "BEAM"; el.E = E; el.A = A; el.I = I; el.conn = {1, 2};
+        m.elements.push_back(el);
+        m.constraints.push_back({1, 1, 0.0});
+        m.constraints.push_back({1, 2, 0.0});
+        m.constraints.push_back({1, 3, 0.0});
+        m.constraints.push_back({2, 2, 0.0, k});   // 端部竖向弹簧
+        m.loads.push_back({2, 2, -P});
+        const ModelResult r = solveModel2D(m);
+        check("2D 端部弹簧+集中力 δ=P/(k+3EI/L³)",
+              nodalDisp(m, r, 2, 2), -P / (k + kBeam));
+    }
+
+    // 2D：端部弹簧沉降（value≠0），无荷载
+    {
+        const double u0 = 0.01;
+        Model2D m;
+        m.nodes[1] = Eigen::Vector2d(0.0, 0.0);
+        m.nodes[2] = Eigen::Vector2d(L, 0.0);
+        Model2D::Element el;
+        el.id = 1; el.type = "BEAM"; el.E = E; el.A = A; el.I = I; el.conn = {1, 2};
+        m.elements.push_back(el);
+        m.constraints.push_back({1, 1, 0.0});
+        m.constraints.push_back({1, 2, 0.0});
+        m.constraints.push_back({1, 3, 0.0});
+        m.constraints.push_back({2, 2, u0, k});   // 弹簧基准位移 u0
+        const ModelResult r = solveModel2D(m);
+        check("2D 端部弹簧沉降 δ=k·u0/(k+3EI/L³)",
+              nodalDisp(m, r, 2, 2), k * u0 / (k + kBeam));
+    }
+
+    // 3D：同构悬臂（z=0 平面内，绕 z 弯）
+    {
+        Model3D m3;
+        m3.nodes[1] = Vec3(0.0, 0.0, 0.0);
+        m3.nodes[2] = Vec3(L, 0.0, 0.0);
+        Element3D e;
+        e.id = 1; e.type = "BEAM"; e.E = E; e.A = A; e.Iy = I; e.Iz = I; e.J = 0.0; e.G = 0.0;
+        e.n1 = 1; e.n2 = 2;
+        m3.elements.push_back(e);
+        for (int d = 1; d <= 6; ++d) m3.constraints.push_back({1, d, 0.0});
+        m3.constraints.push_back({2, 3, 0.0});   // w
+        m3.constraints.push_back({2, 4, 0.0});   // θx
+        m3.constraints.push_back({2, 5, 0.0});   // θy
+        m3.constraints.push_back({2, 2, 0.0, k});   // v 弹簧
+        m3.loads.push_back({2, 2, -P});
+        const std::vector<double> U = solveModel3D(m3);
+        const DofMap3D dm = buildDofMap3D(m3);
+        check("3D 端部弹簧+集中力 δ=P/(k+3EIz/L³)",
+              U[dm.dof(2, 1)], -P / (k + kBeam));
+    }
+}
+
 } // namespace
 
 int main() {
@@ -1537,6 +1602,7 @@ int main() {
         testDofMapUnification();
         testUnifiedEndForces();
         test3DModalAndBuckling();
+        testElasticSupport();
     } catch (const std::exception& e) {
         std::printf("\n[ERROR] 异常: %s\n", e.what());
         ++g_fail;

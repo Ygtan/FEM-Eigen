@@ -112,6 +112,7 @@ struct Constraint3D {
     int node = 0;
     int dof = 1;
     double value = 0.0;
+    double k = 0.0;   // 弹性支承刚度（>0 为弹簧，0 为刚性约束）
 };
 
 struct Model3D {
@@ -428,11 +429,23 @@ inline Assembled3D assembleModel3D(const Model3D& m) {
     }
     a.F0 = F;
 
+    // 弹性支承（k>0）：刚度对角加 k，等效荷载加 k·value；不作为硬约束。
+    for (const auto& c : m.constraints) {
+        if (c.k <= 0.0) continue;
+        const int d = a.dm.safeDof(c.node, c.dof - 1);
+        if (d < 0) continue;
+        K.coeffRef(d, d) += c.k;
+        a.K0.coeffRef(d, d) += c.k;
+        F(d) += c.k * c.value;
+        a.F0(d) += c.k * c.value;
+    }
+
     // 约束：支持非零指定位移（支座沉降）。
     a.isConstrained.assign(nd, 0);
     for (const auto& c : m.constraints) {
         const int d = a.dm.safeDof(c.node, c.dof - 1);
         if (d < 0) continue;   // 纯轴向节点没有该转动自由度，约束无意义
+        if (c.k > 0.0) continue;   // 弹性支承不作硬约束
         a.isConstrained[d] = 1;
         const auto it = std::find(a.cdofs.begin(), a.cdofs.end(), d);
         if (it == a.cdofs.end()) {
@@ -1290,13 +1303,19 @@ inline Model3D readModel3D(const std::string& path) {
         } else if (section == "*BOUNDARY") {
             // 格式：<节点> <dof 或 a-b> [指定位移值]
             // 第三列可选，缺省 0；非零即支座沉降 / 强制位移。
-            int node; std::string ds; double val = 0.0;
+            // 第四列可选：K=<弹簧刚度>，>0 即弹性支承。
+            int node; std::string ds; double val = 0.0, k = 0.0;
             if (ss >> node >> ds) {
                 ss >> val;
+                std::string extra;
+                if (ss >> extra) {
+                    if (extra.rfind("K=",0)==0) extra = extra.substr(2);
+                    k = std::stod(extra);
+                }
                 if (ds.find('-') != std::string::npos) {
                     int a=std::stoi(ds.substr(0,ds.find('-'))); int b=std::stoi(ds.substr(ds.find('-')+1));
-                    for (int d=a; d<=b; ++d) m.constraints.push_back({node,d,val});
-                } else m.constraints.push_back({node,std::stoi(ds),val});
+                    for (int d=a; d<=b; ++d) m.constraints.push_back({node,d,val,k});
+                } else m.constraints.push_back({node,std::stoi(ds),val,k});
             }
         } else if (section == "*CLOAD") {
             int node,dof; double val; if (ss >> node >> dof >> val) m.loads.push_back({node,dof,val});

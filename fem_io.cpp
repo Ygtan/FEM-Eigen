@@ -1040,9 +1040,15 @@ Model2D readModel2D(const std::string& path) {
             if (!(ss >> ns >> ds >> vs))
                 throw std::runtime_error("BOUNDARY 行格式错误: " + t);
             const double value = std::stod(vs);
+            double k = 0.0;
+            std::string ks;
+            if (ss >> ks) {
+                if (ks.rfind("K=", 0) == 0) ks = ks.substr(2);
+                k = std::stod(ks);
+            }
             for (int node : detail::parseRange(ns))
                 for (int dof : detail::parseRange(ds))
-                    m.constraints.push_back({node, dof, value});
+                    m.constraints.push_back({node, dof, value, k});
         } else if (section == "*RELEASE") {
             // 端部释放：<eid> <END=1/I|2/J> <TYPE=N/V/M> [<TYPE>...]
             std::string es, ends;
@@ -1671,6 +1677,7 @@ ModelResult solveModel2DNonlinear(const Model2D& m,
     for (const auto& c : m.constraints) {
         if (c.dof < 1 || c.dof > 3)
             throw std::runtime_error("约束自由度必须在 1~3 之间");
+        if (c.k > 0.0) continue;   // 弹性支承不作硬约束
         const int d = 3 * index.at(c.node) + (c.dof - 1);
         cdofs.push_back(d);
         cvals.push_back(c.value);
@@ -1782,6 +1789,15 @@ ModelResult solveModel2DNonlinear(const Model2D& m,
             } else {
                 throw std::runtime_error("未知单元类型: " + e.type);
             }
+        }
+
+        // 弹性支承（k>0）：Fint += k·u，Fext += k·value，切线 += k。
+        for (const auto& c : m.constraints) {
+            if (c.k <= 0.0) continue;
+            const int d = 3 * index.at(c.node) + (c.dof - 1);
+            Fint(d) += c.k * Ucur(d);
+            Fext(d) += c.k * c.value;
+            if (triplets) triplets->emplace_back(d, d, c.k);
         }
     };
 
@@ -2116,6 +2132,16 @@ void assembleLinear2D(const Model2D& m,
     }
     if (!m.ces.empty())
         F += constraintPenaltyConstantForce(m, index, nDofs, m.cePenalty);
+
+    // 弹性支承（k>0）：刚度对角加 k，等效荷载加 k·value；不作为硬约束。
+    for (const auto& c : m.constraints) {
+        if (c.k <= 0.0) continue;
+        if (c.dof < 1 || c.dof > 3)
+            throw std::runtime_error("约束自由度必须在 1~3 之间");
+        const int d = 3 * index.at(c.node) + (c.dof - 1);
+        K.coeffRef(d, d) += c.k;
+        F(d) += c.k * c.value;
+    }
 }
 
 Assembled2D assembleModel2DLinear(const Model2D& m) {
@@ -2137,6 +2163,7 @@ Assembled2D assembleModel2DLinear(const Model2D& m) {
     for (const auto& c : m.constraints) {
         if (c.dof < 1 || c.dof > 3)
             throw std::runtime_error("约束自由度必须在 1~3 之间");
+        if (c.k > 0.0) continue;   // 弹性支承已在装配中加弹簧，不作硬约束
         const int d = 3 * a.index.at(c.node) + (c.dof - 1);
         a.cdofs.push_back(d);
         a.cvals.push_back(c.value);
@@ -2212,6 +2239,7 @@ ModalResult2D computeNaturalFrequencies2D(const Model2D& m, int nModes) {
     std::vector<double> cvals;
     for (const auto& c : m.constraints) {
         if (c.dof < 1 || c.dof > 3) continue;
+        if (c.k > 0.0) continue;   // 弹性支承不作硬约束（弹簧已在 K 中）
         cdofs.push_back(3 * index.at(c.node) + (c.dof - 1));
         cvals.push_back(c.value);
     }
@@ -2290,6 +2318,7 @@ std::vector<double> computeBucklingFactors2D(const Model2D& m, int nModes) {
     std::vector<double> cvals;
     for (const auto& c : m.constraints) {
         if (c.dof < 1 || c.dof > 3) continue;
+        if (c.k > 0.0) continue;   // 弹性支承不作硬约束（弹簧已在 K 中）
         cdofs.push_back(3 * index.at(c.node) + (c.dof - 1));
         cvals.push_back(c.value);
     }
@@ -2376,6 +2405,7 @@ ModelResult solveModel2D(const Model2D& m,
     for (const auto& c : m.constraints) {
         if (c.dof < 1 || c.dof > 3)
             throw std::runtime_error("约束自由度必须在 1~3 之间");
+        if (c.k > 0.0) continue;   // 弹性支承不作硬约束（弹簧已在 K 中）
         cdofs.push_back(3 * index.at(c.node) + (c.dof - 1));
         cvals.push_back(c.value);
     }

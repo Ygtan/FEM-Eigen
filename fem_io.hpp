@@ -85,6 +85,7 @@ struct Model2D {
         int node;
         int dof;    // 1/2/3
         double value;
+        double k = 0.0;   // 弹性支承刚度（>0 为弹簧，0 为刚性约束）
     };
     std::vector<Constraint> constraints;
 
