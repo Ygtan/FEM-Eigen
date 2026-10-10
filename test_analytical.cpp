@@ -1793,6 +1793,32 @@ void test3DBeam7Influence() {
     check("BEAM7 与 BEAM 弯矩影响线一致", maxDiff, 0.0, 1e-12);
 }
 
+// ---- JTG D60 自动车道荷载（CODE=JTG_D60）----
+void testJtgD60AutoLaneLoad() {
+    std::printf("\n[规范荷载库] JTG D60 自动车道荷载\n");
+    const double L = 30.0;
+    Model3D m;
+    for (int i = 0; i <= 6; ++i) m.nodes[i + 1] = Vec3(L * i / 6, 0.0, 0.0);
+
+    Model3D::Lane3D lane;
+    lane.nodes = {1, 2, 3, 4, 5, 6, 7};
+    lane.dof = 2;
+    lane.autoCode = true;
+    m.lanes.push_back(lane);
+
+    m.laneSurface.xNodes = {1, 2, 3, 4, 5, 6, 7};
+    m.laneSurface.yNodes = {1};
+    m.laneSurface.laneCount = 3;
+    m.laneSurface.autoCode = true;
+
+    applyJtgD60LaneLoads(m);
+
+    check("自动 qk=10.5kN/m", m.lanes[0].q, 10500.0, 1e-12);
+    check("自动 Pk(L=30)=320kN", m.lanes[0].p, jtgD60LaneLoadPk(L), 1e-9);
+    check("影响面 qk=10.5kN/m", m.laneSurface.q, 10500.0, 1e-12);
+    check("影响面 3 车道折减 0.78", m.laneSurface.reduction, 0.78, 1e-12);
+}
+
 } // namespace
 
 int main() {
@@ -1842,6 +1868,7 @@ int main() {
         test3DVariableSection();
         test3DBeam7Torsion();
         test3DBeam7Influence();
+        testJtgD60AutoLaneLoad();
     } catch (const std::exception& e) {
         std::printf("\n[ERROR] 异常: %s\n", e.what());
         ++g_fail;

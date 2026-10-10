@@ -230,6 +230,7 @@ struct Model3D {
         int dof = 2;
         double reduction = 1.0;
         double impact = 1.0;
+        bool autoCode = false;   // CODE=JTG_D60：按跨径自动生成车道荷载
     };
     std::vector<Lane3D> lanes;
 
@@ -242,6 +243,7 @@ struct Model3D {
         double reduction = 1.0;
         int laneCount = 1;
         double impact = 1.0;
+        bool autoCode = false;
     };
     LaneSurface3D laneSurface;
 };
@@ -1361,6 +1363,28 @@ inline std::vector<Camber3D> compute3DCamber(const Model3D& m,
     return out;
 }
 
+// JTG D60 自动车道荷载：对标记 CODE=JTG_D60 的车道按跨径填入 qk、Pk，
+// 并按车道数自动横向折减（仅影响面）。
+inline void applyJtgD60LaneLoads(Model3D& m) {
+    for (auto& lane : m.lanes) {
+        if (!lane.autoCode || lane.nodes.size() < 2) continue;
+        const Vec3 a = m.nodes.at(lane.nodes.front());
+        const Vec3 b = m.nodes.at(lane.nodes.back());
+        const double L = (b - a).norm();
+        lane.q = jtgD60LaneLoadQk();
+        lane.p = jtgD60LaneLoadPk(L);
+    }
+    if (m.laneSurface.autoCode && m.laneSurface.xNodes.size() >= 2) {
+        const Vec3 a = m.nodes.at(m.laneSurface.xNodes.front());
+        const Vec3 b = m.nodes.at(m.laneSurface.xNodes.back());
+        const double L = (b - a).norm();
+        m.laneSurface.q = jtgD60LaneLoadQk();
+        m.laneSurface.p = jtgD60LaneLoadPk(L);
+        if (m.laneSurface.reduction == 1.0 && m.laneSurface.laneCount > 1)
+            m.laneSurface.reduction = jtgD60LaneReduction(m.laneSurface.laneCount);
+    }
+}
+
 // ==================== 输入文件读取 ====================
 
 inline Model3D readModel3D(const std::string& path) {
@@ -1522,6 +1546,7 @@ inline Model3D readModel3D(const std::string& path) {
                 else if (kv.rfind("DOF=",0)==0) lane.dof=std::stoi(kv.substr(4));
                 else if (kv.rfind("REDUCTION=",0)==0) lane.reduction=std::stod(kv.substr(10));
                 else if (kv.rfind("IMPACT=",0)==0) lane.impact=std::stod(kv.substr(7));
+                else if (kv.rfind("CODE=",0)==0) lane.autoCode = (kv.substr(5)=="JTG_D60");
             }
             std::stringstream ns(nodes); std::string tok;
             while(std::getline(ns,tok,',')) if(!tok.empty()) lane.nodes.push_back(std::stoi(tok));
@@ -1537,6 +1562,7 @@ inline Model3D readModel3D(const std::string& path) {
                 else if (kv.rfind("REDUCTION=",0)==0) m.laneSurface.reduction=std::stod(kv.substr(10));
                 else if (kv.rfind("LANE_COUNT=",0)==0) m.laneSurface.laneCount=std::stoi(kv.substr(11));
                 else if (kv.rfind("IMPACT=",0)==0) m.laneSurface.impact=std::stod(kv.substr(7));
+                else if (kv.rfind("CODE=",0)==0) m.laneSurface.autoCode = (kv.substr(5)=="JTG_D60");
             }
             auto fill=[&](const std::string& s, std::vector<int>& out){
                 std::stringstream ls(s); std::string tok;
@@ -1545,6 +1571,7 @@ inline Model3D readModel3D(const std::string& path) {
             fill(xn,m.laneSurface.xNodes); fill(yn,m.laneSurface.yNodes);
         }
     }
+    applyJtgD60LaneLoads(m);
     return m;
 }
 

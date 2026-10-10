@@ -120,9 +120,19 @@
 NODES=1,2,3 Q=-10.0 P=-100.0 DOF=2 IMPACT=1.15 REDUCTION=0.9
 ```
 
+`CODE=JTG_D60` 可按跨径自动生成车道荷载：`Q=10.5 kN/m`、`P=Pk(L)`
+（L 取车道首末节点距离），无需手工填 `Q`/`P`。
+
+```text
+*LANE_3D
+NODES=1,2,3 DOF=2 CODE=JTG_D60
+```
+
 ## 三维影响面
 
 ```text
 *LANE_SURFACE_3D
 X_NODES=1,2,3 Y_NODES=1,2 Q=-10.0 P=-100.0 DOF=2 LANE_COUNT=2 IMPACT=1.15
 ```
+
+`*LANE_SURFACE_3D` 同样支持 `CODE=JTG_D60`，并按 `LANE_COUNT` 自动横向折减。
