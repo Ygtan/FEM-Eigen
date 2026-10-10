@@ -1,0 +1,14 @@
+{
+  "id": "100m_simple",
+  "dat": "100m-simple.dat",
+  "exe": "example_mixed.exe",
+  "description": "100m 简支梁：E=2.06e11 Pa，A=0.18 m^2，I=0.6 m^4，WT=WB=0.4 m^3；自重（7850 kg/m^3，g=9.81）叠加均布荷载 1000 N/m。参考值为 ANSYS BEAM4 对应的欧拉-伯努利闭式解（BEAM4 默认不计剪切变形，与该闭式解一致到机器精度）。",
+  "checks": [
+    {"name": "midspan_deflection", "kind": "nodal_disp", "node": 51, "dof": 2, "ref": -0.1565610884, "rtol": 0.001, "atol": 0.0},
+    {"name": "left_reaction", "kind": "reaction", "node": 1, "dof": 2, "ref": 743076.5, "rtol": 0.001, "atol": 0.0},
+    {"name": "right_reaction", "kind": "reaction", "node": 101, "dof": 2, "ref": 743076.5, "rtol": 0.001, "atol": 0.0},
+    {"name": "midspan_moment", "kind": "force", "elem": 50, "col": "M2", "ref": 18576912.5, "rtol": 0.001, "atol": 0.0},
+    {"name": "midspan_stress_top", "kind": "stress", "elem": 50, "col": "stop2", "ref": -46442281.25, "rtol": 0.001, "atol": 0.0},
+    {"name": "midspan_stress_bottom", "kind": "stress", "elem": 50, "col": "sbot2", "ref": 46442281.25, "rtol": 0.001, "atol": 0.0}
+  ]
+}

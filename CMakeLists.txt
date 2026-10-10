@@ -131,6 +131,18 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(dat_byte_regression PROPERTIES
         TIMEOUT 900
         LABELS "regression")
+
+    # ANSYS 对标基线：用 ANSYS BEAM4 对应的欧拉-伯努利闭式解做黄金参考，
+    # 比对 100m 简支梁的跨中挠度/支座反力/跨中弯矩/跨中应力。
+    add_test(NAME ansys_benchmark
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/ansys/compare_ansys.py
+                     --bin ${CMAKE_CURRENT_BINARY_DIR}
+                     --src ${CMAKE_CURRENT_SOURCE_DIR}
+                     --reference ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/ansys/reference)
+    set_tests_properties(ansys_benchmark PROPERTIES
+        TIMEOUT 600
+        LABELS "benchmark")
 else()
     message(STATUS "未找到 Python3，跳过 .dat 逐字节回归 CTest")
 endif()

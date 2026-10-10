@@ -68,4 +68,28 @@ if (Test-Path $regScript) {
     $failed++
 }
 
+# ---- ANSYS 对标基线 vs tests/benchmark/ansys/reference ----
+$ansysScript = Join-Path $root "tests\benchmark\ansys\compare_ansys.py"
+$ansysRef    = Join-Path $root "tests\benchmark\ansys\reference"
+if (Test-Path $ansysScript) {
+    $py = Get-Command python -ErrorAction SilentlyContinue
+    if ($py) {
+        Write-Host ""
+        Write-Host "== ANSYS benchmark =="
+        & python $ansysScript --bin $bin --src $root --reference $ansysRef
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[PASS] ANSYS benchmark"
+        } else {
+            Write-Host "[FAIL] ANSYS benchmark"
+            $failed++
+        }
+    } else {
+        Write-Host "[MISS] python not found, skip ANSYS benchmark"
+        $failed++
+    }
+} else {
+    Write-Host "[MISS] ANSYS benchmark script missing: $ansysScript"
+    $failed++
+}
+
 if ($failed -eq 0) { Write-Host "ALL TESTS PASSED" } else { Write-Host "$failed TEST(S) FAILED"; exit 1 }
