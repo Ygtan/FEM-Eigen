@@ -74,6 +74,69 @@ inline Eigen::Matrix<double, 12, 12> beam3DTransformation(const Vec3& p1, const 
     return T;
 }
 
+// 7 自由度（含翘曲）薄壁梁局部刚度，14 自由度：
+// [u1,v1,w1,θx1,θy1,θz1,φ1, u2,v2,w2,θx2,θy2,θz2,φ2]
+// φ = dθx/dx 为翘曲率。扭转项 = 圣维南 GJ·∫(φ)² + 翘曲 E·Iw·∫(φ')²。
+inline Eigen::Matrix<double, 14, 14> beam7LocalStiffness(
+    double E, double A, double Iy, double Iz, double J, double G, double Iw, double L) {
+    if (L <= 0.0) throw std::runtime_error("7 自由度梁单元长度为零");
+    Eigen::Matrix<double, 14, 14> K = Eigen::Matrix<double, 14, 14>::Zero();
+    const double EAL = E * A / L;
+    const double kz = E * Iz / (L * L * L);
+    const double ky = E * Iy / (L * L * L);
+
+    K(0, 0) = EAL;  K(0, 7) = -EAL;
+    K(7, 0) = -EAL; K(7, 7) = EAL;
+
+    // 绕 z 轴弯曲（v,θz）：1,5,8,12
+    K(1, 1) = 12*kz; K(1, 5) = 6*kz*L; K(1, 8) = -12*kz; K(1, 12) = 6*kz*L;
+    K(5, 1) = 6*kz*L; K(5, 5) = 4*kz*L*L; K(5, 8) = -6*kz*L; K(5, 12) = 2*kz*L*L;
+    K(8, 1) = -12*kz; K(8, 5) = -6*kz*L; K(8, 8) = 12*kz; K(8, 12) = -6*kz*L;
+    K(12, 1) = 6*kz*L; K(12, 5) = 2*kz*L*L; K(12, 8) = -6*kz*L; K(12, 12) = 4*kz*L*L;
+
+    // 绕 y 轴弯曲（w,θy）：2,4,9,11（耦合符号相反）
+    K(2, 2) = 12*ky; K(2, 4) = -6*ky*L; K(2, 9) = -12*ky; K(2, 11) = -6*ky*L;
+    K(4, 2) = -6*ky*L; K(4, 4) = 4*ky*L*L; K(4, 9) = 6*ky*L; K(4, 11) = 2*ky*L*L;
+    K(9, 2) = -12*ky; K(9, 4) = 6*ky*L; K(9, 9) = 12*ky; K(9, 11) = 6*ky*L;
+    K(11, 2) = -6*ky*L; K(11, 4) = 2*ky*L*L; K(11, 9) = 6*ky*L; K(11, 11) = 4*ky*L*L;
+
+    // 扭转（θx,φ）：3,6,10,13。翘曲项按梁弯曲刚度，圣维南项按 ∫N'^T N'。
+    const double kw = E * Iw / (L * L * L);
+    const double ks = G * J / L;
+    K(3, 3)   += 12*kw;      K(3, 6)   += 6*kw*L;    K(3, 10)  += -12*kw;     K(3, 13)  += 6*kw*L;
+    K(6, 3)   += 6*kw*L;     K(6, 6)   += 4*kw*L*L;  K(6, 10)  += -6*kw*L;    K(6, 13)  += 2*kw*L*L;
+    K(10, 3)  += -12*kw;     K(10, 6)  += -6*kw*L;   K(10, 10) += 12*kw;      K(10, 13) += -6*kw*L;
+    K(13, 3)  += 6*kw*L;     K(13, 6)  += 2*kw*L*L;  K(13, 10) += -6*kw*L;    K(13, 13) += 4*kw*L*L;
+
+    K(3, 3)   += 6.0/5.0*ks;   K(3, 6)   += L/10.0*ks;      K(3, 10)  += -6.0/5.0*ks;  K(3, 13)  += L/10.0*ks;
+    K(6, 3)   += L/10.0*ks;    K(6, 6)   += 2.0*L*L/15.0*ks; K(6, 10)  += -L/10.0*ks;   K(6, 13)  += -L*L/30.0*ks;
+    K(10, 3)  += -6.0/5.0*ks;  K(10, 6)  += -L/10.0*ks;     K(10, 10) += 6.0/5.0*ks;   K(10, 13) += -L/10.0*ks;
+    K(13, 3)  += L/10.0*ks;    K(13, 6)  += -L*L/30.0*ks;   K(13, 10) += -L/10.0*ks;   K(13, 13) += 2.0*L*L/15.0*ks;
+    return K;
+}
+
+// 7 自由度梁变换（全局->局部）。每节点：平动/转动用 λ=R^T，翘曲率 φ 不参与旋转。
+inline Eigen::Matrix<double, 14, 14> beam7Transformation(const Vec3& p1, const Vec3& p2) {
+    Vec3 ex = p2 - p1;
+    const double L = std::max(ex.norm(), 1e-12);
+    ex /= L;
+    Vec3 ez(0.0, 0.0, 1.0);
+    if (std::abs(ex.dot(ez)) > 0.999) ez = Vec3(0.0, 1.0, 0.0);
+    Vec3 ey = ez.cross(ex); ey.normalize();
+    ez = ex.cross(ey); ez.normalize();
+    Eigen::Matrix3d R;
+    R.col(0)=ex; R.col(1)=ey; R.col(2)=ez;
+    const Eigen::Matrix3d lam = R.transpose();
+    Eigen::Matrix<double, 14, 14> T = Eigen::Matrix<double, 14, 14>::Zero();
+    for (int n = 0; n < 2; ++n) {
+        const int b = 7 * n;
+        T.block<3, 3>(b, b) = lam;         // u,v,w
+        T.block<3, 3>(b + 3, b + 3) = lam; // θx,θy,θz
+        T(b + 6, b + 6) = 1.0;             // φ
+    }
+    return T;
+}
+
 inline Eigen::Matrix<double, 6, 6> truss3DStiffness(double E, double A, const Vec3& p1, const Vec3& p2) {
     const Vec3 d = p2 - p1;
     const double L = d.norm();
@@ -112,6 +175,7 @@ struct Element3D {
     std::string type = "TRUSS";
     double E = 0.0, A = 0.0;
     double Iy = 0.0, Iz = 0.0, J = 0.0, G = 0.0;
+    double Iw = 0.0;                 // 扇形惯性矩/翘曲常数（BEAM7 约束扭转用）
     double dens = 0.0, addmass = 0.0;   // 密度 kg/m^3、附加线质量 kg/m（模态/自重）
     double istrn = 0.0;
     double Wtop = 0.0, Wbot = 0.0;
@@ -197,9 +261,14 @@ inline DofMap3D buildDofMap3D(const Model3D& m) {
     std::map<int, int> need;
     for (const auto& [id, x] : m.nodes) need[id] = 3;
     for (const auto& e : m.elements) {
-        if (e.type != "BEAM") continue;
-        if (m.nodes.count(e.n1)) need[e.n1] = 6;
-        if (m.nodes.count(e.n2)) need[e.n2] = 6;
+        if (!m.nodes.count(e.n1) || !m.nodes.count(e.n2)) continue;
+        if (e.type == "BEAM") {
+            need[e.n1] = std::max(need[e.n1], 6);
+            need[e.n2] = std::max(need[e.n2], 6);
+        } else if (e.type == "BEAM7") {
+            need[e.n1] = 7;   // 6 + 翘曲自由度 φ
+            need[e.n2] = 7;
+        }
     }
     int start = 0;
     for (const auto& [id, x] : m.nodes) {
@@ -213,7 +282,7 @@ inline DofMap3D buildDofMap3D(const Model3D& m) {
     return dm;
 }
 
-// 单元全局自由度编号：梁 12 个，轴向单元 6 个（各取前 3 个平动自由度）。
+// 单元全局自由度编号：梁 12 个、BEAM7 14 个、轴向单元 6 个（各取前 3 个平动自由度）。
 inline std::vector<int> elementGdofs3D(const DofMap3D& dm, const Element3D& e) {
     std::vector<int> g;
     if (e.type == "BEAM") {
@@ -221,6 +290,12 @@ inline std::vector<int> elementGdofs3D(const DofMap3D& dm, const Element3D& e) {
         for (int k = 0; k < 6; ++k) {
             g[k]     = dm.dof(e.n1, k);
             g[6 + k] = dm.dof(e.n2, k);
+        }
+    } else if (e.type == "BEAM7") {
+        g.resize(14);
+        for (int k = 0; k < 7; ++k) {
+            g[k]      = dm.dof(e.n1, k);
+            g[7 + k]  = dm.dof(e.n2, k);
         }
     } else {
         g.resize(6);
@@ -405,6 +480,17 @@ inline Assembled3D assembleModel3D(const Model3D& m) {
             const double scale = std::max(1.0, Ke.cwiseAbs().maxCoeff());
             for (int r = 0; r < 12; ++r)
                 for (int c = 0; c < 12; ++c)
+                    if (std::abs(Ke(r, c)) > 1e-12 * scale)
+                        trips.emplace_back(g[r], g[c], Ke(r, c));
+        } else if (e.type == "BEAM7") {
+            const Vec3 p1 = m.nodes.at(e.n1), p2 = m.nodes.at(e.n2);
+            const double L = (p2 - p1).norm();
+            const auto Kl = beam7LocalStiffness(Eeff, e.A, e.Iy, e.Iz, e.J, e.G, e.Iw, L);
+            const auto T = beam7Transformation(p1, p2);
+            const auto Ke = T.transpose() * Kl * T;
+            const double scale = std::max(1.0, Ke.cwiseAbs().maxCoeff());
+            for (int r = 0; r < 14; ++r)
+                for (int c = 0; c < 14; ++c)
                     if (std::abs(Ke(r, c)) > 1e-12 * scale)
                         trips.emplace_back(g[r], g[c], Ke(r, c));
         } else {
@@ -797,6 +883,7 @@ struct BeamEnvelope3D {
     int id = 0;
     double Nmin=0,Nmax=0,VyMin=0,VyMax=0,VzMin=0,VzMax=0;
     double Tmin=0,Tmax=0,MyMin=0,MyMax=0,MzMin=0,MzMax=0;
+    double Bmin=0,Bmax=0;   // 双力矩（BEAM7 约束扭转）
     bool valid=false;
 };
 
@@ -818,10 +905,27 @@ inline Eigen::VectorXd beam3DLocalEndForces(const Model3D& m, const DofMap3D& dm
     return Kl * (T * ug);
 }
 
+// 7 自由度梁局部杆端力：fl = Kl · (T · ug)，14 分量含双力矩 B。
+inline Eigen::VectorXd beam7LocalEndForces(const Model3D& m, const DofMap3D& dm,
+                                           const Element3D& e,
+                                           const std::vector<double>& U) {
+    Eigen::VectorXd ug(14);
+    for (int k = 0; k < 7; ++k) {
+        const int d1 = dm.safeDof(e.n1, k), d2 = dm.safeDof(e.n2, k);
+        ug(k)     = (d1 >= 0 && d1 < static_cast<int>(U.size())) ? U[d1] : 0.0;
+        ug(7 + k) = (d2 >= 0 && d2 < static_cast<int>(U.size())) ? U[d2] : 0.0;
+    }
+    const Vec3 p1 = m.nodes.at(e.n1), p2 = m.nodes.at(e.n2);
+    const double L = (p2 - p1).norm();
+    const auto T = beam7Transformation(p1, p2);
+    const auto Kl = beam7LocalStiffness(e.E, e.A, e.Iy, e.Iz, e.J, e.G, e.Iw, L);
+    return Kl * (T * ug);
+}
+
 // 累积一个截面内力样本（首个样本初始化，避免 0 初值吞掉负值极值）。
 static inline void accumBeamEnv(BeamEnvelope3D& r,
                                 double N, double Vy, double Vz, double T,
-                                double My, double Mz) {
+                                double My, double Mz, double B = 0.0) {
     if (!r.valid) {
         r.Nmin = r.Nmax = N;
         r.VyMin = r.VyMax = Vy;
@@ -829,6 +933,7 @@ static inline void accumBeamEnv(BeamEnvelope3D& r,
         r.Tmin = r.Tmax = T;
         r.MyMin = r.MyMax = My;
         r.MzMin = r.MzMax = Mz;
+        r.Bmin = r.Bmax = B;
         r.valid = true;
         return;
     }
@@ -838,6 +943,7 @@ static inline void accumBeamEnv(BeamEnvelope3D& r,
     r.Tmin = std::min(r.Tmin, T);   r.Tmax = std::max(r.Tmax, T);
     r.MyMin = std::min(r.MyMin, My); r.MyMax = std::max(r.MyMax, My);
     r.MzMin = std::min(r.MzMin, Mz); r.MzMax = std::max(r.MzMax, Mz);
+    r.Bmin = std::min(r.Bmin, B);   r.Bmax = std::max(r.Bmax, B);
 }
 
 inline std::vector<BeamEnvelope3D> compute3DBeamEnvelope(
@@ -846,18 +952,24 @@ inline std::vector<BeamEnvelope3D> compute3DBeamEnvelope(
     for (const auto& sr : stages) {
         const DofMap3D& dm = sr.dm;   // 必须用本阶段的映射
         for (const auto& e : m.elements) {
-            if (e.type != "BEAM") continue;
+            if (e.type != "BEAM" && e.type != "BEAM7") continue;
             // 本阶段该梁是否激活：两端节点都得有转动自由度（6 自由度）才算。
             if (dm.safeDof(e.n1, 5) < 0 || dm.safeDof(e.n2, 5) < 0) continue;
-            const Eigen::VectorXd fl = beam3DLocalEndForces(m, dm, e, sr.U);
             auto& r = env[e.id]; r.id = e.id;
-            // 截面内力（成员端力，两端同一约定）：
-            //   N(受拉正) = -fl(0) / +fl(6)
-            //   Vy,Vz     = +fl(1) / -fl(7), +fl(2) / -fl(8)
-            //   T(扭转)   = -fl(3) / +fl(9)
-            //   My,Mz     = -fl(4)/+fl(10), -fl(5)/+fl(11)   (下侧受拉正)
-            accumBeamEnv(r, -fl(0),  fl(1),  fl(2), -fl(3), -fl(4), -fl(5));  // i 端
-            accumBeamEnv(r,  fl(6), -fl(7), -fl(8),  fl(9),  fl(10), fl(11)); // j 端
+            if (e.type == "BEAM7") {
+                const Eigen::VectorXd fl = beam7LocalEndForces(m, dm, e, sr.U);
+                accumBeamEnv(r, -fl(0),  fl(1),  fl(2), -fl(3), -fl(4), -fl(5), -fl(6));   // i 端
+                accumBeamEnv(r,  fl(7), -fl(8), -fl(9),  fl(10), fl(11), fl(12), fl(13)); // j 端
+            } else {
+                const Eigen::VectorXd fl = beam3DLocalEndForces(m, dm, e, sr.U);
+                // 截面内力（成员端力，两端同一约定）：
+                //   N(受拉正) = -fl(0) / +fl(6)
+                //   Vy,Vz     = +fl(1) / -fl(7), +fl(2) / -fl(8)
+                //   T(扭转)   = -fl(3) / +fl(9)
+                //   My,Mz     = -fl(4)/+fl(10), -fl(5)/+fl(11)   (下侧受拉正)
+                accumBeamEnv(r, -fl(0),  fl(1),  fl(2), -fl(3), -fl(4), -fl(5));  // i 端
+                accumBeamEnv(r,  fl(6), -fl(7), -fl(8),  fl(9),  fl(10), fl(11)); // j 端
+            }
         }
     }
     std::vector<BeamEnvelope3D> out;
@@ -1227,7 +1339,7 @@ inline Model3D readModel3D(const std::string& path) {
     std::map<int, double> realIy, realIz, realJ, realG;
     std::map<int, double> realIstrn;
     std::map<int, double> mpDens, realAddmass;
-    std::map<int,double> realWtop, realWbot, realWy, realWt;
+    std::map<int,double> realWtop, realWbot, realWy, realWt, realIw;
     int activeType = 0, activeMat = 0, activeReal = 0;
     std::string section;
     std::string line;
@@ -1250,6 +1362,7 @@ inline Model3D readModel3D(const std::string& path) {
                         e.istrn=realIstrn[activeReal];
                         e.dens=mpDens[activeMat]; e.addmass=realAddmass[activeReal];
                         e.Wtop=realWtop[activeReal]; e.Wbot=realWbot[activeReal]; e.Wy=realWy[activeReal]; e.Wt=realWt[activeReal];
+                        e.Iw=realIw[activeReal];
                         m.elements.push_back(e);
                     }
                 }
@@ -1309,6 +1422,7 @@ inline Model3D readModel3D(const std::string& path) {
                 else if (kv.rfind("WB=",0)==0) realWbot[id]=std::stod(kv.substr(3));
                 else if (kv.rfind("WY=",0)==0) realWy[id]=std::stod(kv.substr(3));
                 else if (kv.rfind("WTORS=",0)==0) realWt[id]=std::stod(kv.substr(7));
+                else if (kv.rfind("IW=",0)==0) realIw[id]=std::stod(kv.substr(3));
             }
             areas[id]=A;
             realIy[id]=Iy; realIz[id]=Iz; realJ[id]=J; realG[id]=G;

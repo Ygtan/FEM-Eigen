@@ -17,6 +17,7 @@ int main(int argc, char** argv) {
     for (const auto& e : beamEnv)
         std::cout << "BEAM" << e.id
                   << " Nmin=" << e.Nmin << " Nmax=" << e.Nmax
-                  << " MzMin=" << e.MzMin << " MzMax=" << e.MzMax << "\n";
+                  << " MzMin=" << e.MzMin << " MzMax=" << e.MzMax
+                  << " Bmin=" << e.Bmin << " Bmax=" << e.Bmax << "\n";
     return 0;
 }

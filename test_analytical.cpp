@@ -1670,6 +1670,88 @@ void test3DVariableSection() {
     check("3D 锥形悬臂梁挠度（柔度积分）", U[dm.dof(n + 1, 1)], -exact, 5e-3);
 }
 
+// ---- 7 自由度梁（约束扭转/翘曲）----
+void test3DBeam7Torsion() {
+    std::printf("\n[7 自由度梁] 圣维南扭转 + 翘曲扭转\n");
+    const double E = 2.06e11, G = 7.9e10, L = 5.0;
+    const double A = 0.18, Iy = 0.4, Iz = 0.6, J = 0.3;
+    const double T = 1.0e5;
+
+    // (a) 纯圣维南（Iw=0，根部自由翘曲 φ 不约束）：θx = T·L/(G·J)
+    {
+        Model3D m;
+        m.nodes[1] = Vec3(0, 0, 0);
+        m.nodes[2] = Vec3(L, 0, 0);
+        Element3D e;
+        e.id = 1; e.type = "BEAM7"; e.E = E; e.A = A; e.Iy = Iy; e.Iz = Iz;
+        e.J = J; e.G = G; e.Iw = 0.0; e.n1 = 1; e.n2 = 2;
+        m.elements.push_back(e);
+        for (int d = 1; d <= 6; ++d) m.constraints.push_back({1, d, 0.0});   // 根部 θx 固定，φ 自由
+        m.loads.push_back({2, 4, T});   // 端部扭矩（dof 4 = θx）
+        const std::vector<double> U = solveModel3D(m);
+        const DofMap3D dm = buildDofMap3D(m);
+        check("BEAM7 纯圣维南 θx=T·L/(G·J)", U[dm.dof(2, 3)], T * L / (G * J), 1e-9);
+    }
+
+    // (b) 纯翘曲（GJ=0，根部 θx、φ 均约束）：θx = T·L³/(3·E·Iw)
+    {
+        const double Iw = 0.05;
+        Model3D m;
+        m.nodes[1] = Vec3(0, 0, 0);
+        m.nodes[2] = Vec3(L, 0, 0);
+        Element3D e;
+        e.id = 1; e.type = "BEAM7"; e.E = E; e.A = A; e.Iy = Iy; e.Iz = Iz;
+        e.J = 0.0; e.G = G; e.Iw = Iw; e.n1 = 1; e.n2 = 2;
+        m.elements.push_back(e);
+        for (int d = 1; d <= 7; ++d) m.constraints.push_back({1, d, 0.0});   // 根部完全固定（含 φ）
+        m.loads.push_back({2, 4, T});
+        const std::vector<double> U = solveModel3D(m);
+        const DofMap3D dm = buildDofMap3D(m);
+        check("BEAM7 纯翘曲 θx=T·L³/(3·E·Iw)", U[dm.dof(2, 3)],
+              T * L * L * L / (3.0 * E * Iw), 1e-9);
+    }
+
+    // (c) 纯翘曲悬臂梁：固定端双力矩 |B| = T·L
+    {
+        const double Iw = 0.05;
+        Model3D m;
+        m.nodes[1] = Vec3(0, 0, 0);
+        m.nodes[2] = Vec3(L, 0, 0);
+        Element3D e;
+        e.id = 1; e.type = "BEAM7"; e.E = E; e.A = A; e.Iy = Iy; e.Iz = Iz;
+        e.J = 0.0; e.G = G; e.Iw = Iw; e.n1 = 1; e.n2 = 2;
+        m.elements.push_back(e);
+        for (int d = 1; d <= 7; ++d) m.constraints.push_back({1, d, 0.0});
+        m.loads.push_back({2, 4, T});
+        const std::vector<double> U = solveModel3D(m);
+        const DofMap3D dm = buildDofMap3D(m);
+        const Eigen::VectorXd fl = beam7LocalEndForces(m, dm, e, U);
+        check("BEAM7 固定端双力矩 |B|=T·L", std::abs(-fl(6)), T * L, 1e-9);
+    }
+
+    // (d) 约束扭转（GJ 与 EIw 共同作用）：θx = (T·L/(G·J))·[1−tanh(λL)/(λL)]
+    {
+        const double Iw = 0.05;
+        const int n = 50;
+        Model3D m;
+        for (int i = 0; i <= n; ++i) m.nodes[i + 1] = Vec3(L * i / n, 0.0, 0.0);
+        for (int i = 1; i <= n; ++i) {
+            Element3D e;
+            e.id = i; e.type = "BEAM7"; e.E = E; e.A = A; e.Iy = Iy; e.Iz = Iz;
+            e.J = J; e.G = G; e.Iw = Iw; e.n1 = i; e.n2 = i + 1;
+            m.elements.push_back(e);
+        }
+        for (int d = 1; d <= 7; ++d) m.constraints.push_back({1, d, 0.0});
+        m.loads.push_back({n + 1, 4, T});
+        const std::vector<double> U = solveModel3D(m);
+        const DofMap3D dm = buildDofMap3D(m);
+        const double lam = std::sqrt(G * J / (E * Iw));
+        const double lamL = lam * L;
+        const double exact = T * L / (G * J) * (1.0 - std::tanh(lamL) / lamL);
+        check("BEAM7 约束扭转 θx（闭式）", U[dm.dof(n + 1, 3)], exact, 2e-3);
+    }
+}
+
 } // namespace
 
 int main() {
@@ -1717,6 +1799,7 @@ int main() {
         testPrestressLosses();
         testCodeLoadLibrary();
         test3DVariableSection();
+        test3DBeam7Torsion();
     } catch (const std::exception& e) {
         std::printf("\n[ERROR] 异常: %s\n", e.what());
         ++g_fail;
