@@ -317,6 +317,20 @@ struct Model2D {
     bool nonlinearThrowOnFailure = true;
 };
 
+// 2D 模型的统一自由度映射：所有节点固定 3 个自由度 [u,v,θ]，
+// 与 solveModel2D 内部“3*idx + (dof-1)”的编号完全一致。
+inline DofMap buildDofMap2D(const Model2D& m) {
+    DofMap dm;
+    for (const auto& [id, x] : m.nodes) {
+        dm.index[id] = static_cast<int>(dm.nodeIds.size());
+        dm.nodeIds.push_back(id);
+        dm.dofStart.push_back(3 * static_cast<int>(dm.nodeIds.size() - 1));
+        dm.dofCount.push_back(3);
+    }
+    dm.nDofs = 3 * static_cast<int>(m.nodes.size());
+    return dm;
+}
+
 namespace detail {
 
 inline std::string trim(const std::string& s) {

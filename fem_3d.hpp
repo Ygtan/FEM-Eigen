@@ -172,27 +172,7 @@ struct Model3D {
 //
 // 旧实现用"只要存在一个 BEAM 就给所有节点 6 个自由度"的一刀切方式，
 // 会让纯桁架节点产生恒为零的转动自由度行/列，导致总体矩阵奇异。
-struct DofMap3D {
-    std::map<int, int> index;   // 节点号 -> 节点序号
-    std::vector<int> nodeIds;   // 节点序号 -> 节点号
-    std::vector<int> dofStart;  // 节点序号 -> 起始全局自由度编号
-    std::vector<int> dofCount;  // 节点序号 -> 该节点自由度数（3 或 6）
-    int nDofs = 0;
-
-    int count(int node) const { return dofCount[index.at(node)]; }
-
-    // 节点 node 的第 local 个自由度（0-based）的全局编号。
-    int dof(int node, int local) const { return dofStart[index.at(node)] + local; }
-
-    // 越界时返回 -1（例如纯轴向节点没有转动自由度）。
-    int safeDof(int node, int local) const {
-        const auto it = index.find(node);
-        if (it == index.end()) return -1;
-        return (local >= 0 && local < dofCount[it->second])
-                   ? dofStart[it->second] + local
-                   : -1;
-    }
-};
+using DofMap3D = DofMap;   // 统一自由度映射见 fem.hpp
 
 inline DofMap3D buildDofMap3D(const Model3D& m) {
     DofMap3D dm;

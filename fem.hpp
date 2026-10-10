@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstddef>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <stdexcept>
 #include <tuple>
@@ -145,6 +146,29 @@ inline void applyDirichlet(SparseMat& K, DenseVec& F,
         F(d) = val[d];
     }
 }
+
+// 统一自由度映射：把“节点号 + 节点内局部自由度”映射到全局自由度编号。
+// 2D 与 3D 内核共用这一套：二维梁每节点 3 自由度 [u,v,θ]，三维梁每节点
+// 6 自由度 [u,v,w,θx,θy,θz]；纯轴向节点只有 3 个平动自由度。
+struct DofMap {
+    std::map<int, int> index;   // 节点号 -> 节点序号
+    std::vector<int> nodeIds;   // 节点序号 -> 节点号
+    std::vector<int> dofStart;  // 节点序号 -> 起始全局自由度编号
+    std::vector<int> dofCount;  // 节点序号 -> 该节点自由度数
+    int nDofs = 0;
+
+    int count(int node) const { return dofCount[index.at(node)]; }
+    int dof(int node, int local) const { return dofStart[index.at(node)] + local; }
+
+    // 越界时返回 -1（例如纯轴向节点没有转动自由度）。
+    int safeDof(int node, int local) const {
+        const auto it = index.find(node);
+        if (it == index.end()) return -1;
+        return (local >= 0 && local < dofCount[it->second])
+                   ? dofStart[it->second] + local
+                   : -1;
+    }
+};
 
 // 可切换的求解后端。
 enum class SolverType {

@@ -1328,6 +1328,75 @@ void test3DObliqueCantilever() {
     check("斜置悬臂 v = +δ/√2", U[dm.dof(2, 1)],  delta * s);
 }
 
+// ---- 统一自由度表：2D 装配刚度 == 3D 刚度平面内子矩阵 ----
+void testDofMapUnification() {
+    std::printf("\n[统一自由度表] 2D 装配刚度 == 3D 刚度平面内子矩阵\n");
+    const double E = 2.06e11, A = 0.18, I = 0.6;
+
+    // 2D：两段连续梁 (0,0)-(4,3)-(8,0)，含斜杆
+    Model2D m2;
+    m2.nodes[1] = Eigen::Vector2d(0.0, 0.0);
+    m2.nodes[2] = Eigen::Vector2d(4.0, 3.0);
+    m2.nodes[3] = Eigen::Vector2d(8.0, 0.0);
+    for (int k = 1; k <= 2; ++k) {
+        Model2D::Element el;
+        el.id = k; el.type = "BEAM"; el.E = E; el.A = A; el.I = I; el.conn = {k, k + 1};
+        m2.elements.push_back(el);
+    }
+    const DofMap dm2 = buildDofMap2D(m2);
+
+    // 2D 刚度：用统一自由度表 + 通用 assemble 装配
+    std::vector<DenseMat> kes;
+    std::vector<std::vector<int>> gdofs;
+    for (const auto& el : m2.elements) {
+        EulerBeam2D b;
+        b.E = el.E; b.A = el.A; b.I = el.I;
+        b.x0 = m2.nodes.at(el.conn[0]);
+        b.x1 = m2.nodes.at(el.conn[1]);
+        kes.push_back(b.stiffness(0.0));
+        std::vector<int> g;
+        for (int n : el.conn)
+            for (int d = 0; d < 3; ++d)
+                g.push_back(dm2.dof(n, d));
+        gdofs.push_back(g);
+    }
+    const SparseMat K2 = assemble(kes, gdofs, dm2.nDofs);
+
+    // 3D 同构模型（z=0，Iz=I，Iy=J=0）
+    Model3D m3;
+    for (const auto& [id, x] : m2.nodes) m3.nodes[id] = Vec3(x(0), x(1), 0.0);
+    for (const auto& el : m2.elements) {
+        Element3D e;
+        e.id = el.id; e.type = "BEAM"; e.E = el.E; e.A = el.A;
+        e.Iz = el.I; e.Iy = 0.0; e.J = 0.0; e.G = 0.0;
+        e.n1 = el.conn[0]; e.n2 = el.conn[1];
+        m3.elements.push_back(e);
+    }
+    // 2D = 3D 且面外自由度（w,θx,θy）被约束；否则这些自由度零刚度会触发装配诊断。
+    for (const auto& [id, x] : m3.nodes) {
+        m3.constraints.push_back({id, 3, 0.0});
+        m3.constraints.push_back({id, 4, 0.0});
+        m3.constraints.push_back({id, 5, 0.0});
+    }
+    const Assembled3D a3 = assembleModel3D(m3);
+    const DofMap& dm3 = a3.dm;
+
+    // 抽取 3D 刚度的平面内 [u,v,θz] 子矩阵
+    std::vector<int> sub3;
+    for (std::size_t k = 0; k < dm2.nodeIds.size(); ++k) {
+        const int node = dm2.nodeIds[k];
+        sub3.push_back(dm3.dof(node, 0));
+        sub3.push_back(dm3.dof(node, 1));
+        sub3.push_back(dm3.dof(node, 5));
+    }
+    DenseMat K3sub(static_cast<int>(sub3.size()), static_cast<int>(sub3.size()));
+    for (std::size_t r = 0; r < sub3.size(); ++r)
+        for (std::size_t c = 0; c < sub3.size(); ++c)
+            K3sub(static_cast<int>(r), static_cast<int>(c)) = a3.K0.coeff(sub3[r], sub3[c]);
+
+    checkMat("2D 装配刚度 == 3D 刚度平面内子矩阵", K2.toDense(), K3sub);
+}
+
 } // namespace
 
 int main() {
@@ -1368,6 +1437,7 @@ int main() {
         testSectionNonlinear();
         testBeamElementUnification();
         test3DObliqueCantilever();
+        testDofMapUnification();
     } catch (const std::exception& e) {
         std::printf("\n[ERROR] 异常: %s\n", e.what());
         ++g_fail;
