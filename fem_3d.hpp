@@ -66,7 +66,9 @@ inline Eigen::Matrix<double, 12, 12> beam3DTransformation(const Vec3& p1, const 
     Eigen::Matrix3d R;
     R.col(0)=ex; R.col(1)=ey; R.col(2)=ez;
     Eigen::Matrix<double, 12, 12> T = Eigen::Matrix<double, 12, 12>::Zero();
-    for (int b=0; b<4; ++b) T.block<3,3>(3*b,3*b)=R;
+    // 方向余弦矩阵 λ = R^T 将全局位移映射到局部：u_local = λ·u_global。
+    // （修正：此前误用 R，把变换矩阵转置了，导致非轴线对齐梁刚度算错。）
+    for (int b=0; b<4; ++b) T.block<3,3>(3*b,3*b)=R.transpose();
     return T;
 }
 

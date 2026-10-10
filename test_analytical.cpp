@@ -1185,6 +1185,149 @@ void testSectionNonlinear() {
     check("纯弯 Mz=EIz·κz", rb.Mz, E * (b * h * h * h / 12.0) * kz, 1e-3);
 }
 
+// ---- 矩阵最大相对偏差断言 ----
+void checkMat(const std::string& name, const DenseMat& got, const DenseMat& exp, double tol = 1e-9) {
+    if (got.rows() != exp.rows() || got.cols() != exp.cols()) {
+        std::printf("  [FAIL] %-44s 尺寸不符 got=%dx%d exp=%dx%d\n",
+                    name.c_str(), static_cast<int>(got.rows()), static_cast<int>(got.cols()),
+                    static_cast<int>(exp.rows()), static_cast<int>(exp.cols()));
+        ++g_fail;
+        return;
+    }
+    const double denom = std::max(1.0, exp.cwiseAbs().maxCoeff());
+    const double rel = (got - exp).cwiseAbs().maxCoeff() / denom;
+    if (rel <= tol) {
+        ++g_pass;
+        std::printf("  [PASS] %-44s maxRel=%.2e\n", name.c_str(), rel);
+    } else {
+        ++g_fail;
+        std::printf("  [FAIL] %-44s maxRel=%.2e (tol=%.0e)\n", name.c_str(), rel, tol);
+    }
+}
+
+DenseMat submatrix(const DenseMat& M, const int* idx, int n) {
+    DenseMat S(n, n);
+    for (int r = 0; r < n; ++r)
+        for (int c = 0; c < n; ++c)
+            S(r, c) = M(idx[r], idx[c]);
+    return S;
+}
+
+// ---- 统一梁单元 BeamElement 与现有 2D/3D 梁单元逐元素等价 ----
+void testBeamElementUnification() {
+    std::printf("\n[统一单元] BeamElement 与 EulerBeam2D / beam3D* 逐元素等价\n");
+    const double E  = 2.06e11;
+    const double A  = 0.18;
+    const double I  = 0.6;
+    const double Iy = 0.4;
+    const double J  = 0.32;
+    const double G  = 7.9e10;
+    const double L  = 8.0;
+    const double Phi = 0.4;   // 任意剪切参数
+
+    // 12 自由度 -> 平面内 [u1,v1,θz1,u2,v2,θz2] 的子集索引
+    const int idx[6] = {0, 1, 5, 6, 7, 11};
+
+    // (a) 3D 局部刚度：BeamElement(Phi=0) == beam3DLocalStiffness
+    {
+        BeamElement b;
+        b.E = E; b.A = A; b.Iy = Iy; b.Iz = I; b.J = J; b.G = G;
+        b.x0 = Eigen::Vector3d(0, 0, 0);
+        b.x1 = Eigen::Vector3d(L, 0, 0);
+        checkMat("BeamElement.localStiffness == beam3DLocalStiffness",
+                 b.localStiffness(), beam3DLocalStiffness(E, A, Iy, I, J, G, L));
+    }
+
+    // (b) 3D 坐标变换：BeamElement == beam3DTransformation
+    {
+        BeamElement b;
+        b.x0 = Eigen::Vector3d(3, 1, 2);
+        b.x1 = Eigen::Vector3d(7, -2, 5);
+        checkMat("BeamElement.transformation == beam3DTransformation",
+                 b.transformation(), beam3DTransformation(b.x0, b.x1));
+    }
+
+    // (c) 2D 平面内整体刚度（Phi=0）：BeamElement(z=0) == EulerBeam2D
+    {
+        EulerBeam2D b2;
+        b2.E = E; b2.A = A; b2.I = I;
+        b2.x0 = Eigen::Vector2d(2, 1);
+        b2.x1 = Eigen::Vector2d(6, 4);
+        BeamElement b;
+        b.E = E; b.A = A; b.Iz = I; b.Iy = 0.0; b.J = 0.0; b.G = 0.0;
+        b.x0 = Eigen::Vector3d(2, 1, 0);
+        b.x1 = Eigen::Vector3d(6, 4, 0);
+        checkMat("BeamElement(2D) 整体刚度 == EulerBeam2D 刚度",
+                 submatrix(b.stiffness(), idx, 6), b2.stiffness(0.0));
+    }
+
+    // (d) 2D Timoshenko 局部刚度（Phi）：BeamElement(PhiZ=Phi) == EulerBeam2D(Phi)
+    {
+        EulerBeam2D b2;
+        b2.E = E; b2.A = A; b2.I = I;
+        b2.x0 = Eigen::Vector2d(0, 0);
+        b2.x1 = Eigen::Vector2d(L, 0);
+        BeamElement b;
+        b.E = E; b.A = A; b.Iz = I; b.Iy = 0.0; b.J = 0.0; b.G = 0.0; b.PhiZ = Phi;
+        b.x0 = Eigen::Vector3d(0, 0, 0);
+        b.x1 = Eigen::Vector3d(L, 0, 0);
+        checkMat("BeamElement(2D,Timoshenko) 局部刚度 == EulerBeam2D(Phi)",
+                 submatrix(b.localStiffness(), idx, 6), b2.localStiffness(Phi));
+    }
+
+    // (e) 一致质量矩阵平面内等价
+    {
+        const double rhoA = 7850.0 * A;
+        EulerBeam2D b2;
+        b2.E = E; b2.A = A; b2.I = I;
+        b2.x0 = Eigen::Vector2d(0, 0);
+        b2.x1 = Eigen::Vector2d(L, 0);
+        BeamElement b;
+        b.E = E; b.A = A; b.Iz = I; b.Iy = 0.0; b.J = 0.0; b.G = 0.0;
+        b.x0 = Eigen::Vector3d(0, 0, 0);
+        b.x1 = Eigen::Vector3d(L, 0, 0);
+        checkMat("BeamElement 平面内质量 == EulerBeam2D 质量",
+                 submatrix(b.consistentMassMatrix(rhoA), idx, 6), b2.consistentMassMatrix(rhoA));
+    }
+
+    // (f) 几何刚度平面内等价
+    {
+        const double N = 1.2e6;
+        BeamElement b;
+        b.E = E; b.A = A; b.Iz = I; b.Iy = 0.0; b.J = 0.0; b.G = 0.0;
+        b.x0 = Eigen::Vector3d(0, 0, 0);
+        b.x1 = Eigen::Vector3d(L, 0, 0);
+        checkMat("BeamElement 平面内几何刚度 == beamGeometricStiffness2D",
+                 submatrix(b.geometricStiffness(N), idx, 6), beamGeometricStiffness2D(N, L));
+    }
+}
+
+// ---- 3D 斜置悬臂梁：坐标变换回归（回归此前梁变换矩阵被转置的 bug） ----
+void test3DObliqueCantilever() {
+    std::printf("\n[3D] 斜置悬臂梁 端部横向集中力（坐标变换回归）\n");
+    const double E = 2.06e11, A = 0.01, I = 1.0e-4, G = 7.9e10;
+    const double P = 1.0e4;
+    const double s = std::sqrt(0.5);
+    const double L = 5.0;   // 梁轴长度
+
+    Model3D m;
+    m.nodes[1] = Vec3(0.0, 0.0, 0.0);
+    m.nodes[2] = Vec3(L * s, L * s, 0.0);   // 45° 斜置
+    Element3D e;
+    e.id = 1; e.type = "BEAM"; e.E = E; e.A = A; e.Iy = I; e.Iz = I; e.J = I; e.G = G;
+    e.n1 = 1; e.n2 = 2;
+    m.elements.push_back(e);
+    for (int d = 1; d <= 6; ++d) m.constraints.push_back({1, d, 0.0});   // 固定端
+    m.loads.push_back({2, 1, -P * s});   // 横向力 (-1,1)/√2
+    m.loads.push_back({2, 2,  P * s});
+
+    const std::vector<double> U = solveModel3D(m);
+    const DofMap3D dm = buildDofMap3D(m);
+    const double delta = P * L * L * L / (3.0 * E * I);
+    check("斜置悬臂 u = -δ/√2", U[dm.dof(2, 0)], -delta * s);
+    check("斜置悬臂 v = +δ/√2", U[dm.dof(2, 1)],  delta * s);
+}
+
 } // namespace
 
 int main() {
@@ -1223,6 +1366,8 @@ int main() {
         testVariableSection();
         testSectionIntegration();
         testSectionNonlinear();
+        testBeamElementUnification();
+        test3DObliqueCantilever();
     } catch (const std::exception& e) {
         std::printf("\n[ERROR] 异常: %s\n", e.what());
         ++g_fail;

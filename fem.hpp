@@ -905,4 +905,142 @@ inline DenseMat beamGeometricStiffness2D(double N, double L) {
     return Kg;
 }
 
+// ==================== 统一梁单元（2D/3D 内核合并的地基） ====================
+//
+// 一个 12 自由度三维框架梁单元（欧拉-伯努利；PhiY/PhiZ 非零时对应平面的弯曲退化为
+// Timoshenko 剪切梁）。局部自由度顺序：
+//     [u1, v1, w1, θx1, θy1, θz1, u2, v2, w2, θx2, θy2, θz2]
+//
+// 二维梁是它的特例：梁位于 x-y 平面内（z=0）、仅绕 z 轴弯曲，
+//   2D 的 I -> Iz，2D 的剪切参数 Phi -> PhiZ，且 Iy=J=0。
+// 与 fem_3d.hpp 的 beam3DLocalStiffness/beam3DTransformation 在 PhiY=PhiZ=0 时
+// 逐元素一致；与 EulerBeam2D 在平面内 (u,v,θz) 子空间逐元素一致。
+struct BeamElement {
+    double E = 0.0, A = 0.0;
+    double Iy = 0.0, Iz = 0.0;      // 绕局部 y/z 轴的截面惯性矩
+    double J = 0.0, G = 0.0;        // 扭转常数、剪切模量
+    double Ip = 0.0;                // 极惯性矩（仅用于扭转质量/几何刚度）
+    double PhiY = 0.0, PhiZ = 0.0;  // 剪切参数 Φ=12EI/(G·As·L²)，0=欧拉-伯努利
+    Eigen::Vector3d x0 = Eigen::Vector3d::Zero();
+    Eigen::Vector3d x1 = Eigen::Vector3d::Zero();
+
+    int dofsPerNode() const { return 6; }
+    int numNodes() const { return 2; }
+    double length() const { return (x1 - x0).norm(); }
+
+    DenseMat localStiffness() const {
+        const double L = length();
+        if (L <= 0.0) throw std::runtime_error("梁单元长度为零");
+        DenseMat K = DenseMat::Zero(12, 12);
+        const double EAL = E * A / L;
+        const double kz = E * Iz / (L * L * L * (1.0 + PhiZ));
+        const double ky = E * Iy / (L * L * L * (1.0 + PhiY));
+        const double GJL = G * J / L;
+
+        K(0, 0) = EAL;  K(0, 6) = -EAL;
+        K(6, 0) = -EAL; K(6, 6) = EAL;
+
+        // 绕 z 轴弯曲（v, θz）——符号与 EulerBeam2D 的 (v, θ) 一致
+        K(1, 1) = 12.0 * kz; K(1, 5) = 6.0 * kz * L; K(1, 7) = -12.0 * kz; K(1, 11) = 6.0 * kz * L;
+        K(5, 1) = 6.0 * kz * L; K(5, 5) = (4.0 + PhiZ) * kz * L * L; K(5, 7) = -6.0 * kz * L; K(5, 11) = (2.0 - PhiZ) * kz * L * L;
+        K(7, 1) = -12.0 * kz; K(7, 5) = -6.0 * kz * L; K(7, 7) = 12.0 * kz; K(7, 11) = -6.0 * kz * L;
+        K(11, 1) = 6.0 * kz * L; K(11, 5) = (2.0 - PhiZ) * kz * L * L; K(11, 7) = -6.0 * kz * L; K(11, 11) = (4.0 + PhiZ) * kz * L * L;
+
+        // 绕 y 轴弯曲（w, θy）——耦合项符号与绕 z 轴相反（右手系约定）
+        K(2, 2) = 12.0 * ky; K(2, 4) = -6.0 * ky * L; K(2, 8) = -12.0 * ky; K(2, 10) = -6.0 * ky * L;
+        K(4, 2) = -6.0 * ky * L; K(4, 4) = (4.0 + PhiY) * ky * L * L; K(4, 8) = 6.0 * ky * L; K(4, 10) = (2.0 - PhiY) * ky * L * L;
+        K(8, 2) = -12.0 * ky; K(8, 4) = 6.0 * ky * L; K(8, 8) = 12.0 * ky; K(8, 10) = 6.0 * ky * L;
+        K(10, 2) = -6.0 * ky * L; K(10, 4) = (2.0 - PhiY) * ky * L * L; K(10, 8) = 6.0 * ky * L; K(10, 10) = (4.0 + PhiY) * ky * L * L;
+
+        K(3, 3) = GJL; K(3, 9) = -GJL;
+        K(9, 3) = -GJL; K(9, 9) = GJL;
+        return K;
+    }
+
+    // 局部 -> 全局坐标变换，与 beam3DTransformation 一致。
+    DenseMat transformation() const {
+        Eigen::Vector3d ex = x1 - x0;
+        const double L = std::max(ex.norm(), 1e-12);
+        ex /= L;
+        Eigen::Vector3d ez(0.0, 0.0, 1.0);
+        if (std::abs(ex.dot(ez)) > 0.999) ez = Eigen::Vector3d(0.0, 1.0, 0.0);
+        Eigen::Vector3d ey = ez.cross(ex); ey.normalize();
+        ez = ex.cross(ey); ez.normalize();
+        Eigen::Matrix3d R;
+        R.col(0) = ex; R.col(1) = ey; R.col(2) = ez;
+        DenseMat T = DenseMat::Zero(12, 12);
+        for (int b = 0; b < 4; ++b) T.block<3, 3>(3 * b, 3 * b) = R.transpose();
+        return T;
+    }
+
+    DenseMat stiffness() const {
+        const DenseMat T = transformation();
+        const DenseMat Kl = localStiffness();
+        return T.transpose() * Kl * T;
+    }
+
+    // 一致质量矩阵（12×12），rhoA 为线质量密度 kg/m。
+    DenseMat consistentMassMatrix(double rhoA) const {
+        const double L = length();
+        const double c = rhoA * L / 420.0;
+        DenseMat Me = DenseMat::Zero(12, 12);
+        Me(0, 0) = 140.0; Me(0, 6) = 70.0; Me(6, 0) = 70.0; Me(6, 6) = 140.0;
+
+        // v-θz（1,5,7,11）
+        Me(1, 1) = 156.0; Me(1, 5) = 22.0 * L; Me(1, 7) = 54.0; Me(1, 11) = -13.0 * L;
+        Me(5, 1) = 22.0 * L; Me(5, 5) = 4.0 * L * L; Me(5, 7) = 13.0 * L; Me(5, 11) = -3.0 * L * L;
+        Me(7, 1) = 54.0; Me(7, 5) = 13.0 * L; Me(7, 7) = 156.0; Me(7, 11) = -22.0 * L;
+        Me(11, 1) = -13.0 * L; Me(11, 5) = -3.0 * L * L; Me(11, 7) = -22.0 * L; Me(11, 11) = 4.0 * L * L;
+
+        // w-θy（2,4,8,10）——耦合项符号与 v-θz 相反
+        Me(2, 2) = 156.0; Me(2, 4) = -22.0 * L; Me(2, 8) = 54.0; Me(2, 10) = 13.0 * L;
+        Me(4, 2) = -22.0 * L; Me(4, 4) = 4.0 * L * L; Me(4, 8) = -13.0 * L; Me(4, 10) = -3.0 * L * L;
+        Me(8, 2) = 54.0; Me(8, 4) = -13.0 * L; Me(8, 8) = 156.0; Me(8, 10) = 22.0 * L;
+        Me(10, 2) = 13.0 * L; Me(10, 4) = -3.0 * L * L; Me(10, 8) = 22.0 * L; Me(10, 10) = 4.0 * L * L;
+
+        // 扭转 θx（3,9）——质量 ∝ ρIp = rhoA·(Ip/A)
+        if (A > 0.0 && Ip > 0.0) {
+            const double s = Ip / A;
+            Me(3, 3) = 140.0 * s; Me(3, 9) = 70.0 * s;
+            Me(9, 3) = 70.0 * s; Me(9, 9) = 140.0 * s;
+        }
+        return c * Me;
+    }
+
+    // 几何刚度矩阵（一致式），轴力 N（受拉为正），用于 P-Δ / 屈曲。
+    DenseMat geometricStiffness(double N) const {
+        const double L = length();
+        DenseMat Kg = DenseMat::Zero(12, 12);
+        const double a = N / L;
+
+        // v-θz（1,5,7,11）
+        Kg(1, 1) = Kg(7, 7) = 6.0 / 5.0 * a;
+        Kg(1, 5) = Kg(5, 1) = L / 10.0 * a;
+        Kg(1, 7) = Kg(7, 1) = -6.0 / 5.0 * a;
+        Kg(1, 11) = Kg(11, 1) = L / 10.0 * a;
+        Kg(5, 5) = Kg(11, 11) = 2.0 * L * L / 15.0 * a;
+        Kg(5, 7) = Kg(7, 5) = -L / 10.0 * a;
+        Kg(5, 11) = Kg(11, 5) = -L * L / 30.0 * a;
+        Kg(7, 11) = Kg(11, 7) = -L / 10.0 * a;
+
+        // w-θy（2,4,8,10）——与 v-θz 同构
+        Kg(2, 2) = Kg(8, 8) = 6.0 / 5.0 * a;
+        Kg(2, 4) = Kg(4, 2) = L / 10.0 * a;
+        Kg(2, 8) = Kg(8, 2) = -6.0 / 5.0 * a;
+        Kg(2, 10) = Kg(10, 2) = L / 10.0 * a;
+        Kg(4, 4) = Kg(10, 10) = 2.0 * L * L / 15.0 * a;
+        Kg(4, 8) = Kg(8, 4) = -L / 10.0 * a;
+        Kg(4, 10) = Kg(10, 4) = -L * L / 30.0 * a;
+        Kg(8, 10) = Kg(10, 8) = -L / 10.0 * a;
+
+        // 扭转 θx（3,9）——N·Ip/(A·L)
+        if (A > 0.0 && Ip > 0.0) {
+            const double t = N * Ip / (A * L);
+            Kg(3, 3) = Kg(9, 9) = t;
+            Kg(3, 9) = Kg(9, 3) = -t;
+        }
+        return Kg;
+    }
+};
+
 } // namespace fem
