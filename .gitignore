@@ -16,6 +16,7 @@ Makefile
 
 # ---- 生成的计算结果 / 图形 / 输出 ----
 *.result
+*.modal.txt
 *.svg
 *.csv
 *_stages.txt

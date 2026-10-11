@@ -67,6 +67,14 @@ CASES = [
      ["verify_3d_beam_live_live_envelope.csv"]),
     ("example_3d_influence_surface.exe", "verify_3d_influence_surface.dat", [],
      ["verify_3d_influence_surface_surface.csv"]),
+    ("example_mixed.exe", "verify_elastic_support.dat", [],
+     ["verify_elastic_support.result"]),
+    ("example_mixed.exe", "verify_prestress_loss.dat", [],
+     ["verify_prestress_loss.result"]),
+    ("example_modal.exe", "verify_modal.dat", [],
+     ["verify_modal.modal.txt"]),
+    ("example_3d_modal.exe", "verify_3d_modal.dat", [],
+     ["verify_3d_modal.modal.txt"]),
 ]
 
 
