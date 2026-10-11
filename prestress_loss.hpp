@@ -36,14 +36,16 @@ struct PrestressLossInput {
     //   后张分批张拉：σpc4 = ΣΔσpc；先张法：σpc4 = σpc
     double sigmaPc4 = 0.0;
 
-    // σl5 松弛（6.2.6-1，钢丝、钢绞线）：σl5 = Ψ·ζ·(0.52·σpe/fpk - 0.26)·σpe
-    //   σpe 传力锚固应力，后张法 σpe = σcon - σl1 - σl2 - σl4（程序内自动计算）。
-    double psi = 1.0;         // 张拉系数 Ψ：一次张拉 1.0，超张拉 0.9
-    double zeta = 0.3;        // 松弛系数 ζ：Ⅰ级普通松弛 1.0，Ⅱ级低松弛 0.3
+    // σl5 松弛（6.2.6）：钢丝、钢绞线用 6.2.6-1；预应力螺纹钢筋用 6.2.6-2/3。
+    //   钢丝、钢绞线：σl5 = Ψ·ζ·(0.52·σpe/fpk - 0.26)·σpe
+    //   预应力螺纹钢筋：一次张拉 σl5 = 0.05·σcon；超张拉 σl5 = 0.035·σcon
+    bool threadedBar = false; // true=预应力螺纹钢筋（6.2.6-2/3），false=钢丝/钢绞线（6.2.6-1）
+    double psi = 1.0;         // 张拉系数 Ψ：一次张拉 1.0，超张拉 0.9（螺纹钢筋据此取 0.05/0.035）
+    double zeta = 0.3;        // 松弛系数 ζ（仅钢丝/钢绞线）：Ⅰ级普通松弛 1.0，Ⅱ级低松弛 0.3
 
     // 张拉方式：true=后张法（默认），false=先张法。
     //   后张法 σpe = σcon - σl1 - σl2 - σl4；
-    //   先张法 σpe = σcon - σl1（摩擦，见 6.2.6 条文说明）。
+    //   先张法 σpe = σcon - σl2（无管道摩擦，扣锚具变形/回缩）。
     bool postTensioned = true;
 
     // σl6 收缩徐变（6.2.7-1）：
@@ -68,7 +70,7 @@ struct PrestressLossResult {
 inline PrestressLossResult computePrestressLosses(const PrestressLossInput& in) {
     if (in.tendonLength <= 0.0)
         throw std::runtime_error("预应力筋长度 l 必须 > 0");
-    if (in.fpk <= 0.0)
+    if (!in.threadedBar && in.fpk <= 0.0)
         throw std::runtime_error("σl5 需要预应力筋抗拉强度标准值 fpk > 0");
     const double alphaEp = (in.Ec > 0.0) ? in.Ep / in.Ec : 0.0;
 
@@ -78,11 +80,17 @@ inline PrestressLossResult computePrestressLosses(const PrestressLossInput& in) 
     r.sigmaL3 = 2.0 * (in.t2 - in.t1) * 1.0e6;   // °C -> Pa
     r.sigmaL4 = alphaEp * in.sigmaPc4;
 
-    // 传力锚固应力：后张法 σpe = σcon - σl1 - σl2 - σl4；先张法 σpe = σcon - σl1。
+    // 传力锚固应力：后张法 σpe = σcon - σl1 - σl2 - σl4；先张法 σpe = σcon - σl2。
     r.sigmaPe = in.postTensioned
         ? in.sigmaCon - r.sigmaL1 - r.sigmaL2 - r.sigmaL4
-        : in.sigmaCon - r.sigmaL1;
-    r.sigmaL5 = in.psi * in.zeta * (0.52 * r.sigmaPe / in.fpk - 0.26) * r.sigmaPe;
+        : in.sigmaCon - r.sigmaL2;
+    if (in.threadedBar) {
+        // 6.2.6-2 / 6.2.6-3：预应力螺纹钢筋
+        r.sigmaL5 = (in.psi < 1.0 ? 0.035 : 0.05) * in.sigmaCon;
+    } else {
+        // 6.2.6-1：预应力钢丝、钢绞线
+        r.sigmaL5 = in.psi * in.zeta * (0.52 * r.sigmaPe / in.fpk - 0.26) * r.sigmaPe;
+    }
     r.sigmaL6 = 0.9 * (in.Ep * in.epsCs + alphaEp * in.sigmaPc6 * in.phi)
               / (1.0 + 15.0 * in.rho * in.rhoPs);
     return r;

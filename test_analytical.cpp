@@ -1604,6 +1604,25 @@ void testPrestressLosses() {
     check("σl6 收缩徐变", r.sigmaL6, sL6, 1e-9);
     check("传力锚固应力 σpe", r.sigmaPe, sPe, 1e-9);
     check("有效预应力比 σpe/σcon", effectivePrestressRatio(in), sPe / in.sigmaCon, 1e-9);
+
+    // 先张法（6.2.6-1）：σpe = σcon - σl2（无管道摩擦，扣锚具变形/回缩）
+    PrestressLossInput pre = in;
+    pre.postTensioned = false;
+    const PrestressLossResult rPre = computePrestressLosses(pre);
+    const double sPePre = in.sigmaCon - sL2;
+    check("先张法 σpe = σcon-σl2", rPre.sigmaPe, sPePre, 1e-9);
+    check("先张法 σl5", rPre.sigmaL5,
+          in.psi * in.zeta * (0.52 * sPePre / in.fpk - 0.26) * sPePre, 1e-9);
+
+    // 预应力螺纹钢筋（6.2.6-2/6.2.6-3）
+    PrestressLossInput bar = in;
+    bar.threadedBar = true;
+    bar.psi = 1.0;   // 一次张拉
+    check("螺纹钢筋 σl5（一次张拉）", computePrestressLosses(bar).sigmaL5,
+          0.05 * in.sigmaCon, 1e-9);
+    bar.psi = 0.9;   // 超张拉
+    check("螺纹钢筋 σl5（超张拉）", computePrestressLosses(bar).sigmaL5,
+          0.035 * in.sigmaCon, 1e-9);
 }
 
 // ---- 规范荷载库 ----

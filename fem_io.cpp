@@ -1171,6 +1171,8 @@ Model2D readModel2D(const std::string& path) {
             g("RHOPS", li.rhoPs);
             auto it = p.find("POST");
             if (it != p.end()) li.postTensioned = (std::stod(it->second) != 0.0);
+            auto itRebar = p.find("REBAR");
+            if (itRebar != p.end()) li.threadedBar = (std::stod(itRebar->second) != 0.0);
             m.prestressLosses[id] = li;
         } else if (section == "*PRESTRESS") {
             int id = 0;
