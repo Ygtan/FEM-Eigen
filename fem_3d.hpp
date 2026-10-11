@@ -770,11 +770,15 @@ inline std::vector<double> computeBucklingFactors3D(const Model3D& m, int nModes
 
     const std::vector<int> free = freeDofs3D(m, dm, K);
     const int nf = static_cast<int>(free.size());
-    if (nf > 3000)
-        std::cerr << "[警告] 自由度数 " << nf
-                  << " 较大，屈曲分析当前为稠密特征求解，可能很慢或内存不足；建议改用稀疏子空间法\n";
     std::vector<double> out;
     if (nf == 0) return out;
+
+#ifdef FEM_HAS_SPECTRA
+    const std::vector<double> sp = solveSparseBuckling(K, Ksg, free, dm.nDofs, nModes);
+    if (!sp.empty()) return sp;
+    // 稀疏求解失败/未收敛时回退稠密
+#endif
+
     Eigen::MatrixXd Kd(nf, nf), Kgd(nf, nf);
     for (int a = 0; a < nf; ++a)
         for (int b = 0; b < nf; ++b) {

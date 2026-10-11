@@ -34,5 +34,14 @@ int main(int argc, char** argv) {
     const double f1 = modal.frequencies.empty() ? 0.0 : modal.frequencies[0];
     std::printf("nElem=%d dof=%d 模态耗时=%.1f ms 基频=%.6f Hz\n",
                 nElem, 6 * (nElem + 1), ms, f1);
+
+    // 屈曲：固定端 + 自由端轴压，计时一阶屈曲因子
+    m.loads.push_back({nElem + 1, 1, -1.0e6});
+    const auto b0 = std::chrono::steady_clock::now();
+    const std::vector<double> lam = computeBucklingFactors3D(m, 1);
+    const auto b1 = std::chrono::steady_clock::now();
+    const double bms = std::chrono::duration<double, std::milli>(b1 - b0).count();
+    std::printf("nElem=%d dof=%d 屈曲耗时=%.1f ms λ1=%.3f\n",
+                nElem, 6 * (nElem + 1), bms, lam.empty() ? 0.0 : lam[0]);
     return 0;
 }

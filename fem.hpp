@@ -255,6 +255,95 @@ inline SparseModalResult solveSparseModal(const SparseMat& K, const SparseMat& M
         return out;
     }
 }
+
+// 稀疏线性屈曲算子：A = L^{-1}·Kg·L^{-T}（K = L·L^T，Kg 为几何刚度）。
+// 屈曲特征值问题 (K + λ·Kg)·φ = 0 化为 A·ψ = μ·ψ，屈曲因子 λ = -1/μ（μ<0）。
+struct BucklingOp {
+    using Scalar = double;
+    using Index = Eigen::Index;
+    using Vector = Eigen::VectorXd;
+    using Matrix = Eigen::MatrixXd;
+
+    Eigen::SimplicialLLT<SparseMat> llt;
+    Eigen::PermutationMatrix<Eigen::Dynamic> P;   // P·K·Pᵀ = L·Lᵀ
+    const SparseMat& Kg;
+    Index n = 0;
+
+    BucklingOp(const SparseMat& K, const SparseMat& Kgeom) : Kg(Kgeom) {
+        n = K.rows();
+        llt.compute(K);
+        if (llt.info() == Eigen::Success) P = llt.permutationP();
+    }
+    Index rows() const { return n; }
+    Index cols() const { return n; }
+    void perform_op(const Scalar* x, Scalar* y) const {
+        Eigen::Map<const Vector> xv(x, n);
+        Eigen::Map<Vector> yv(y, n);
+        // A = L_d^{-1}·Kg·L_d^{-T}，其中 L_d = Pᵀ·L 为未置换 Cholesky 因子：
+        //   A·x = L^{-1}·(P·Kg·Pᵀ)·L^{-T}·x
+        const Vector z = llt.matrixU().solve(xv);   // Lᵀ z = x  → z = L^{-T} x
+        const Vector zp = P.transpose() * z;        // Pᵀ z
+        yv = llt.matrixL().solve(P * (Kg * zp));    // L y = P·Kg·Pᵀ·z
+    }
+    Matrix operator*(const Eigen::Ref<const Matrix>& X) const {
+        Matrix Y(n, X.cols());
+        for (Index j = 0; j < X.cols(); ++j) {
+            const Vector z = llt.matrixU().solve(X.col(j));
+            const Vector zp = P.transpose() * z;
+            Y.col(j) = llt.matrixL().solve(P * (Kg * zp));
+        }
+        return Y;
+    }
+};
+
+inline std::vector<double> solveSparseBuckling(const SparseMat& K, const SparseMat& Kg,
+                                               const std::vector<int>& free, int nDofs, int nev) {
+    std::vector<double> out;
+    const int nf = static_cast<int>(free.size());
+    if (nf == 0 || nev <= 0) return out;
+
+    std::vector<int> pos(nDofs, -1);
+    for (int i = 0; i < nf; ++i) pos[free[i]] = i;
+
+    auto sub = [&](const SparseMat& S) {
+        std::vector<Eigen::Triplet<double>> trips;
+        for (int k = 0; k < S.outerSize(); ++k)
+            for (SparseMat::InnerIterator it(S, k); it; ++it) {
+                const int r = pos[it.row()], c = pos[it.col()];
+                if (r >= 0 && c >= 0) trips.emplace_back(r, c, it.value());
+            }
+        SparseMat Sd(nf, nf);
+        Sd.setFromTriplets(trips.begin(), trips.end());
+        Sd.makeCompressed();
+        return Sd;
+    };
+    const SparseMat Kd = sub(K);
+    const SparseMat Kgd = sub(Kg);
+
+    try {
+        BucklingOp op(Kd, Kgd);
+        if (op.llt.info() != Eigen::Success) return out;
+        const int want = std::min(2 * nev, nf - 1);   // 多要一些，过滤 μ>0 后仍够
+        if (want < 1) return out;
+        const int ncv = std::min(std::max(2 * want, 8), nf);
+        if (ncv <= want) return out;
+        Spectra::SymEigsSolver<BucklingOp> eigs(op, want, ncv);
+        eigs.init();
+        // LargestMagn 收敛到最大 |μ|（受压屈曲即最负 μ）；SmallestAlge 让最负的排最前。
+        eigs.compute(Spectra::SortRule::LargestMagn, 5000, 1e-8,
+                     Spectra::SortRule::SmallestAlge);
+        if (eigs.info() != Spectra::CompInfo::Successful) return out;
+        const Eigen::VectorXd mu = eigs.eigenvalues();
+        for (int i = 0; i < mu.size() && static_cast<int>(out.size()) < nev; ++i) {
+            const double m = mu[i];
+            if (m < -1e-14 && std::isfinite(m)) out.push_back(-1.0 / m);
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "[Spectra] 屈曲特征求解异常（" << e.what() << "），回退稠密\n";
+        return out;
+    }
+    return out;
+}
 #endif
 
 // 可切换的求解后端。
