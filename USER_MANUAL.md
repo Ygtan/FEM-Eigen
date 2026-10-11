@@ -210,6 +210,7 @@ NODES=1,2,3 DOF=2 CODE=JTG_D60
 
 - 二维：`example_modal.exe model.dat`（`computeNaturalFrequencies2D`、`computeBucklingFactors2D`、`impactCoefficientFromFrequency`）。
 - 三维：`example_3d_modal.exe model.dat`（`computeNaturalFrequencies3D`、`computeBucklingFactors3D`）。质量矩阵需在 `*MP` 给 `DENS`（或 `*R` 给 `ADDMASS`）。
+- 自振频率默认走稀疏 shift-invert 特征求解（引入 `external/spectra/` 头文件库），大模型从稠密的 O(n³) 降为近似 O(n·k)，几千自由度可秒级完成；若稀疏求解未收敛或分解失败会自动回退稠密求解，结果一致。屈曲目前仍为稠密特征求解。
 
 ### 9.6 规范荷载库
 

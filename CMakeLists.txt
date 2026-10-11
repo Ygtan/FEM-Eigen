@@ -207,6 +207,7 @@ fem_add_executable(example_viz example_viz.cpp)
 fem_add_executable(example_modal example_modal.cpp)
 fem_add_executable(example_3d_modal example_3d_modal.cpp)
 fem_add_executable(example_3d_report example_3d_report.cpp)
+fem_add_executable(modal_bench bench/modal_bench.cpp)
 
 # ---- 核心静态库（fem_io.cpp + 头文件）----
 # 将 fem_io.hpp 中的实现提取到 fem_io.cpp，减少编译时间并实现二进制隔离。

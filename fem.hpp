@@ -224,24 +224,36 @@ inline SparseModalResult solveSparseModal(const SparseMat& K, const SparseMat& M
 
     using OpType = Spectra::SymShiftInvert<double, Eigen::Sparse, Eigen::Sparse>;
     using BOpType = Spectra::SparseSymMatProd<double>;
-    OpType op(Kd, Md);
-    BOpType Bop(Md);
-    Spectra::SymGEigsShiftSolver<OpType, BOpType, Spectra::GEigsMode::ShiftInvert>
-        geigs(op, Bop, want, ncv, 0.0);
-    geigs.init();
-    geigs.compute(Spectra::SortRule::SmallestMagn);
-    if (geigs.info() != Spectra::CompInfo::Successful) return out;
+    try {
+        OpType op(Kd, Md);
+        BOpType Bop(Md);
+        Spectra::SymGEigsShiftSolver<OpType, BOpType, Spectra::GEigsMode::ShiftInvert>
+            geigs(op, Bop, want, ncv, 0.0);
+        geigs.init();
+        // σ=0 的 shift-invert 将 Kφ=λMφ 化为 (K⁻¹M)φ=(1/λ)φ：
+        // 最小 λ 对应最大 |ν|，故 selection 用 LargestMagn；最后按 λ 升序输出。
+        geigs.compute(Spectra::SortRule::LargestMagn, 5000, 1e-8,
+                      Spectra::SortRule::SmallestAlge);
+        if (geigs.info() != Spectra::CompInfo::Successful) {
+            std::cerr << "[Spectra] 模态特征求解未收敛（nf=" << nf
+                      << "，迭代=" << geigs.num_iterations() << "），回退稠密\n";
+            return out;
+        }
 
-    const Eigen::VectorXd evals = geigs.eigenvalues();
-    const Eigen::MatrixXd evecs = geigs.eigenvectors();
-    const int nconv = std::min(want, static_cast<int>(evals.size()));
-    for (int i = 0; i < nconv; ++i) {
-        out.eigenvalues.push_back(evals[i]);
-        std::vector<double> mode(nDofs, 0.0);
-        for (int a = 0; a < nf; ++a) mode[free[a]] = evecs(a, i);
-        out.modes.push_back(std::move(mode));
+        const Eigen::VectorXd evals = geigs.eigenvalues();
+        const Eigen::MatrixXd evecs = geigs.eigenvectors();
+        const int nout = std::min(want, static_cast<int>(evals.size()));
+        for (int i = 0; i < nout; ++i) {
+            out.eigenvalues.push_back(evals[i]);
+            std::vector<double> mode(nDofs, 0.0);
+            for (int a = 0; a < nf; ++a) mode[free[a]] = evecs(a, i);
+            out.modes.push_back(std::move(mode));
+        }
+        return out;
+    } catch (const std::exception& e) {
+        std::cerr << "[Spectra] 模态特征求解异常（" << e.what() << "），回退稠密\n";
+        return out;
     }
-    return out;
 }
 #endif
 
