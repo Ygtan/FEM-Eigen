@@ -1563,36 +1563,46 @@ void testElasticSupport() {
 
 // ---- 预应力损失分项 ----
 void testPrestressLosses() {
-    std::printf("\n[预应力损失分项] JTG D62 简化式\n");
+    std::printf("\n[预应力损失分项] JTG 3362-2018 第 6.2 条\n");
     PrestressLossInput in;
-    in.sigmaCon = 1395.0e6;
+    in.sigmaCon = 1395.0e6;     // 0.75 fpk
     in.Ep = 1.95e11;
     in.Ec = 3.45e10;
-    in.anchorageSlip = 0.006;
-    in.tendonLength = 30.0;
-    in.mu = 0.25;
+    in.fpk = 1860.0e6;
+    in.mu = 0.25;               // 预埋金属波纹管
     in.kappa = 0.0015;
     in.theta = 0.2;
     in.x = 15.0;
-    in.sigmaPc = 8.0e6;
-    in.creepPhi = 2.0;
+    in.sumDeltaL = 0.006;       // 夹片式锚具无顶压 6 mm
+    in.tendonLength = 30.0;
+    in.t1 = 20.0;               // 张拉时场地温度
+    in.t2 = 15.0;               // 养护时钢筋最高温度
+    in.sigmaPc4 = 8.0e6;        // 后张分批 ΣΔσpc（示意值）
+    in.psi = 1.0;               // 一次张拉
+    in.zeta = 0.3;              // Ⅱ级低松弛
+    in.sigmaPc6 = 8.0e6;        // 传力锚固时混凝土法向压应力（示意值）
     in.epsCs = 2.0e-4;
-    in.relaxation = 0.025;
+    in.phi = 2.0;
+    in.rho = 0.005;             // ρ = (Ap+As)/A
+    in.rhoPs = 1.0;
     const PrestressLossResult r = computePrestressLosses(in);
 
     const double alphaEp = in.Ep / in.Ec;
-    const double sL1 = in.anchorageSlip / in.tendonLength * in.Ep;
-    const double sL2 = in.sigmaCon * (1.0 - std::exp(-(in.mu * in.theta + in.kappa * in.x)));
-    const double sL4 = alphaEp * in.sigmaPc;
-    const double sL5 = in.relaxation * in.sigmaCon;
-    const double sL6 = alphaEp * in.sigmaPc * in.creepPhi + in.Ep * in.epsCs;
-    check("σl1 锚具回缩", r.sigmaL1, sL1, 1e-9);
-    check("σl2 摩擦", r.sigmaL2, sL2, 1e-9);
+    const double sL1 = in.sigmaCon * (1.0 - std::exp(-(in.mu * in.theta + in.kappa * in.x)));
+    const double sL2 = in.sumDeltaL / in.tendonLength * in.Ep;
+    const double sL3 = 2.0 * (in.t1 - in.t2) * 1.0e6;
+    const double sL4 = alphaEp * in.sigmaPc4;
+    const double sPe = in.sigmaCon - sL1 - sL2 - sL4;
+    const double sL5 = in.psi * in.zeta * (0.52 * sPe / in.fpk - 0.26) * sPe;
+    const double sL6 = 0.9 * (in.Ep * in.epsCs + alphaEp * in.sigmaPc6 * in.phi)
+                     / (1.0 + 15.0 * in.rho * in.rhoPs);
+    check("σl1 摩擦", r.sigmaL1, sL1, 1e-9);
+    check("σl2 锚具变形回缩", r.sigmaL2, sL2, 1e-9);
+    check("σl3 温差", r.sigmaL3, sL3, 1e-9);
     check("σl4 弹性压缩", r.sigmaL4, sL4, 1e-9);
     check("σl5 松弛", r.sigmaL5, sL5, 1e-9);
     check("σl6 收缩徐变", r.sigmaL6, sL6, 1e-9);
-    check("有效预应力 σpe", r.sigmaPe,
-          in.sigmaCon - sL1 - sL2 - sL4 - sL5 - sL6, 1e-9);
+    check("传力锚固应力 σpe", r.sigmaPe, sPe, 1e-9);
 }
 
 // ---- 规范荷载库 ----

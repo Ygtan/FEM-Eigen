@@ -11,7 +11,7 @@
 ├── fem_io.hpp/.cpp    # 二维装配/求解/内力、输入解析、施工阶段、模态/屈曲（二维）
 ├── section.hpp        # 纤维截面：Fiber/Section、组合截面、变截面、材料非线性
 ├── code_loads.hpp     # JTG D60 规范荷载库
-├── prestress_loss.hpp # 预应力损失分项（JTG D62 简化式）
+├── prestress_loss.hpp # 预应力损失分项（JTG 3362-2018）
 ├── example_*.cpp      # 可执行示例（每个对应一种分析能力）
 ├── test_analytical.cpp# 解析解断言测试（147 项）
 ├── tests/regression/  # 逐字节回归（31 个黄金基线 + 比对脚本）
