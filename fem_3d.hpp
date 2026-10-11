@@ -696,8 +696,13 @@ inline ModalResult3D computeNaturalFrequencies3D(const Model3D& m, int nModes = 
     DofMap3D dm;
     const SparseMat3D K = assembleStiffness3D(m, dm);
     const SparseMat3D M = assembleMassMatrix3D(m, dm);
+    if (M.nonZeros() == 0)
+        throw std::runtime_error("模态分析：全部单元质量为零，请在 *MP 给 DENS（或 *R 给 ADDMASS）");
     const std::vector<int> free = freeDofs3D(m, dm, K, &M);
     const int nf = static_cast<int>(free.size());
+    if (nf > 3000)
+        std::cerr << "[警告] 自由度数 " << nf
+                  << " 较大，模态分析当前为稠密特征求解，可能很慢或内存不足；建议改用稀疏子空间法\n";
     ModalResult3D out;
     if (nf == 0) return out;
 
@@ -755,6 +760,9 @@ inline std::vector<double> computeBucklingFactors3D(const Model3D& m, int nModes
 
     const std::vector<int> free = freeDofs3D(m, dm, K);
     const int nf = static_cast<int>(free.size());
+    if (nf > 3000)
+        std::cerr << "[警告] 自由度数 " << nf
+                  << " 较大，屈曲分析当前为稠密特征求解，可能很慢或内存不足；建议改用稀疏子空间法\n";
     std::vector<double> out;
     if (nf == 0) return out;
     Eigen::MatrixXd Kd(nf, nf), Kgd(nf, nf);
@@ -1462,6 +1470,8 @@ inline Model3D readModel3D(const std::string& path) {
             while (ss >> kv) {
                 if (kv.rfind("E=",0)==0) E=std::stod(kv.substr(2));
                 else if (kv.rfind("DENS=",0)==0) dens=std::stod(kv.substr(5));
+                else if (kv.rfind("DENSITY=",0)==0) dens=std::stod(kv.substr(8));   // DENSITY 为 DENS 别名
+                else std::cerr << "[警告] *MP 未知关键字: " << kv << "\n";
             }
             mats[id]=E; mpDens[id]=dens;
         } else if (section == "*R") {
@@ -1481,6 +1491,7 @@ inline Model3D readModel3D(const std::string& path) {
                 else if (kv.rfind("WY=",0)==0) realWy[id]=std::stod(kv.substr(3));
                 else if (kv.rfind("WTORS=",0)==0) realWt[id]=std::stod(kv.substr(7));
                 else if (kv.rfind("IW=",0)==0) realIw[id]=std::stod(kv.substr(3));
+                else std::cerr << "[警告] *R 未知关键字: " << kv << "\n";
             }
             areas[id]=A;
             realIy[id]=Iy; realIz[id]=Iz; realJ[id]=J; realG[id]=G;

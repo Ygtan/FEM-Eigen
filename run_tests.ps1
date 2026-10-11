@@ -24,7 +24,21 @@ $tests = @(
   # 这条路径原先硬编码 SimplicialLDLT，改动后必须回归
   @{ exe="example_influence.exe"; args=@((Join-Path $root "verify_influence.dat")) },
   # 三维梁包络：曾因阶段 U 与全模型自由度编号错配而越界 abort
-  @{ exe="example_3d_beam_envelope.exe"; args=@((Join-Path $root "verify_3d_beam_stage.dat")) }
+  @{ exe="example_3d_beam_envelope.exe"; args=@((Join-Path $root "verify_3d_beam_stage.dat")) },
+  # ---- 补充覆盖（复审 P1-3）：之前漏测的目标 ----
+  @{ exe="example_modal.exe"; args=@((Join-Path $root "verify_modal.dat")) },
+  @{ exe="example_3d_modal.exe"; args=@((Join-Path $root "verify_3d_modal.dat")) },
+  @{ exe="example_3d_beam_live.exe"; args=@((Join-Path $root "verify_3d_beam_live.dat")) },
+  @{ exe="example_3d_stage_live.exe"; args=@((Join-Path $root "verify_3d_stage_live.dat")) },
+  @{ exe="example_3d_stage_envelope.exe"; args=@((Join-Path $root "verify_3d_stage.dat")) },
+  @{ exe="example_3d_beam_stage.exe"; args=@((Join-Path $root "verify_3d_beam_stage.dat")) },
+  @{ exe="example_stage_envelope.exe"; args=@((Join-Path $root "verify_stage.dat")) },
+  @{ exe="example_viz.exe"; args=@((Join-Path $root "mixed_truss_beam.dat")) },
+  @{ exe="example_stage_viz.exe"; args=@((Join-Path $root "verify_stage.dat")) },
+  @{ exe="example_solvers.exe"; args=@() },
+  @{ exe="example_cholmod.exe"; args=@() },
+  @{ exe="example_amgcl.exe"; args=@() },
+  @{ exe="fem_solver.exe"; args=@() }
 )
 
 $failed = 0

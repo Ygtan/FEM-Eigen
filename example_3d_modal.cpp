@@ -10,7 +10,7 @@ using namespace fem;
 int main(int argc, char** argv) {
     setupConsoleUTF8();
     try {
-        std::string path = "bridge_3d_grillage.dat";
+        std::string path = "verify_3d_modal.dat";
         if (argc > 1) path = argv[1];
         const Model3D model = readModel3D(path);
 
@@ -19,6 +19,10 @@ int main(int argc, char** argv) {
         for (std::size_t i = 0; i < modal.frequencies.size(); ++i)
             std::cout << "f" << (i + 1) << " = " << std::setprecision(6)
                       << modal.frequencies[i] << " Hz\n";
+        if (modal.frequencies.empty()) {
+            std::cerr << "[提示] 未求得自振频率（可能无自由自由度或质量为零）\n";
+            return 1;
+        }
         if (!modal.frequencies.empty()) {
             const double mu = impactCoefficientFromFrequency(modal.frequencies[0]);
             std::cout << "基频 f1 = " << modal.frequencies[0]

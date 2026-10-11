@@ -1015,8 +1015,12 @@ Model2D readModel2D(const std::string& path) {
             Model2D::Material mat;
             auto it = p.find("E"); if (it != p.end()) mat.E = std::stod(it->second);
             it = p.find("ALPX"); if (it != p.end()) mat.alpha = std::stod(it->second);
-            it = p.find("DENS"); if (it != p.end()) mat.dens = std::stod(it->second);
+            it = p.find("DENS"); if (it == p.end()) it = p.find("DENSITY");   // DENSITY 为 DENS 别名
+            if (it != p.end()) mat.dens = std::stod(it->second);
             it = p.find("NU"); if (it != p.end()) mat.nu = std::stod(it->second);
+            for (const auto& [k, v] : p)
+                if (k != "E" && k != "ALPX" && k != "DENS" && k != "DENSITY" && k != "NU")
+                    std::cerr << "[警告] *MP 未知关键字: " << k << "=" << v << "\n";
             m.materials[id] = mat;
         } else if (section == "*R") {
             int id = 0;
@@ -1034,6 +1038,10 @@ Model2D readModel2D(const std::string& path) {
             it = p.find("ADDMASS"); if (it != p.end()) rc.addmass = std::stod(it->second);
             it = p.find("ISTRN"); if (it != p.end()) rc.istrn = std::stod(it->second);
             it = p.find("K"); if (it != p.end()) rc.K = std::stod(it->second);
+            for (const auto& [k, v] : p)
+                if (k != "A" && k != "I" && k != "WT" && k != "WB" && k != "H" &&
+                    k != "ADDMASS" && k != "ISTRN" && k != "K")
+                    std::cerr << "[警告] *R 未知关键字: " << k << "=" << v << "\n";
             m.realConsts[id] = rc;
         } else if (section == "*BOUNDARY") {
             std::string ns, ds, vs;
@@ -2233,6 +2241,8 @@ ModalResult2D computeNaturalFrequencies2D(const Model2D& m, int nModes) {
     DenseVec F;
     assembleLinear2D(m, active, index, nDofs, K, F);
     const SparseMat M = assembleMassMatrix2D(m);
+    if (M.nonZeros() == 0)
+        throw std::runtime_error("模态分析：全部单元质量为零，请在 *MP 给 DENS（或 *R 给 ADDMASS）");
 
     // 约束自由度 + 自动约束零刚度转角
     std::vector<int> cdofs;
@@ -2252,6 +2262,9 @@ ModalResult2D computeNaturalFrequencies2D(const Model2D& m, int nModes) {
     std::vector<int> free;
     for (int d = 0; d < nDofs; ++d) if (!isC[d]) free.push_back(d);
     const int nf = static_cast<int>(free.size());
+    if (nf > 3000)
+        std::cerr << "[警告] 自由度数 " << nf
+                  << " 较大，模态分析当前为稠密特征求解，可能很慢或内存不足；建议改用稀疏子空间法\n";
 
     Eigen::MatrixXd Kd(nf, nf), Md(nf, nf);
     for (int a = 0; a < nf; ++a)
@@ -2331,6 +2344,9 @@ std::vector<double> computeBucklingFactors2D(const Model2D& m, int nModes) {
     std::vector<int> free;
     for (int d = 0; d < nDofs; ++d) if (!isC[d]) free.push_back(d);
     const int nf = static_cast<int>(free.size());
+    if (nf > 3000)
+        std::cerr << "[警告] 自由度数 " << nf
+                  << " 较大，屈曲分析当前为稠密特征求解，可能很慢或内存不足；建议改用稀疏子空间法\n";
 
     std::vector<double> out;
     if (nf == 0) return out;
