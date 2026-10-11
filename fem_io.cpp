@@ -513,7 +513,15 @@ void processPrestress(Model2D& m) {
     for (const auto& ps : m.prestresses) {
         if (ps.elems.empty())
             throw std::runtime_error("*PRESTRESS 的 ELEM 列表为空");
-        const double Pe = ps.P * ps.loss;
+        double loss = ps.loss;
+        if (ps.lossRef > 0) {
+            const auto lit = m.prestressLosses.find(ps.lossRef);
+            if (lit == m.prestressLosses.end())
+                throw std::runtime_error("*PRESTRESS LOSSREF 引用了不存在的 *PRESTRESS_LOSS: "
+                                         + std::to_string(ps.lossRef));
+            loss = effectivePrestressRatio(lit->second);
+        }
+        const double Pe = ps.P * loss;
 
         // 按输入顺序建立梁节点链。
         std::vector<int> beamNodes;
@@ -878,7 +886,7 @@ Model2D readModel2D(const std::string& path) {
                 continue;
             }
 
-            if (kw == "*PRESTRESS") {
+            if (kw == "*PRESTRESS" || kw == "*PRESTRESS_LOSS") {
                 section = kw;
                 continue;
             }
@@ -1129,6 +1137,41 @@ Model2D readModel2D(const std::string& path) {
                 throw std::runtime_error("ELEMENT_TEMPERATURE 行格式错误: " + t);
             for (int elem : detail::parseRange(es))
                 m.elemTemps.push_back({elem, detail::toUpper(kind), dT});
+        } else if (section == "*PRESTRESS_LOSS") {
+            int id = 0;
+            if (!(ss >> id))
+                throw std::runtime_error("PRESTRESS_LOSS 行格式错误: " + t);
+            std::string rest2;
+            std::getline(ss, rest2);
+            auto p = detail::parseKeyValues(rest2);
+            PrestressLossInput li;
+            auto g = [&](const char* key, double& dst) {
+                auto it = p.find(key);
+                if (it != p.end()) dst = std::stod(it->second);
+            };
+            g("SIGMA_CON", li.sigmaCon);
+            g("EP", li.Ep);
+            g("EC", li.Ec);
+            g("FPK", li.fpk);
+            g("MU", li.mu);
+            g("K", li.kappa);
+            g("THETA", li.theta);
+            g("X", li.x);
+            g("DELTA_L", li.sumDeltaL);
+            g("L", li.tendonLength);
+            g("T1", li.t1);
+            g("T2", li.t2);
+            g("SIGMA_PC4", li.sigmaPc4);
+            g("SIGMA_PC6", li.sigmaPc6);
+            g("PSI", li.psi);
+            g("ZETA", li.zeta);
+            g("ECS", li.epsCs);
+            g("PHI", li.phi);
+            g("RHO", li.rho);
+            g("RHOPS", li.rhoPs);
+            auto it = p.find("POST");
+            if (it != p.end()) li.postTensioned = (std::stod(it->second) != 0.0);
+            m.prestressLosses[id] = li;
         } else if (section == "*PRESTRESS") {
             int id = 0;
             if (!(ss >> id))
@@ -1147,15 +1190,18 @@ Model2D readModel2D(const std::string& path) {
             it = p.find("F"); if (it != p.end()) ps.F = std::stod(it->second);
             it = p.find("E1"); if (it != p.end()) ps.E1 = std::stod(it->second);
             it = p.find("E2"); if (it != p.end()) ps.E2 = std::stod(it->second);
-            it = p.find("LOSS");
-            if (it == p.end()) throw std::runtime_error("*PRESTRESS / *STAGE_PRESTRESS 缺少 LOSS（损失系数，必须显式指定）");
-            ps.loss = std::stod(it->second);
+            const bool hasLoss = (p.find("LOSS") != p.end());
+            const bool hasLossRef = (p.find("LOSSREF") != p.end());
+            if (hasLoss == hasLossRef)
+                throw std::runtime_error("*PRESTRESS 必须且只能指定 LOSS 或 LOSSREF 之一");
+            if (hasLoss) ps.loss = std::stod(p.find("LOSS")->second);
+            if (hasLossRef) ps.lossRef = std::stoi(p.find("LOSSREF")->second);
             it = p.find("EPS"); if (it != p.end()) ps.Ep = std::stod(it->second);
             it = p.find("AP"); if (it != p.end()) ps.Ap = std::stod(it->second);
             it = p.find("APS"); if (it != p.end()) ps.Ap = std::stod(it->second);
             it = p.find("METHOD"); if (it != p.end()) ps.method = detail::toUpper(it->second);
-            if (ps.P <= 0.0 || ps.loss <= 0.0 || ps.Ep <= 0.0)
-                throw std::runtime_error("*PRESTRESS 的 P/LOSS/EPS 必须大于 0");
+            if (ps.P <= 0.0 || ps.Ep <= 0.0)
+                throw std::runtime_error("*PRESTRESS 的 P/EPS 必须大于 0");
             if (ps.method != "AUTO" && ps.method != "EQUIV" && ps.method != "TENDON")
                 throw std::runtime_error("*PRESTRESS 未知 METHOD: " + ps.method);
             m.prestresses.push_back(ps);

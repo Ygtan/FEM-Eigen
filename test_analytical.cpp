@@ -1603,6 +1603,7 @@ void testPrestressLosses() {
     check("σl5 松弛", r.sigmaL5, sL5, 1e-9);
     check("σl6 收缩徐变", r.sigmaL6, sL6, 1e-9);
     check("传力锚固应力 σpe", r.sigmaPe, sPe, 1e-9);
+    check("有效预应力比 σpe/σcon", effectivePrestressRatio(in), sPe / in.sigmaCon, 1e-9);
 }
 
 // ---- 规范荷载库 ----
