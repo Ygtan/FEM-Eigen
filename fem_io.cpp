@@ -2311,21 +2311,33 @@ ModalResult2D computeNaturalFrequencies2D(const Model2D& m, int nModes) {
     std::vector<int> free;
     for (int d = 0; d < nDofs; ++d) if (!isC[d]) free.push_back(d);
     const int nf = static_cast<int>(free.size());
-    if (nf > 3000)
-        std::cerr << "[警告] 自由度数 " << nf
-                  << " 较大，模态分析当前为稠密特征求解，可能很慢或内存不足；建议改用稀疏子空间法\n";
 
+    ModalResult2D out;
+    if (nf == 0) return out;
+    const int n = std::min(nModes, nf);
+
+#ifdef FEM_HAS_SPECTRA
+    const SparseModalResult sm = solveSparseModal(K, M, free, nDofs, n);
+    if (!sm.eigenvalues.empty()) {
+        for (int i = 0; i < static_cast<int>(sm.eigenvalues.size()); ++i) {
+            const double lam = sm.eigenvalues[i];
+            const double f = (lam > 0.0) ? std::sqrt(lam) / (2.0 * kPi) : 0.0;
+            out.frequencies.push_back(f);
+            DenseVec mode = DenseVec::Zero(nDofs);
+            for (int a = 0; a < nf; ++a) mode(free[a]) = sm.modes[i][free[a]];
+            out.modes.push_back(mode);
+        }
+        return out;
+    }
+    // 回退稠密
+#endif
     Eigen::MatrixXd Kd(nf, nf), Md(nf, nf);
     for (int a = 0; a < nf; ++a)
         for (int b = 0; b < nf; ++b) {
             Kd(a, b) = K.coeff(free[a], free[b]);
             Md(a, b) = M.coeff(free[a], free[b]);
         }
-
-    ModalResult2D out;
-    if (nf == 0) return out;
     Eigen::GeneralizedSelfAdjointEigenSolver<Eigen::MatrixXd> ges(Kd, Md);
-    const int n = std::min(nModes, nf);
     for (int i = 0; i < n; ++i) {
         const double lam = ges.eigenvalues()(i);
         const double f = (lam > 0.0) ? std::sqrt(lam) / (2.0 * kPi) : 0.0;

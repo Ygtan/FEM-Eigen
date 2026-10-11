@@ -38,6 +38,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/amgcl/amgcl/amg.hpp")
     message(STATUS "使用项目内自带的 AMGCL 头文件")
 endif()
 
+# ---- Spectra（可选的稀疏特征值库，头文件已自带）----
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/spectra/Spectra/SymEigsSolver.h")
+    set(FEM_SPECTRA_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/spectra")
+    message(STATUS "使用项目内自带的 Spectra 头文件")
+endif()
+
 # ---- SuiteSparse CHOLMOD（可选，通过 MSYS2 pacman / vcpkg / apt 安装）----
 # 优先尝试 CMake CONFIG 模式（ SuiteSparse 5.4+ / vcpkg 提供），
 # 失败则回退到手动 find_path + find_library（支持 MSYS2 / MinGW 等）。
@@ -209,6 +215,7 @@ add_library(FEM_Solver::fem_core ALIAS fem_core)
 target_include_directories(fem_core PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
     $<INSTALL_INTERFACE:include/FEM_Solver>
+    $<BUILD_INTERFACE:${FEM_SPECTRA_INCLUDE_DIR}>
 )
 if(TARGET Eigen3::Eigen)
     target_link_libraries(fem_core PUBLIC Eigen3::Eigen)

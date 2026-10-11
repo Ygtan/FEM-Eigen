@@ -51,6 +51,20 @@
 #include <cholmod.h>
 #endif
 
+// ---- 可选的高性能稀疏特征值库 Spectra（Lanczos/Arnoldi）----
+#if defined(__has_include)
+#if __has_include(<Spectra/SymGEigsShiftSolver.h>) && __has_include(<Spectra/MatOp/SymShiftInvert.h>)
+#define FEM_HAS_SPECTRA 1
+#endif
+#endif
+
+#ifdef FEM_HAS_SPECTRA
+#include <Spectra/SymEigsSolver.h>
+#include <Spectra/SymGEigsShiftSolver.h>
+#include <Spectra/MatOp/SymShiftInvert.h>
+#include <Spectra/MatOp/SparseSymMatProd.h>
+#endif
+
 // 轻量有限元框架：支持一维杆、二维/三维桁架、二维平面应力三角形、
 // 三维四面体，以及每节点多自由度组装与 Dirichlet 边界条件。
 namespace fem {
@@ -169,6 +183,67 @@ struct DofMap {
                    : -1;
     }
 };
+
+#ifdef FEM_HAS_SPECTRA
+// 稀疏广义特征值 K φ = λ M φ：求前 nev 个最小特征值（M 正定、K 对称正定）。
+// free 为自由自由度（已去掉约束/零刚度/零质量），nDofs 为总自由度数。
+// 返回 eigenvalues（λ，升序）与 modes（全局位移向量，nDofs 维）。
+struct SparseModalResult {
+    std::vector<double> eigenvalues;
+    std::vector<std::vector<double>> modes;
+};
+
+inline SparseModalResult solveSparseModal(const SparseMat& K, const SparseMat& M,
+                                          const std::vector<int>& free,
+                                          int nDofs, int nev) {
+    SparseModalResult out;
+    const int nf = static_cast<int>(free.size());
+    if (nf == 0 || nev <= 0) return out;
+
+    std::vector<int> pos(nDofs, -1);
+    for (int i = 0; i < nf; ++i) pos[free[i]] = i;
+
+    auto sub = [&](const SparseMat& S) {
+        std::vector<Eigen::Triplet<double>> trips;
+        for (int k = 0; k < S.outerSize(); ++k)
+            for (SparseMat::InnerIterator it(S, k); it; ++it) {
+                const int r = pos[it.row()], c = pos[it.col()];
+                if (r >= 0 && c >= 0) trips.emplace_back(r, c, it.value());
+            }
+        SparseMat Sd(nf, nf);
+        Sd.setFromTriplets(trips.begin(), trips.end());
+        Sd.makeCompressed();
+        return Sd;
+    };
+    const SparseMat Kd = sub(K);
+    const SparseMat Md = sub(M);
+
+    const int want = std::min(nev, nf);
+    const int ncv = std::min(std::max(2 * want, 8), nf);
+    if (ncv <= want) return out;   // 自由度太少，调用方回退稠密
+
+    using OpType = Spectra::SymShiftInvert<double, Eigen::Sparse, Eigen::Sparse>;
+    using BOpType = Spectra::SparseSymMatProd<double>;
+    OpType op(Kd, Md);
+    BOpType Bop(Md);
+    Spectra::SymGEigsShiftSolver<OpType, BOpType, Spectra::GEigsMode::ShiftInvert>
+        geigs(op, Bop, want, ncv, 0.0);
+    geigs.init();
+    geigs.compute(Spectra::SortRule::SmallestMagn);
+    if (geigs.info() != Spectra::CompInfo::Successful) return out;
+
+    const Eigen::VectorXd evals = geigs.eigenvalues();
+    const Eigen::MatrixXd evecs = geigs.eigenvectors();
+    const int nconv = std::min(want, static_cast<int>(evals.size()));
+    for (int i = 0; i < nconv; ++i) {
+        out.eigenvalues.push_back(evals[i]);
+        std::vector<double> mode(nDofs, 0.0);
+        for (int a = 0; a < nf; ++a) mode[free[a]] = evecs(a, i);
+        out.modes.push_back(std::move(mode));
+    }
+    return out;
+}
+#endif
 
 // 可切换的求解后端。
 enum class SolverType {
