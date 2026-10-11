@@ -75,6 +75,10 @@ CASES = [
      ["verify_modal.modal.txt"]),
     ("example_3d_modal.exe", "verify_3d_modal.dat", [],
      ["verify_3d_modal.modal.txt"]),
+    ("example_3d_report.exe", "verify_3d_beam7.dat", [],
+     ["verify_3d_beam7.report.txt"]),
+    ("example_3d_report.exe", "verify_3d_variable_section.dat", [],
+     ["verify_3d_variable_section.report.txt"]),
 ]
 
 
