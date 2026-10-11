@@ -1575,8 +1575,8 @@ void testPrestressLosses() {
     in.x = 15.0;
     in.sumDeltaL = 0.006;       // 夹片式锚具无顶压 6 mm
     in.tendonLength = 30.0;
-    in.t1 = 20.0;               // 张拉时场地温度
-    in.t2 = 15.0;               // 养护时钢筋最高温度
+    in.t1 = 15.0;               // 张拉时场地温度
+    in.t2 = 35.0;               // 蒸汽养护时钢筋最高温度（升温 → 正损失）
     in.sigmaPc4 = 8.0e6;        // 后张分批 ΣΔσpc（示意值）
     in.psi = 1.0;               // 一次张拉
     in.zeta = 0.3;              // Ⅱ级低松弛
@@ -1590,7 +1590,7 @@ void testPrestressLosses() {
     const double alphaEp = in.Ep / in.Ec;
     const double sL1 = in.sigmaCon * (1.0 - std::exp(-(in.mu * in.theta + in.kappa * in.x)));
     const double sL2 = in.sumDeltaL / in.tendonLength * in.Ep;
-    const double sL3 = 2.0 * (in.t1 - in.t2) * 1.0e6;
+    const double sL3 = 2.0 * (in.t2 - in.t1) * 1.0e6;
     const double sL4 = alphaEp * in.sigmaPc4;
     const double sPe = in.sigmaCon - sL1 - sL2 - sL4;
     const double sL5 = in.psi * in.zeta * (0.52 * sPe / in.fpk - 0.26) * sPe;
@@ -1823,10 +1823,24 @@ void testJtgD60AutoLaneLoad() {
 
     applyJtgD60LaneLoads(m);
 
-    check("自动 qk=10.5kN/m", m.lanes[0].q, 10500.0, 1e-12);
-    check("自动 Pk(L=30)=320kN", m.lanes[0].p, jtgD60LaneLoadPk(L), 1e-9);
-    check("影响面 qk=10.5kN/m", m.laneSurface.q, 10500.0, 1e-12);
+    check("自动 qk=-10.5kN/m（向下）", m.lanes[0].q, -10500.0, 1e-12);
+    check("自动 Pk(L=30)=-320kN", m.lanes[0].p, -jtgD60LaneLoadPk(L), 1e-9);
+    check("影响面 qk=-10.5kN/m", m.laneSurface.q, -10500.0, 1e-12);
     check("影响面 3 车道折减 0.78", m.laneSurface.reduction, 0.78, 1e-12);
+
+    // 2D *LANE_LOAD CODE=JTG_D60
+    {
+        Model2D m2;
+        m2.nodes[1] = Eigen::Vector2d(0.0, 0.0);
+        m2.nodes[2] = Eigen::Vector2d(15.0, 0.0);
+        m2.nodes[3] = Eigen::Vector2d(30.0, 0.0);
+        Model2D::LaneLoad ll;
+        ll.id = 1; ll.nodes = {1, 2, 3}; ll.dir = "GY"; ll.autoCode = true;
+        m2.laneLoads.push_back(ll);
+        applyJtgD60LaneLoads2D(m2);
+        check("2D 自动 qk=-10.5kN/m", m2.laneLoads[0].q, -10500.0, 1e-12);
+        check("2D 自动 Pk(L=30)=-320kN", m2.laneLoads[0].P, -jtgD60LaneLoadPk(L), 1e-9);
+    }
 }
 
 } // namespace

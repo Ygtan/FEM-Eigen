@@ -27,7 +27,8 @@ struct PrestressLossInput {
     double sumDeltaL = 0.0;   // ΣΔl（表 6.2.3，m）
     double tendonLength = 0.0;// l 张拉端至锚固端距离（m）
 
-    // σl3 温差（6.2.4）：σl3 = 2(t1 - t2)（输入 °C，公式内换算为 Pa）
+    // σl3 温差（6.2.4）：σl3 = 2(t2 - t1)（输入 °C，公式内换算为 Pa）
+    //   混凝土加热养护（t2 > t1）时为正损失。
     double t1 = 0.0;          // 张拉钢筋时制造场地温度（°C）
     double t2 = 0.0;          // 混凝土加热养护时受拉钢筋最高温度（°C）
 
@@ -39,6 +40,11 @@ struct PrestressLossInput {
     //   σpe 传力锚固应力，后张法 σpe = σcon - σl1 - σl2 - σl4（程序内自动计算）。
     double psi = 1.0;         // 张拉系数 Ψ：一次张拉 1.0，超张拉 0.9
     double zeta = 0.3;        // 松弛系数 ζ：Ⅰ级普通松弛 1.0，Ⅱ级低松弛 0.3
+
+    // 张拉方式：true=后张法（默认），false=先张法。
+    //   后张法 σpe = σcon - σl1 - σl2 - σl4；
+    //   先张法 σpe = σcon - σl1（摩擦，见 6.2.6 条文说明）。
+    bool postTensioned = true;
 
     // σl6 收缩徐变（6.2.7-1）：
     //   σl6 = 0.9[Ep·εcs(t,t0) + αEP·σpc6·φ(t,t0)] / (1 + 15ρ·ρps)
@@ -69,15 +75,24 @@ inline PrestressLossResult computePrestressLosses(const PrestressLossInput& in) 
     PrestressLossResult r;
     r.sigmaL1 = in.sigmaCon * (1.0 - std::exp(-(in.mu * in.theta + in.kappa * in.x)));
     r.sigmaL2 = in.sumDeltaL / in.tendonLength * in.Ep;
-    r.sigmaL3 = 2.0 * (in.t1 - in.t2) * 1.0e6;   // °C -> Pa
+    r.sigmaL3 = 2.0 * (in.t2 - in.t1) * 1.0e6;   // °C -> Pa
     r.sigmaL4 = alphaEp * in.sigmaPc4;
 
-    // 后张法传力锚固应力（先张法应按规范 σpe = σcon - σl2 另计，此处默认后张法）。
-    r.sigmaPe = in.sigmaCon - r.sigmaL1 - r.sigmaL2 - r.sigmaL4;
+    // 传力锚固应力：后张法 σpe = σcon - σl1 - σl2 - σl4；先张法 σpe = σcon - σl1。
+    r.sigmaPe = in.postTensioned
+        ? in.sigmaCon - r.sigmaL1 - r.sigmaL2 - r.sigmaL4
+        : in.sigmaCon - r.sigmaL1;
     r.sigmaL5 = in.psi * in.zeta * (0.52 * r.sigmaPe / in.fpk - 0.26) * r.sigmaPe;
     r.sigmaL6 = 0.9 * (in.Ep * in.epsCs + alphaEp * in.sigmaPc6 * in.phi)
               / (1.0 + 15.0 * in.rho * in.rhoPs);
     return r;
+}
+
+// 有效预应力比 σpe/σcon（供 *PRESTRESS 的 LOSSREF 用，等价于 1 - Σσl/σcon）。
+inline double effectivePrestressRatio(const PrestressLossInput& in) {
+    if (in.sigmaCon <= 0.0)
+        throw std::runtime_error("有效预应力比需要张拉控制应力 sigmaCon > 0");
+    return computePrestressLosses(in).sigmaPe / in.sigmaCon;
 }
 
 } // namespace fem

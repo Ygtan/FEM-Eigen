@@ -2,6 +2,8 @@
 
 #include "fem.hpp"
 #include "section.hpp"
+#include "code_loads.hpp"
+#include "prestress_loss.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -131,11 +133,13 @@ struct Model2D {
         double E1 = 0.0;            // 起点偏心距（m，向下为正）
         double E2 = 0.0;            // 终点偏心距（m，向下为正）
         double loss = 1.0;          // 总损失系数，有效预应力 = P*loss
+        int lossRef = 0;            // 引用 *PRESTRESS_LOSS 的 id；>0 时用 σpe/σcon 代替 loss
         double Ep = 195e9;          // 预应力筋弹性模量（Pa）
         double Ap = 0.0;            // 预应力筋面积（m²），TENDON 方式必填
         std::string method = "AUTO"; // AUTO/EQUIV/TENDON
     };
     std::vector<Prestress> prestresses;
+    std::map<int, PrestressLossInput> prestressLosses;   // *PRESTRESS_LOSS 表
 
     struct InfluenceRequest {
         int id = 0;
@@ -155,6 +159,7 @@ struct Model2D {
         double P = 0.0;         // 集中荷载，沿 DIR 方向，可为负
         std::string dir = "GY"; // GX 或 GY
         std::string method = "LINEAR"; // LINEAR=影响线叠加；NONLINEAR=直接非线性扫描
+        bool autoCode = false;  // CODE=JTG_D60：按跨径自动生成车道荷载
     };
     std::vector<LaneLoad> laneLoads;
 
@@ -330,6 +335,18 @@ inline DofMap buildDofMap2D(const Model2D& m) {
     }
     dm.nDofs = 3 * static_cast<int>(m.nodes.size());
     return dm;
+}
+
+// JTG D60 自动车道荷载（二维）：CODE=JTG_D60 时按跨径填入 Q、P（负号 = 向下）。
+inline void applyJtgD60LaneLoads2D(Model2D& m) {
+    for (auto& lane : m.laneLoads) {
+        if (!lane.autoCode || lane.nodes.size() < 2) continue;
+        const Eigen::Vector2d a = m.nodes.at(lane.nodes.front());
+        const Eigen::Vector2d b = m.nodes.at(lane.nodes.back());
+        const double L = (b - a).norm();
+        lane.q = -jtgD60LaneLoadQk();
+        lane.P = -jtgD60LaneLoadPk(L);
+    }
 }
 
 namespace detail {

@@ -1379,15 +1379,15 @@ inline void applyJtgD60LaneLoads(Model3D& m) {
         const Vec3 a = m.nodes.at(lane.nodes.front());
         const Vec3 b = m.nodes.at(lane.nodes.back());
         const double L = (b - a).norm();
-        lane.q = jtgD60LaneLoadQk();
-        lane.p = jtgD60LaneLoadPk(L);
+        lane.q = -jtgD60LaneLoadQk();   // 负号 = 沿 dof 负方向（向下）
+        lane.p = -jtgD60LaneLoadPk(L);
     }
     if (m.laneSurface.autoCode && m.laneSurface.xNodes.size() >= 2) {
         const Vec3 a = m.nodes.at(m.laneSurface.xNodes.front());
         const Vec3 b = m.nodes.at(m.laneSurface.xNodes.back());
         const double L = (b - a).norm();
-        m.laneSurface.q = jtgD60LaneLoadQk();
-        m.laneSurface.p = jtgD60LaneLoadPk(L);
+        m.laneSurface.q = -jtgD60LaneLoadQk();
+        m.laneSurface.p = -jtgD60LaneLoadPk(L);
         if (m.laneSurface.reduction == 1.0 && m.laneSurface.laneCount > 1)
             m.laneSurface.reduction = jtgD60LaneReduction(m.laneSurface.laneCount);
     }

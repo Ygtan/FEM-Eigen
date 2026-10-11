@@ -1197,6 +1197,7 @@ Model2D readModel2D(const std::string& path) {
             it = p.find("P"); if (it != p.end()) ll.P = std::stod(it->second);
             it = p.find("DIR"); if (it != p.end()) ll.dir = detail::toUpper(it->second);
             it = p.find("METHOD"); if (it != p.end()) ll.method = detail::toUpper(it->second);
+            it = p.find("CODE"); if (it != p.end()) ll.autoCode = (detail::toUpper(it->second) == "JTG_D60");
             if (ll.dir != "GX" && ll.dir != "GY")
                 throw std::runtime_error("*LANE_LOAD DIR 只能为 GX 或 GY");
             if (ll.method != "LINEAR" && ll.method != "NONLINEAR")
@@ -1569,6 +1570,8 @@ Model2D readModel2D(const std::string& path) {
             }
         }
     }
+
+    applyJtgD60LaneLoads2D(m);
     return m;
 }
 
