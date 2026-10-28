@@ -475,10 +475,19 @@ struct NonlinearResult3D {
     std::vector<double> Ln;                             // 变形后弦长
 };
 
+// 收敛构形的切线（供成桥态几何迭代、影响矩阵复用分解等使用）。
+// K 已施加 Dirichlet（约束行/列清零、对角置 1），可直接分解回代。
+struct NLTangent3D {
+    SparseMat3D K;
+    std::vector<int> cdofs;
+};
+
 // 三维几何非线性静力求解（Newton + 荷载步，共转列式）。
 // 只使用节点荷载（3D 内核无单元荷载面荷载需预先转为节点力）。
+// tangent 非空时，额外返回收敛构形的一致切线（用于敏感度/影响矩阵）。
 inline NonlinearResult3D solveModel3DNonlinear(const Model3D& m,
-                                               const NonlinearOptions3D& opt = {}) {
+                                               const NonlinearOptions3D& opt = {},
+                                               NLTangent3D* tangent = nullptr) {
     NonlinearResult3D out;
     const DofMap3D dm = buildDofMap3D(m);
     const int nd = dm.nDofs;
@@ -637,6 +646,20 @@ inline NonlinearResult3D solveModel3DNonlinear(const Model3D& m,
     out.converged = ok;
     if (!ok) throw std::runtime_error("非线性求解未收敛：达到最大迭代次数");
 
+    // ---- 收敛构形的一致切线（可选导出）----
+    // 成桥态几何迭代用它做低秩 Newton；影响矩阵复用同一次分解可把
+    // nc 次非线性求解降为 1 次 + nc 次回代（见 TODO(P3-2b)）。
+    if (tangent) {
+        Eigen::VectorXd Fint;
+        SparseMat3D Kt;
+        assemble(Fint, Kt, true);
+        Eigen::VectorXd dummy = Eigen::VectorXd::Zero(nd);
+        std::vector<double> zeros(cdofs.size(), 0.0);
+        applyDirichlet(Kt, dummy, cdofs, zeros);
+        tangent->K = Kt;
+        tangent->cdofs = cdofs;
+    }
+
     // ---- 结果输出 ----
     out.u = toStdVec(u);
     Eigen::Matrix<double, 14, 1> ue, fe, q;
@@ -685,12 +708,12 @@ inline NonlinearResult3D solveModel3DNonlinear(const Model3D& m,
 // 收敛后：
 //   · 索力 = 目标成桥索力 T*；
 //   · 位移 u 是**物理上正确的成桥变形**：本模型以设计线形为参考构形（梁在
-//     该构形下无内力），故恒载下梁必然变形，u ≠ 0。
-//     要让结构"恒载下正好落到设计线形"，还需再解一次**几何（预抬高）迭代**：
-//     移动节点会改变索弦长 → 改变索力 → 又改变位移，这个反馈环增益
-//     = Kc/(kb + Kc)（Kc 为索轴向刚度、kb 为结构沿索向局部刚度），
-//     在索-梁刚度同量级时是 O(1)，因此单次代入 u 会过冲甚至发散，
-//     必须按影响矩阵 / Newton 同时迭代。u 是该迭代的一阶估计与输入。
+//     该构形下无内力），故恒载下梁必然变形，u ≠ 0。-u 是预抬高的**一阶估计**。
+//     要真正让结构"恒载下正好落到设计线形"，用 P3-3 的 solveCompletionState3D：
+//     它先在**设计弦长**上闭式反算 L0（本函数是在变形后的弦长上迭代，二者
+//     差别正是成桥变形量），再解几何闭合方程 ΔX + u(X0 + ΔX) = 0 得制造线形。
+//     直接拿 -u 当预抬高会过冲：移动节点改变索弦长 → 改变索力 → 又改变位移，
+//     反馈环增益 = Kc/(kb + Kc)，索-梁刚度同量级时 ≈ 0.5，不动点迭代数十轮。
 //     （成桥态梁内应有的弯矩由"无应力曲率"承担，属无应力状态法的后续扩展，
 //       不影响索长迭代本身。）
 //   · L0 可直接用于下料与正装分析。
@@ -840,6 +863,375 @@ inline CableLengthResult3D iterateCableUnstrainedLengths(
     for (const auto& t : targets) {
         for (const auto& e : m.elements)
             if (e.id == t.elem) { out.L0.push_back(e.L0); break; }
+    }
+    return out;
+}
+
+// ==================== 成桥态闭环（P3-3）====================
+//
+// 成桥态要交付两件东西，也正是施工最需要的两件：
+//   · 下料索长 L0 —— 工厂按此长度制索（无应力长度，可直接正装分析）；
+//   · 制造/安装线形 Xm —— 现场按此线形拼梁挂索，与设计线形之差即预抬高。
+//
+// 关键结论：**这两个量是解耦的**，不必联立迭代。
+//
+//   L0 —— 成桥位置被定义为设计线形 X0，故成桥弦长必为设计弦长 L*，索力由
+//         力-伸长关系单值决定，于是 L0 可**闭式反算**，一次都不用解结构：
+//              L0 = (L* + s(T*)) / (1 + T*/(EA))，  s(T*) = w²Lh³/(24T*²)
+//
+//   Xm —— 梁/塔在制造线形下无应力（参考构形 = 制造线形），成桥时恒载 + 索力
+//         使其变形到 X0，即几何闭合方程
+//              F(ΔX) = ΔX + u(X0 + ΔX) = 0
+//
+// 这个拆分把"索力 ↔ 几何"的强反馈消掉了。常规做法先在一个**会变形**的构形上
+// 调索力，再把位移反号当预抬高，二者互相打架：闭环增益 = Kc/(kb + Kc)，
+// 索-梁刚度同量级时 ≈ 0.5，不动点迭代数十轮，单次代入必过冲（P3-2 实测）。
+// 本方案 L0 一步到位，几何迭代只处理剩下的弱耦合，Newton 2~3 轮收敛。
+//
+// 几何迭代的敏感度是**低秩**的：共转梁单元对节点坐标的平移/转动严格不变
+// （刚体不变性，test_3d_nl 已钉死到 1e-16），所以 ΔX 只通过索产生不平衡力：
+//
+//     δLn_k = b_kᵀΔX，  b_k = [-e_k; +e_k]
+//     Δu    = -K⁻¹·Σ_k Kc_k·b_k·δLn_k
+//     G     = ∂u/∂ΔX = -K⁻¹·B·Kc·Bᵀ      （秩 ≤ nc，nc = 索数）
+//
+// 于是 (I + G) 的 Newton 步可以用 Woodbury 精确求解，只需 nc 次**线性回代**
+// （复用同一次分解）+ 一个 nc×nc 求逆，而不是 nd 维矩阵运算：
+//
+//     W = K⁻¹B，  M = I - Kc·(BᵀW)
+//     δ = -F - W·M⁻¹·(Kc·(BᵀF))
+//
+// 对百根以上拉索的实桥，这正是把成桥态从"几十次非线性求解"降到"几次"的关键。
+//
+// 目标索力 T* 若未给定，用**刚性支承连续梁法**自动确定：把索换成锚点处的
+// 刚性竖向支承，求恒载下的支承反力，再沿索向分解。这是斜拉桥成桥索力的
+// 经典确定法之一（"刚性支承连续梁"状态梁的弯矩最小、且分布均匀）。
+
+// ① 由设计弦长与目标索力闭式反算无应力（下料）索长。
+//    即 Ln = L0(1 + T/EA) - s(T) 对 L0 求解，s(T) = w²Lh³/(24T²)。
+inline double cableUnstrainedLengthForTension(double chordTarget, double T,
+                                              double EA, double w, double Lh) {
+    if (T <= 0.0) throw std::runtime_error("反算下料索长：目标索力必须为正");
+    double sag = 0.0;
+    if (w > 0.0 && Lh > 1e-12) sag = w * w * Lh * Lh * Lh / (24.0 * T * T);
+    return (chordTarget + sag) / (1.0 + T / EA);
+}
+
+// ② 刚性支承连续梁法：索 → 锚点处刚性竖向支承，反力沿索向分解即得目标索力。
+struct CableAnchor3D {
+    int elem = 0;
+    int anchorNode = 0;        // 梁侧锚点（在该节点加刚性竖向支承）
+};
+
+inline std::vector<double> cableTensionsRigidSupport(const Model3D& m,
+                                                     const std::vector<CableAnchor3D>& cables,
+                                                     int verticalDof = 3) {
+    const std::size_t nc = cables.size();
+    std::vector<double> T(nc, 0.0);
+    if (nc == 0) return T;
+
+    // 去掉索，改为锚点处的刚性竖向支承
+    Model3D mc = m;
+    std::vector<Element3D> keep;
+    keep.reserve(mc.elements.size());
+    for (const auto& e : mc.elements) {
+        bool isTgt = false;
+        for (const auto& c : cables) if (c.elem == e.id) { isTgt = true; break; }
+        if (!isTgt) keep.push_back(e);
+    }
+    mc.elements = keep;
+    for (const auto& c : cables)
+        mc.constraints.push_back({c.anchorNode, verticalDof, 0.0, 0.0});
+    constrainDisconnected3D(mc);      // 塔顶锚点等孤立节点：补齐约束，避免奇异
+
+    DofMap3D dm = buildDofMap3D(mc);
+    const int nd = dm.nDofs;
+    const SparseMat3D K0 = assembleStiffness3D(mc, dm);     // 未施加 Dirichlet
+    Eigen::VectorXd F0 = Eigen::VectorXd::Zero(nd);
+    for (const auto& [node, dof, val] : mc.loads) {
+        const int d = dm.safeDof(node, dof - 1);
+        if (d >= 0) F0(d) += val;
+    }
+    std::vector<int> cdofs;
+    std::vector<double> cvals;
+    for (const auto& c : mc.constraints) {
+        if (c.k > 0.0) continue;                    // 弹性支承不参与
+        const int d = dm.safeDof(c.node, c.dof - 1);
+        if (d < 0) continue;
+        auto it = std::find(cdofs.begin(), cdofs.end(), d);
+        if (it == cdofs.end()) { cdofs.push_back(d); cvals.push_back(c.value); }
+        else cvals[std::distance(cdofs.begin(), it)] = c.value;
+    }
+    SparseMat3D K = K0;
+    Eigen::VectorXd F = F0;
+    applyDirichlet(K, F, cdofs, cvals);
+    const Eigen::VectorXd u = solveSparse3D(K, F);
+
+    // 支承反力：K0·u = F0 + R  ⇒  R = K0·u - F0（沿坐标正向为正）
+    const Eigen::VectorXd R = K0 * u - F0;
+
+    for (std::size_t k = 0; k < nc; ++k) {
+        const int d = dm.safeDof(cables[k].anchorNode, verticalDof - 1);
+        if (d < 0) throw std::runtime_error("刚性支承连续梁法：锚点 "
+                                            + std::to_string(cables[k].anchorNode) + " 无竖向自由度");
+        const Element3D* e = nullptr;
+        for (const auto& q : m.elements) if (q.id == cables[k].elem) { e = &q; break; }
+        if (!e) throw std::runtime_error("刚性支承连续梁法：找不到索单元 "
+                                         + std::to_string(cables[k].elem));
+        const int other = (e->n1 == cables[k].anchorNode) ? e->n2 : e->n1;
+        // 索对锚点的力沿"锚点 → 另一端"方向，其竖向分量 = T·ea.z
+        const Vec3 ea = (m.nodes.at(other) - m.nodes.at(cables[k].anchorNode)).normalized();
+        if (std::abs(ea.z()) < 1e-6)
+            throw std::runtime_error("刚性支承连续梁法：索 "
+                                     + std::to_string(cables[k].elem) + " 近水平，竖向分量退化");
+        T[k] = R(d) / ea.z();
+    }
+    return T;
+}
+
+// ③ 制造线形（预抬高）迭代：解几何闭合 ΔX + u(X0 + ΔX) = 0。
+struct ErectionGeometryOptions3D {
+    int maxIter = 20;
+    double tolClosure = 1e-9;    // 几何闭合容差（m）
+    double stepCap = 2.0;        // 单轮节点坐标变化上限（m），防野步长
+    bool verbose = false;
+    NonlinearOptions3D nl;
+};
+
+struct ErectionGeometryResult3D {
+    bool converged = false;
+    int iterations = 0;
+    std::vector<int> cableIds;
+    std::map<int, Vec3> erected;    // 制造/安装线形节点坐标
+    std::vector<double> camber;     // 预抬高 = erected - design（按自由度向量）
+    std::vector<double> u;          // 成桥位移（相对制造线形）
+    std::vector<double> tension;
+    std::vector<double> chord;
+    double maxClosureErr = 0.0;
+};
+
+inline ErectionGeometryResult3D iterateErectionGeometry(Model3D m,
+                                                        const std::vector<int>& cableIds,
+                                                        const ErectionGeometryOptions3D& opt = {}) {
+    ErectionGeometryResult3D out;
+    if (cableIds.empty()) throw std::runtime_error("制造线形迭代：未指定索单元");
+    out.cableIds = cableIds;
+
+    const DofMap3D dm = buildDofMap3D(m);
+    const int nd = dm.nDofs;
+    const std::map<int, Vec3> X0 = m.nodes;             // 设计线形
+
+    // 约束自由度（不可动）与平动自由度（几何闭合只针对位置，不含转角）：
+    // 制造线形是节点坐标，梁端转角由变形自行决定，不参与闭合方程。
+    std::vector<char> isC(nd, 0), isT(nd, 0);
+    for (const auto& c : m.constraints) {
+        if (c.k > 0.0) continue;
+        const int d = dm.safeDof(c.node, c.dof - 1);
+        if (d >= 0) isC[d] = 1;
+    }
+    for (std::size_t i = 0; i < dm.nodeIds.size(); ++i) {
+        const int cnt = std::min(dm.dofCount[i], 3);
+        for (int a = 0; a < cnt; ++a) isT[dm.dofStart[i] + a] = 1;
+    }
+    for (int d = 0; d < nd; ++d) if (isC[d]) isT[d] = 0;   // 支座节点位置不动
+
+    const std::size_t nc = cableIds.size();
+    std::vector<const Element3D*> ep(nc, nullptr);
+    for (std::size_t k = 0; k < nc; ++k) {
+        for (const auto& q : m.elements) if (q.id == cableIds[k]) { ep[k] = &q; break; }
+        if (!ep[k]) throw std::runtime_error("制造线形迭代：找不到索单元 "
+                                             + std::to_string(cableIds[k]));
+    }
+
+    std::vector<double> dX(nd, 0.0);                    // 制造线形相对设计线形的偏移
+    Eigen::VectorXd Fv = Eigen::VectorXd::Zero(nd);
+
+    for (int it = 0; it < opt.maxIter; ++it) {
+        // ---- ① 把 ΔX 落到节点坐标上（参考构形随之改变 = 制造线形无应力）----
+        for (std::size_t i = 0; i < dm.nodeIds.size(); ++i) {
+            const int s = dm.dofStart[i];
+            Vec3 p = X0.at(dm.nodeIds[i]);
+            const int cnt = std::min(dm.dofCount[i], 3);
+            for (int a = 0; a < cnt; ++a) p[a] += dX[s + a];
+            m.nodes[dm.nodeIds[i]] = p;
+        }
+
+        // ---- ② 完整非线性求解（恒载 + 索自重 + 索力）----
+        NLTangent3D tan;
+        const NonlinearResult3D r = solveModel3DNonlinear(m, opt.nl, &tan);
+        out.iterations = it + 1;
+        out.u = r.u;
+        out.tension.assign(nc, 0.0);
+        out.chord.assign(nc, 0.0);
+        for (std::size_t k = 0; k < nc; ++k) {
+            std::size_t idx = 0;
+            while (idx < r.elemIds.size() && r.elemIds[idx] != cableIds[k]) ++idx;
+            if (idx >= r.elemIds.size())
+                throw std::runtime_error("制造线形迭代：结果缺少索单元 "
+                                         + std::to_string(cableIds[k]));
+            out.chord[k] = r.Ln[idx];
+            out.tension[k] = r.axial[idx];
+        }
+
+        // ---- ③ 闭合残差 F = ΔX + u ----
+        double err = 0.0;
+        for (int d = 0; d < nd; ++d) {
+            if (!isT[d]) { Fv(d) = 0.0; continue; }
+            Fv(d) = dX[d] + r.u[d];
+            err = std::max(err, std::abs(Fv(d)));
+        }
+        out.maxClosureErr = err;
+        if (opt.verbose) std::printf("  几何迭代 %d：闭合误差 = %.3e m\n", it + 1, err);
+        if (err <= opt.tolClosure) { out.converged = true; break; }
+
+        // ---- ④ 低秩 Newton（Woodbury）----
+        // B 的列 = 索轴向方向向量（在成桥构形上取），Kc = dT/dLn（Ernst 切线）
+        Eigen::MatrixXd B = Eigen::MatrixXd::Zero(nd, static_cast<int>(nc));
+        Eigen::VectorXd Kc = Eigen::VectorXd::Zero(static_cast<int>(nc));
+        for (std::size_t k = 0; k < nc; ++k) {
+            const Element3D& e = *ep[k];
+            const int s1 = dm.dofStart[dm.index.at(e.n1)];
+            const int s2 = dm.dofStart[dm.index.at(e.n2)];
+            Vec3 p1 = m.nodes.at(e.n1), p2 = m.nodes.at(e.n2);
+            for (int a = 0; a < 3; ++a) {
+                p1[a] += r.u[s1 + a];
+                p2[a] += r.u[s2 + a];
+            }
+            Vec3 d3 = p2 - p1;
+            const double Ln = d3.norm();
+            if (Ln < 1e-12) throw std::runtime_error("制造线形迭代：索 "
+                                                     + std::to_string(cableIds[k]) + " 弦长退化");
+            const Vec3 ev = d3 / Ln;
+            const double Lh = std::sqrt(d3.x() * d3.x() + d3.y() * d3.y());
+            const double L0 = (e.L0 > 0.0) ? e.L0 : Ln;
+            for (int a = 0; a < 3; ++a) {
+                if (isT[s1 + a]) B(s1 + a, static_cast<int>(k)) = -ev[a];
+                if (isT[s2 + a]) B(s2 + a, static_cast<int>(k)) = +ev[a];
+            }
+            Kc(static_cast<int>(k)) =
+                cableErnstModulus(e.E, e.A, e.w, Lh, out.tension[k], L0) * e.A / L0;
+        }
+
+        Factorization3D fac(tan.K);
+        Eigen::MatrixXd W = fac.solveMulti(B);          // W = K⁻¹B（nc 次回代，一次分解）
+        for (int d = 0; d < nd; ++d) if (!isT[d]) W.row(d).setZero();
+
+        const Eigen::MatrixXd M =
+            Eigen::MatrixXd::Identity(static_cast<int>(nc), static_cast<int>(nc))
+            - Kc.asDiagonal() * (B.transpose() * W);
+        const Eigen::VectorXd y = M.fullPivLu().solve(Kc.asDiagonal() * (B.transpose() * Fv));
+        Eigen::VectorXd delta = -Fv - W * y;
+
+        // 步长保护：按节点整体缩放，避免单点跑飞
+        for (int d = 0; d < nd; ++d) if (!isT[d]) delta(d) = 0.0;
+        double mx = 0.0;
+        for (std::size_t i = 0; i < dm.nodeIds.size(); ++i) {
+            const int s = dm.dofStart[i];
+            const double nrm = std::sqrt(delta(s) * delta(s) + delta(s + 1) * delta(s + 1)
+                                         + delta(s + 2) * delta(s + 2));
+            mx = std::max(mx, nrm);
+        }
+        const double scale = (mx > opt.stepCap) ? opt.stepCap / mx : 1.0;
+        for (int d = 0; d < nd; ++d) dX[d] += scale * delta(d);
+    }
+
+    out.camber = dX;
+    out.erected = m.nodes;
+    return out;
+}
+
+// ④ 组合：一次给出下料索长 + 制造线形（施工要的两件套）。
+struct CompletionCable3D {
+    int elem = 0;
+    int anchorNode = 0;       // 梁侧锚点（自动定索力时用）
+    double tension = 0.0;     // 目标成桥索力；<=0 表示用刚性支承连续梁法自动确定
+};
+
+struct CompletionStateOptions3D {
+    int maxIter = 20;
+    double tolClosure = 1e-9;    // 几何闭合容差（m）
+    double stepCap = 2.0;
+    bool verbose = false;
+    NonlinearOptions3D nl;
+};
+
+struct CompletionStateResult3D {
+    bool converged = false;
+    int iterations = 0;
+    std::vector<int> elems;
+    std::vector<double> L0;          // 下料索长（无应力长度）
+    std::vector<double> tension;     // 成桥索力
+    std::vector<double> chord;       // 成桥弦长（应回到设计弦长）
+    std::vector<double> Ltarget;     // 设计弦长
+    std::map<int, Vec3> erected;     // 制造/安装线形
+    std::vector<double> camber;      // 预抬高 = erected - design（按自由度向量）
+    std::vector<double> u;           // 成桥位移（相对制造线形）
+    double maxClosureErr = 0.0;
+    double maxTensionErr = 0.0;
+};
+
+inline CompletionStateResult3D solveCompletionState3D(Model3D m,
+                                                      const std::vector<CompletionCable3D>& cables,
+                                                      const CompletionStateOptions3D& opt = {}) {
+    CompletionStateResult3D out;
+    if (cables.empty()) throw std::runtime_error("成桥态求解：未指定索");
+    const std::size_t nc = cables.size();
+    out.elems.resize(nc);
+    for (std::size_t k = 0; k < nc; ++k) out.elems[k] = cables[k].elem;
+
+    // ---- 目标索力：给定则用；否则刚性支承连续梁法自动定 ----
+    std::vector<double> Tst(nc, 0.0);
+    std::vector<int> needAuto;
+    for (std::size_t k = 0; k < nc; ++k) {
+        if (cables[k].tension > 0.0) Tst[k] = cables[k].tension;
+        else needAuto.push_back(static_cast<int>(k));
+    }
+    if (!needAuto.empty()) {
+        std::vector<CableAnchor3D> ca;
+        for (int k : needAuto) ca.push_back({cables[k].elem, cables[k].anchorNode});
+        const std::vector<double> Ta = cableTensionsRigidSupport(m, ca);
+        for (std::size_t j = 0; j < needAuto.size(); ++j) Tst[needAuto[j]] = Ta[j];
+    }
+
+    // ---- 下料索长：由设计弦长 + 目标索力闭式反算（无需任何结构迭代）----
+    std::vector<double> Ltar(nc, 0.0);
+    for (std::size_t k = 0; k < nc; ++k) {
+        Element3D* e = nullptr;
+        for (auto& q : m.elements) if (q.id == cables[k].elem) { e = &q; break; }
+        if (!e) throw std::runtime_error("成桥态求解：找不到索单元 "
+                                         + std::to_string(cables[k].elem));
+        const Vec3 d3 = m.nodes.at(e->n2) - m.nodes.at(e->n1);
+        Ltar[k] = d3.norm();
+        const double Lh = std::sqrt(d3.x() * d3.x() + d3.y() * d3.y());
+        e->L0 = cableUnstrainedLengthForTension(Ltar[k], Tst[k], e->E * e->A, e->w, Lh);
+    }
+    out.Ltarget = Ltar;
+
+    // ---- 制造线形：几何闭合迭代 ----
+    std::vector<int> ids(nc);
+    for (std::size_t k = 0; k < nc; ++k) ids[k] = cables[k].elem;
+    ErectionGeometryOptions3D eo;
+    eo.maxIter = opt.maxIter;
+    eo.tolClosure = opt.tolClosure;
+    eo.stepCap = opt.stepCap;
+    eo.verbose = opt.verbose;
+    eo.nl = opt.nl;
+    const ErectionGeometryResult3D eg = iterateErectionGeometry(m, ids, eo);
+
+    out.iterations = eg.iterations;
+    out.converged = eg.converged;
+    out.maxClosureErr = eg.maxClosureErr;
+    out.tension = eg.tension;
+    out.chord = eg.chord;
+    out.camber = eg.camber;
+    out.erected = eg.erected;
+    out.u = eg.u;
+    out.L0.assign(nc, 0.0);
+    for (std::size_t k = 0; k < nc; ++k) {
+        for (const auto& e : m.elements)
+            if (e.id == cables[k].elem) { out.L0[k] = e.L0; break; }
+        out.maxTensionErr = std::max(out.maxTensionErr,
+                                     std::abs(eg.tension[k] - Tst[k]) / Tst[k]);
     }
     return out;
 }

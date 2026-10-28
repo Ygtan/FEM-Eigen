@@ -458,6 +458,168 @@ void testCableLengthIteration() {
                 cl.L0[0], cl.chord[0], cl.L0[1], cl.chord[1], 1.0e3 * vz);
 }
 
+// ---------------------------------------------------------------
+// 10. 刚性支承连续梁法：自动定目标成桥索力
+//     两跨等跨连续梁（跨长 L），各跨跨中一个集中力 P，三处竖索（两端 + 中支
+//     点）。把索换成刚性竖向支承后即标准的"两跨连续梁"，反力有教科书闭式解
+//     （三弯矩方程 / 力法，两种推导互相印证）：
+//        M_B = -3PL/16，  R_B = 11P/8，  R_A = R_C = 5P/16
+//     竖索的竖向分量就是索力本身，故 T = R。
+//     再叠加一条严格的整体平衡：ΣT = 2P（梁竖向无其他支承）。
+// ---------------------------------------------------------------
+namespace {
+// 三索 + 两跨连续梁（每跨 2 个单元），L 为单跨跨长，H 为索高
+Model3D makeThreeCableBeam(double L, double H, double Eb, double A, double I,
+                           double Ec, double Ac, double P) {
+    Model3D m;
+    m.nodes[1] = Vec3(0.0, 0.0, 0.0);
+    m.nodes[2] = Vec3(0.5 * L, 0.0, 0.0);
+    m.nodes[3] = Vec3(L, 0.0, 0.0);
+    m.nodes[4] = Vec3(1.5 * L, 0.0, 0.0);
+    m.nodes[5] = Vec3(2.0 * L, 0.0, 0.0);
+    m.nodes[6] = Vec3(0.0, 0.0, H);
+    m.nodes[7] = Vec3(L, 0.0, H);
+    m.nodes[8] = Vec3(2.0 * L, 0.0, H);
+    for (int i = 1; i <= 4; ++i) {
+        Element3D g; g.id = i; g.type = "BEAM";
+        g.E = Eb; g.A = A; g.Iy = I; g.Iz = I; g.J = 2.0 * I; g.G = 1.4e10;
+        g.n1 = i; g.n2 = i + 1; m.elements.push_back(g);
+    }
+    const int cn[3] = {1, 3, 5};
+    for (int k = 0; k < 3; ++k) {
+        Element3D c; c.id = 10 + k; c.type = "CABLE";
+        c.E = Ec; c.A = Ac; c.w = 0.0;      // 竖索：无垂度、无自重
+        c.n1 = cn[k]; c.n2 = 6 + k;
+        m.elements.push_back(c);
+    }
+    // 约束：A 处水平定位 + 防扭转；面外（y、θz）全约束；塔顶锚点固结
+    m.constraints.push_back({1, 1, 0.0, 0.0});
+    m.constraints.push_back({1, 4, 0.0, 0.0});
+    for (int n = 1; n <= 5; ++n) {
+        m.constraints.push_back({n, 2, 0.0, 0.0});
+        m.constraints.push_back({n, 6, 0.0, 0.0});
+    }
+    for (int n = 6; n <= 8; ++n)
+        for (int d = 1; d <= 6; ++d) m.constraints.push_back({n, d, 0.0, 0.0});
+    m.loads.push_back({2, 3, -P});
+    m.loads.push_back({4, 3, -P});
+    return m;
+}
+}  // namespace
+
+void testRigidSupportCableTension() {
+    std::printf("\n[刚性支承连续梁法：自动定目标索力]\n");
+    const double L = 30.0, H = 40.0, P = 1.0e6;
+    const Model3D m = makeThreeCableBeam(L, H, 3.45e10, 6.0, 4.0, 1.95e11, 5.0e-3, P);
+
+    const std::vector<double> T =
+        cableTensionsRigidSupport(m, {{10, 1}, {11, 3}, {12, 5}});
+
+    // 闭式解（三弯矩方程）：R_A = R_C = 5P/16，R_M = 11P/8
+    check("刚性支承法：中支点索力 = 11P/8", T[1], 11.0 * P / 8.0, 1e-9);
+    check("刚性支承法：端支点索力 = 5P/16", T[0], 5.0 * P / 16.0, 1e-9);
+    check("刚性支承法：另一端索力 = 5P/16", T[2], 5.0 * P / 16.0, 1e-9);
+    check("刚性支承法：索力之和 = 总恒载 2P", T[0] + T[1] + T[2], 2.0 * P, 1e-9);
+    std::printf("  T端=%.6g kN，T中=%.6g kN，ΣT=%.6g kN（恒载 %.6g kN）\n",
+                T[0] / 1e3, T[1] / 1e3, (T[0] + T[1] + T[2]) / 1e3, 2.0 * P / 1e3);
+}
+
+// ---------------------------------------------------------------
+// 11. 成桥态闭环：单索悬臂梁（有完整闭式解）
+//     梁根固结、梁端竖向恒载 P、竖索到上方固定点，目标成桥索力 T*。
+//       · 下料索长：L0 = Hc/(1 + T*/EA)（竖索无垂度，闭式）
+//       · 梁端平衡：T* + kb·z_m - P = 0，kb = 3EI/L³
+//         ⇒ 预抬高 z_m = (P - T*)/kb   （索力偏大 → 制造时把梁端放低）
+//     收敛后成桥位置必须回到设计线形：弦长 = Hc、索力 = T*。
+// ---------------------------------------------------------------
+void testCompletionStateSingleCable() {
+    std::printf("\n[成桥态闭环：单索悬臂梁 vs 闭式解]\n");
+    const double Eb = 3.45e10, Ab = 6.0, Ib = 6.0;
+    const double Ec = 1.95e11, Ac = 5.0e-3;
+    const double Lb = 30.0, Hc = 40.0;
+    const double P = 2.4e6, Tt = 2.5e6;
+
+    Model3D m;
+    m.nodes[1] = Vec3(0.0, 0.0, 0.0);
+    m.nodes[2] = Vec3(Lb, 0.0, 0.0);
+    m.nodes[3] = Vec3(Lb, 0.0, Hc);
+    {
+        Element3D g; g.id = 1; g.type = "BEAM";
+        g.E = Eb; g.A = Ab; g.Iy = Ib; g.Iz = Ib; g.J = 12.0; g.G = 1.4e10;
+        g.n1 = 1; g.n2 = 2; m.elements.push_back(g);
+        Element3D c; c.id = 10; c.type = "CABLE";
+        c.E = Ec; c.A = Ac; c.w = 0.0;
+        c.n1 = 2; c.n2 = 3; m.elements.push_back(c);
+    }
+    for (int d = 1; d <= 6; ++d) {
+        m.constraints.push_back({1, d, 0.0, 0.0});
+        m.constraints.push_back({3, d, 0.0, 0.0});
+    }
+    m.loads.push_back({2, 3, -P});
+
+    CompletionStateOptions3D co;
+    co.maxIter = 20;
+    co.tolClosure = 1e-10;
+    co.nl.loadSteps = 2;
+    co.nl.maxIter = 40;
+    co.nl.tolForce = 1e-11;
+    const CompletionStateResult3D cs = solveCompletionState3D(m, {{10, 2, Tt}}, co);
+
+    check("成桥态：收敛（几何闭合）", cs.converged ? 1.0 : 0.0, 1.0, 0.0);
+
+    const DofMap3D dm = buildDofMap3D(m);
+    const int dz = dm.dof(2, 2);                 // 梁端竖向自由度
+    const double kb = 3.0 * Eb * Ib / (Lb * Lb * Lb);
+    const double zm = (P - Tt) / kb;             // 闭式预抬高
+
+    check("成桥态：成桥索力 = 目标索力", cs.tension[0], Tt, 1e-8);
+    check("成桥态：成桥弦长 = 设计弦长（几何闭合）", cs.chord[0], Hc, 1e-9);
+    check("成桥态：下料索长 = Hc/(1+T*/EA)", cs.L0[0], Hc / (1.0 + Tt / (Ec * Ac)), 1e-12);
+    check("成桥态：预抬高 vs 闭式解 (P-T*)/kb", cs.camber[dz], zm, 1e-6);
+    // 位移与预抬高严格反号：制造线形 + 位移 = 设计线形
+    check("成桥态：预抬高 + 位移 = 0", cs.camber[dz] + cs.u[dz], 0.0, 1e-10);
+    check("成桥态：下料索长 < 设计弦长（已张拉）",
+          cs.L0[0] < cs.Ltarget[0] ? 1.0 : 0.0, 1.0, 0.0);
+    std::printf("  %d 轮几何迭代；L0=%.5f m，弦长=%.5f m，"
+                "梁端预抬高=%.4f mm（闭式 %.4f mm）\n",
+                cs.iterations, cs.L0[0], cs.chord[0],
+                1.0e3 * cs.camber[dz], 1.0e3 * zm);
+}
+
+// ---------------------------------------------------------------
+// 12. 成桥态闭环：三索两跨连续梁（索力自动 + 预抬高）
+//     索力由刚性支承连续梁法自动给定，再解制造线形。独立检验两条：
+//       · 几何闭合（成桥位置 = 设计线形，弦长回到设计值）
+//       · 整体平衡：梁竖向无其他支承，故 ΣT = 2P 必须在成桥态仍成立
+// ---------------------------------------------------------------
+void testCompletionStateThreeCable() {
+    std::printf("\n[成桥态闭环：三索两跨连续梁（自动定索力）]\n");
+    const double L = 30.0, H = 40.0, P = 1.0e6;
+    Model3D m = makeThreeCableBeam(L, H, 3.45e10, 6.0, 4.0, 1.95e11, 5.0e-3, P);
+
+    CompletionStateOptions3D co;
+    co.maxIter = 20;
+    co.tolClosure = 1e-10;
+    co.nl.loadSteps = 2;
+    co.nl.maxIter = 40;
+    co.nl.tolForce = 1e-11;
+    // tension = 0 → 由刚性支承连续梁法自动定
+    const CompletionStateResult3D cs =
+        solveCompletionState3D(m, {{10, 1, 0.0}, {11, 3, 0.0}, {12, 5, 0.0}}, co);
+
+    check("三索成桥态：收敛", cs.converged ? 1.0 : 0.0, 1.0, 0.0);
+    check("三索成桥态：索力 = 刚性支承法目标值",
+          cs.tension[1], 11.0 * P / 8.0, 1e-7);
+    check("三索成桥态：整体平衡 ΣT = 2P",
+          cs.tension[0] + cs.tension[1] + cs.tension[2], 2.0 * P, 1e-7);
+    for (int k = 0; k < 3; ++k)
+        check("三索成桥态：弦长回到设计值（索 " + std::to_string(k + 1) + "）",
+              cs.chord[k], cs.Ltarget[k], 1e-9);
+    std::printf("  %d 轮；T=(%.4g, %.4g, %.4g) kN，闭合误差=%.2e m\n",
+                cs.iterations, cs.tension[0] / 1e3, cs.tension[1] / 1e3,
+                cs.tension[2] / 1e3, cs.maxClosureErr);
+}
+
 }  // namespace
 
 int main() {
@@ -474,6 +636,9 @@ int main() {
         testCableUnstrainedLength();
         testCableSagVsExactCatenary();
         testCableLengthIteration();
+        testRigidSupportCableTension();
+        testCompletionStateSingleCable();
+        testCompletionStateThreeCable();
     } catch (const std::exception& e) {
         std::printf("\n[ERROR] 异常: %s\n", e.what());
         ++g_fail;
