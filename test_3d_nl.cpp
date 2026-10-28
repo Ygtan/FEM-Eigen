@@ -302,6 +302,162 @@ void testCableUnstrainedLength() {
     check("桁架：L0=1.1L 轴力为压（对照）", Ntruss, E * A * (1.0 - 1.1) / 1.1, 1e-6);
 }
 
+// ---------------------------------------------------------------
+// 8. 缆索垂度：与**精确悬链线**独立对照（不是用近似验近似）
+//    不可伸长时：弧长 s = (2H/w)·sinh(w·Lh/(2H))
+//    可伸长时：弧长 s = L0·(1 + H/(EA))，再代入上式
+// ---------------------------------------------------------------
+void testCableSagVsExactCatenary() {
+    std::printf("\n[缆索垂度 vs 精确悬链线]\n");
+    // 精确悬链线：由弧长 s 与水平投影 Lh 反解水平力 H（两端等高时弦 = Lh）
+    auto exactH = [](double s, double Lh, double w) {
+        // g(H) = (2H/w)·sinh(w·Lh/(2H)) - s = 0，H ∈ (0, ∞)
+        double H = w * Lh * Lh / (8.0 * std::sqrt(3.0 * Lh * std::max(s - Lh, 1e-9) / 8.0));
+        if (!(H > 0.0) || !std::isfinite(H)) H = w * Lh;
+        for (int it = 0; it < 200; ++it) {
+            const double u = w * Lh / (2.0 * H);
+            const double g = (2.0 * H / w) * std::sinh(u) - s;
+            const double gp = (2.0 / w) * std::sinh(u) - (Lh / H) * std::cosh(u);
+            const double step = g / gp;
+            H -= step;
+            if (H < 1e-6) H = 1e-6;
+            if (std::abs(step) <= 1e-14 * std::max(1.0, H)) break;
+        }
+        return H;
+    };
+
+    const double Lh = 100.0, w = 100.0;         // 水平跨 100m，重度 100 N/m
+    // (a) 近似不可伸长：EA 极大 → 弧长≈L0
+    {
+        const double L0 = 100.001;              // 弧长比弦长长 1mm → 垂度 ≈ 0.19m
+        const double EA = 1e15;
+        const double T = cableTensionFromChord(Lh, L0, EA, w, Lh);
+        const double Hex = exactH(L0, Lh, w);
+        check("索：垂度索力 vs 精确悬链线（不可伸长）", T, Hex, 2e-3);
+        // 与抛物线手算式 H = wLh²/(8f)、f = √(3Lh(s-Lh)/8) 对照
+        const double f0 = std::sqrt(3.0 * Lh * (L0 - Lh) / 8.0);
+        check("索：垂度索力 vs 抛物线公式", T, w * Lh * Lh / (8.0 * f0), 1e-2);
+    }
+    // (b) 可伸长：EA 有限，弧长 = L0(1 + H/EA)，与代入拉伸弧长的精确悬链线对照
+    {
+        const double L0 = 100.02, EA = 2.0e8;
+        const double T = cableTensionFromChord(Lh, L0, EA, w, Lh);
+        // 精确弹性悬链线：g(H) = (2H/w)·sinh(wLh/(2H)) - L0(1+H/EA) = 0
+        auto gElas = [&](double hh) {
+            return (2.0 * hh / w) * std::sinh(w * Lh / (2.0 * hh))
+                   - L0 * (1.0 + hh / EA);
+        };
+        double lo = 1.0e3, hi = 1.0e7;            // g(lo) > 0 > g(hi)
+        for (int i = 0; i < 200; ++i) {
+            const double mid = 0.5 * (lo + hi);
+            if (gElas(mid) > 0.0) lo = mid; else hi = mid;
+        }
+        const double H = 0.5 * (lo + hi);
+        check("索：垂度索力 vs 精确悬链线（可伸长）", T, H, 5e-3);
+    }
+    // (c) Ernst 等效模量 = 力-伸长关系的切线（保证内力与切线共轭）
+    {
+        const double L0 = 100.01, EA = 2.0e8, Ac = 1.0e-3, E = EA / Ac;
+        const double T = cableTensionFromChord(Lh, L0, EA, w, Lh);
+        // 固定水平投影 Lh、只变弦长 Ln 求偏导（这正是 Ernst 式的定义）
+        // 步长取 1e-6：T(Ln) 曲率极大，截断误差 ~36·h²（相对），
+        // 与舍入误差 ~1e-11/h 平衡点在 h≈7e-7，故 1e-6 是最佳量级。
+        const double h = 1e-6;
+        const double dTdL = (cableTensionFromChord(Lh + h, L0, EA, w, Lh)
+                             - cableTensionFromChord(Lh - h, L0, EA, w, Lh)) / (2.0 * h);
+        const double Eeq = cableErnstModulus(E, Ac, w, Lh, T, L0);
+        check("索：Ernst 模量 = 力-伸长切线", Eeq * Ac / L0, dTdL, 1e-7);
+        // 垂度必须让索"变软"：Eeq < E
+        check("索：Ernst 模量小于 E（垂度软化）", Eeq < E ? 1.0 : 0.0, 1.0, 0.0);
+        std::printf("        Eeq=%.6g Pa < E=%.6g Pa（垂度使索软化 %.1f%%）\n",
+                    Eeq, E, 100.0 * (1.0 - Eeq / E));
+    }
+}
+
+// ---------------------------------------------------------------
+// 9. 成桥态：无应力索长迭代（双索，各索目标索力不同）
+//    两根竖索 + 悬臂主梁（一维体系，收敛后有闭式解）：
+//      梁端竖向平衡：索力 T1+T2 向上，恒载 P 与索自重 wi·L0i/2 向下
+//        v = (T1 + T2 - P - Σwi·L0i/2)/kb，  kb = 3EI/L³（悬臂梁端刚度）
+//      竖索无水平投影 → 无垂度：Ti = EA·(Hi - v - L0i)/L0i
+//    联立即得各索 L0i 与 v 的闭式解，逐项与迭代结果对照。
+// ---------------------------------------------------------------
+void testCableLengthIteration() {
+    std::printf("\n[成桥态：无应力索长迭代（双索）]\n");
+    const double Eb = 3.45e10, Ab = 8.0, Ib = 6.0;       // 主梁：A=8m²，I=6m^4
+    const double Ec = 1.95e11, Ac = 5.0e-3, wc = 46.0;   // 拉索（竖直 → 无垂度）
+    const double Lb = 30.0;                              // 悬臂 30m
+    const double H1 = 40.0, H2 = 35.0;                   // 两索索高
+    const double T1 = 1.5e6, T2 = 1.0e6;                 // 目标成桥索力
+    const double P = 2.45e6;                             // 梁端恒载 2450 kN
+
+    Model3D m;
+    m.nodes[1] = Vec3(0.0, 0.0, 0.0);        // 梁根（固结）
+    m.nodes[2] = Vec3(Lb, 0.0, 0.0);         // 梁端 = 两索下锚点
+    m.nodes[3] = Vec3(Lb, 0.0, H1);          // 索 1 上锚点（固结）
+    m.nodes[4] = Vec3(Lb, 0.0, H2);          // 索 2 上锚点（固结）
+    {
+        Element3D g; g.id = 1; g.type = "BEAM";
+        g.E = Eb; g.A = Ab; g.Iy = Ib; g.Iz = Ib; g.J = 12.0; g.G = 1.4e10;
+        g.n1 = 1; g.n2 = 2; m.elements.push_back(g);
+        Element3D c1; c1.id = 10; c1.type = "CABLE";
+        c1.E = Ec; c1.A = Ac; c1.w = wc; c1.n1 = 2; c1.n2 = 3;
+        m.elements.push_back(c1);
+        Element3D c2; c2.id = 11; c2.type = "CABLE";
+        c2.E = Ec; c2.A = Ac; c2.w = wc; c2.n1 = 2; c2.n2 = 4;
+        m.elements.push_back(c2);
+    }
+    for (int d = 1; d <= 6; ++d) {
+        m.constraints.push_back({1, d, 0.0, 0.0});
+        m.constraints.push_back({3, d, 0.0, 0.0});
+        m.constraints.push_back({4, d, 0.0, 0.0});
+    }
+    m.loads.push_back({2, 3, -P});
+
+    // ---- 闭式解（索自重是 L0 的一阶小量，代入后直接解出 v）----
+    const double kb = 3.0 * Eb * Ib / (Lb * Lb * Lb);     // 悬臂梁端刚度
+    const double EAc = Ec * Ac;
+    const double a1 = 1.0 + T1 / EAc, a2 = 1.0 + T2 / EAc;
+    const double vth = (T1 + T2 - P - wc * H1 / (2.0 * a1) - wc * H2 / (2.0 * a2))
+                       / (kb + wc / (2.0 * a1) + wc / (2.0 * a2));
+    const double L01th = (H1 - vth) / a1;
+    const double L02th = (H2 - vth) / a2;
+
+    CableLengthOptions3D co;
+    co.maxIter = 40;
+    co.tolTension = 1e-8;
+    co.nl.loadSteps = 4;
+    co.nl.maxIter = 30;
+    co.nl.tolForce = 1e-11;
+    const CableLengthResult3D cl =
+        iterateCableUnstrainedLengths(m, {{10, T1}, {11, T2}}, co);
+
+    check("索长迭代：收敛", cl.converged ? 1.0 : 0.0, 1.0, 0.0);
+
+    const DofMap3D dm = buildDofMap3D(m);
+    const double vz = cl.u[dm.dof(2, 2)];                 // 梁端竖向位移
+    const double Tt[2] = {T1, T2};
+    const double Hh[2] = {H1, H2};
+    const double L0th[2] = {L01th, L02th};
+    for (int i = 0; i < 2; ++i) {
+        check("索长迭代：成桥索力 = 目标索力", cl.tension[i], Tt[i], 1e-7);
+        check("索长迭代：无应力索长 vs 闭式解", cl.L0[i], L0th[i], 1e-8);
+        check("索长迭代：弦长 = 索高 - 梁端上挠", cl.chord[i], Hh[i] - vth, 1e-8);
+        // 本构自检：竖索 T = EA·(Ln - L0)/L0
+        check("索长迭代：竖索本构 T = EA(Ln-L0)/L0",
+              EAc * (cl.chord[i] - cl.L0[i]) / cl.L0[i], Tt[i], 1e-7);
+        // 无应力索长必须短于弦长（索被张拉）
+        check("索长迭代：无应力索长 < 弦长（已张拉）",
+              cl.L0[i] < cl.chord[i] ? 1.0 : 0.0, 1.0, 0.0);
+    }
+    check("索长迭代：梁端竖向位移 vs 闭式解", vz, vth, 1e-7);
+    std::printf("  %d 轮（首轮含 1 次差分探测），索力误差=%.2e\n"
+                "  索1：L0=%.5f m，弦长=%.5f m；索2：L0=%.5f m，弦长=%.5f m\n"
+                "  梁端上挠=%.4f mm（预抬高迭代的一阶估计）\n",
+                cl.iterations, cl.maxTensionErr,
+                cl.L0[0], cl.chord[0], cl.L0[1], cl.chord[1], 1.0e3 * vz);
+}
+
 }  // namespace
 
 int main() {
@@ -316,6 +472,8 @@ int main() {
         testCRCantileverCircle();
         testCRSmallLoadMatchesLinear();
         testCableUnstrainedLength();
+        testCableSagVsExactCatenary();
+        testCableLengthIteration();
     } catch (const std::exception& e) {
         std::printf("\n[ERROR] 异常: %s\n", e.what());
         ++g_fail;

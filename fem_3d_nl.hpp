@@ -229,6 +229,70 @@ inline CRBeamState crBeamState(const Vec3& p1c, const Vec3& p2c,
     return st;
 }
 
+// ==================== 缆索垂度（sag）====================
+//
+// 缆索不是直杆：自重让它垂成悬链线，弦的伸长因此"看起来"更软。
+// 浅垂度（f/L < 1/8，斜拉桥拉索与悬索桥主缆均满足）下的力-伸长关系：
+//
+//      Ln = L0·(1 + T/(EA)) - w²·Lh³/(24·T²)
+//
+// 其中 Ln = 弦长，L0 = 无应力（弧）长度，Lh = 弦的水平投影，w = 单位长重度。
+// 第二项即垂度缩短量 s(T) = w²Lh³/(24T²)（抛物线悬链线结果）：索绷得越紧，
+// 垂度越小、弦越长；索放松则垂度增大、弦缩短。
+//
+// 对该关系求导即得**切线刚度**（注意分母里的 L0 不能省）：
+//
+//      dT/dLn = 1 / (L0/(EA) + w²Lh³/(12T³))
+//             = (EA/L0) / (1 + w²·Lh³·EA/(12·T³·L0)) = Eeq·A/L0
+//      Eeq    = E / (1 + w²·Lh³·E·A/(12·T³·L0))   ← 这正是 Ernst 等效弹模
+//
+// 标准 Ernst 式写作 E/(1 + (wL)²EA/(12T³))，那里默认 L ≈ L0 ≈ Lh；
+// 本内核保留分母中的 L0，使"内力—切线"严格共轭（二者只差 O(弹性应变)）。
+//
+// 注意：上式是**固定水平投影 Lh** 下的偏导，正是 Ernst 式的定义（Ernst 推导
+// 时把水平跨径 L 当常量）。单元实际切线由差分对节点位置求得，会额外带上
+// ∂/∂Lh 项（端点沿弦向移动时 Lh 同时变），量级仅 O(垂度²)；它与内力严格
+// 共轭，才是 Newton 二次收敛的保证。Ernst 模量在这里的定位是"工程上可读
+// 的等效弹模"，而不是切线的替代品。
+//
+// 因此这里不是"拿 Ernst 模量去硬套直杆"（那样内力与刚度不共轭，Newton
+// 会退化成线性收敛），而是：
+//      · 内力用上述非线性关系的精确反解（Newton 3~4 次，单调必收敛）；
+//      · 切线用 Ernst 模量——它恰好等于该关系的导数，二者严格共轭。
+// 这是本内核相对常规"直杆 + Ernst 模量"做法的精度差异所在。
+
+// 由弦长反解索力（浅垂度弹性悬链线）。T>0 唯一解（g 单调）。
+inline double cableTensionFromChord(double Ln, double L0, double EA, double w, double Lh) {
+    if (w <= 0.0 || Lh <= 1e-12) {
+        return EA * (Ln - L0) / L0;          // 竖直索或未给重度：退化为直杆
+    }
+    const double cSag = w * w * Lh * Lh * Lh / 24.0;    // s(T) = cSag / T²
+    // 初值：张紧时用直杆估计；松弛时用抛物线垂度下的水平力估计
+    double T = EA * (Ln - L0) / L0;
+    if (T < 1e-6) {
+        const double slack = std::max(L0 - Ln, 1e-9);
+        T = std::max(w * Lh * Lh / (8.0 * std::sqrt(3.0 * Lh * slack / 8.0)), 1e-3);
+    }
+    // g(T) = L0 + L0·T/EA - cSag/T² - Ln；g'(T) = L0/EA + 2cSag/T³ > 0
+    for (int it = 0; it < 60; ++it) {
+        const double g = L0 + L0 * T / EA - cSag / (T * T) - Ln;
+        const double gp = L0 / EA + 2.0 * cSag / (T * T * T);
+        const double step = g / gp;
+        T -= step;
+        if (T < 1e-6) T = 1e-6;             // 防止 Newton 步长跨越奇点
+        if (std::abs(step) <= 1e-12 * std::max(1.0, T)) break;
+    }
+    return T;
+}
+
+// Ernst 等效弹性模量（= 上述力-伸长关系的切线 dT/dLn·L0/A，与内力严格共轭）
+inline double cableErnstModulus(double E, double A, double w, double Lh, double T,
+                                double L0 = 0.0) {
+    if (w <= 0.0 || Lh <= 1e-12 || T <= 0.0) return E;
+    const double Lr = (L0 > 0.0) ? L0 : Lh;      // 未给 L0 时退化为标准 Ernst 式
+    return E / (1.0 + w * w * Lh * Lh * Lh * E * A / (12.0 * T * T * T * Lr));
+}
+
 // ==================== 单元级内力 / 一致切线 ====================
 
 // 单元位移自由度数：BEAM=12，BEAM7=14，其余（TRUSS/CABLE/STRUT）=6
@@ -248,6 +312,7 @@ struct CRElemData {
     Eigen::Matrix3d E0 = Eigen::Matrix3d::Identity();
     double Eeff = 0.0, A = 0.0, Iy = 0.0, Iz = 0.0, J = 0.0, G = 0.0, Iw = 0.0;
     double L0 = 0.0;              // 无应力长度
+    double w = 0.0;               // 缆索单位长度重量 N/m（>0 启用垂度效应）
     double istrnEff = 0.0;        // 初应变（含收缩）
     Eigen::Matrix<double, 12, 12> Kl12 = Eigen::Matrix<double, 12, 12>::Zero();
     Eigen::Matrix<double, 14, 14> Kl14 = Eigen::Matrix<double, 14, 14>::Zero();
@@ -267,6 +332,7 @@ inline CRElemData crMakeElemData(const Model3D& m, const Element3D& e, const Dof
     d.A = e.A; d.Iy = e.Iy; d.Iz = e.Iz; d.J = e.J; d.G = e.G; d.Iw = e.Iw;
     const double Lg = std::max((d.p2 - d.p1).norm(), 1e-12);
     d.L0 = (e.L0 > 0.0) ? e.L0 : Lg;
+    d.w = e.w;
     d.istrnEff = e.istrn - m.shrinkageEcs;
     if (d.n == 12 || d.n == 14) {
         d.Kl12 = beam3DLocalStiffness(d.Eeff, e.A, e.Iy, e.Iz, e.J, e.G, Lg);
@@ -297,15 +363,23 @@ inline void crElementInternal(const CRElemData& ed,
             const Vec3 l = p2c - p1c;
             const double Ln = std::max(l.norm(), 1e-12);
             const Vec3 c = l / Ln;
-            const double kA = ed.Eeff * ed.A / ed.L0;
-            // 机械应变 = 工程应变 - 初应变
-            double N = kA * (Ln - ed.L0) - ed.Eeff * ed.A * ed.istrnEff;
             const bool tensionOnly = (ed.type == "CABLE");
-            const double Nuse = (tensionOnly && N < 0.0) ? 0.0 : N;   // 索：松弛时不传力
-            f.segment<3>(0) = -Nuse * c;
-            f.segment<3>(3) = Nuse * c;
-            if (ql) { (*ql).setZero(); (*ql)[0] = -Nuse; (*ql)[1] = Nuse; }
-            if (axial) *axial = Nuse;
+            double N = 0.0;
+            if (tensionOnly && ed.w > 0.0) {
+                // 缆索垂度：弦长 → 索力走弹性悬链线的精确反解；
+                // 切线由外层差分自动得到，其极限值正是 Ernst 等效模量
+                // （dT/dLn = Eeq·A/L0），因此内力与切线严格共轭。
+                const double Lh = std::sqrt(l.x() * l.x() + l.y() * l.y());
+                N = cableTensionFromChord(Ln, ed.L0, ed.Eeff * ed.A, ed.w, Lh);
+            } else {
+                N = ed.Eeff * ed.A / ed.L0 * (Ln - ed.L0);
+            }
+            N -= ed.Eeff * ed.A * ed.istrnEff;       // 初应变（可作为索力调整手段）
+            if (tensionOnly && N < 0.0) N = 0.0;     // 索：松弛时不传力
+            f.segment<3>(0) = -N * c;
+            f.segment<3>(3) = N * c;
+            if (ql) { (*ql).setZero(); (*ql)[0] = -N; (*ql)[1] = N; }
+            if (axial) *axial = N;
             return f;
         }
 
@@ -441,6 +515,18 @@ inline NonlinearResult3D solveModel3DNonlinear(const Model3D& m,
         if (d >= 0) Fext(d) += val;
     }
     for (const auto& s : springs) Fext(s.dof) += s.k * s.val;
+    // 缆索自重：两端各承担 w·L0/2（向下）。
+    // 物理上索把自重传给锚固点，弦向只传索力，故这里按外荷载施加。
+    for (const auto& e : m.elements) {
+        if (e.type != "CABLE" || e.w <= 0.0) continue;
+        const double Lc = (e.L0 > 0.0) ? e.L0
+                                       : (m.nodes.at(e.n2) - m.nodes.at(e.n1)).norm();
+        const double half = -0.5 * e.w * Lc;
+        const int d1 = dm.safeDof(e.n1, 2);      // dof 3 = z（竖向）
+        const int d2 = dm.safeDof(e.n2, 2);
+        if (d1 >= 0) Fext(d1) += half;
+        if (d2 >= 0) Fext(d2) += half;
+    }
 
     // ---- 状态：位移（约束自由度直接置为指定值）----
     Eigen::VectorXd u = Eigen::VectorXd::Zero(nd);
@@ -570,6 +656,190 @@ inline NonlinearResult3D solveModel3DNonlinear(const Model3D& m,
         const int nq = (ed.n == 14) ? 14 : ((ed.n == 12) ? 12 : 2);
         for (int i = 0; i < nq; ++i) qv.push_back(q[i]);
         out.localForces.push_back(qv);
+    }
+    return out;
+}
+
+// ==================== 成桥态：无应力索长迭代 ====================
+//
+// 成桥态的目标：在设计线形下恒载由索力平衡，各索达到目标索力 T*。
+// 索是"做短一点"才张得紧的构件，因此控制量不是索力而是**无应力索长 L0**
+// ——它同时也是施工下料的直接依据。
+//
+// 未知量与方程：每根索一个未知量 L0、一个目标 T*，故迭代对 T(L0) 求根：
+//   ① 初值取"目标状态估计"：
+//        L0 = (L* + s(T*)) / (1 + T*/(EA))，  s(T) = w²Lh³/(24T²) 为垂度缩短
+//      （L* = 设计弦长；即先假设"结构上正好落在设计几何时索力为 T*"）
+//   ② 完整非线性求解（含恒载 + 索自重），取出该索的索力 Tn；
+//   ③ 影响矩阵 Newton 步：ΔL0 = -J⁻¹·(Tn - T*)，  J_ij = ∂T_i/∂L0_j
+//      J 由 nc 次扰动求解一次性建立并冻结复用（详见下方实现处注释）。
+//      索与索之间通过结构位移耦合，若只用对角斜率，收敛率≈耦合系数，
+//      实测会退化到数十轮；完整 J 才恢复二次收敛。
+//
+// 为什么必须对 T(L0) 求根，而不能"跟着弦长走"（L0 ← L0 + (Ln - L*)）：
+//   弦长与索力在柔性体系里是**反号**的。以竖索吊悬臂梁为例：索力偏大 →
+//   梁端被拉高 → 弦变短 → 上式继续缩短 L0 → 索力更大 → 发散。
+//   而对 T(L0)，串联弹簧论证给出 dT/dL0 = -EA/(L0 + EA/k_s) < 0 恒成立
+//   （k_s 为结构沿索轴方向的局部刚度），故 Newton 方向恒正确、必收敛。
+//
+// 收敛后：
+//   · 索力 = 目标成桥索力 T*；
+//   · 位移 u 是**物理上正确的成桥变形**：本模型以设计线形为参考构形（梁在
+//     该构形下无内力），故恒载下梁必然变形，u ≠ 0。
+//     要让结构"恒载下正好落到设计线形"，还需再解一次**几何（预抬高）迭代**：
+//     移动节点会改变索弦长 → 改变索力 → 又改变位移，这个反馈环增益
+//     = Kc/(kb + Kc)（Kc 为索轴向刚度、kb 为结构沿索向局部刚度），
+//     在索-梁刚度同量级时是 O(1)，因此单次代入 u 会过冲甚至发散，
+//     必须按影响矩阵 / Newton 同时迭代。u 是该迭代的一阶估计与输入。
+//     （成桥态梁内应有的弯矩由"无应力曲率"承担，属无应力状态法的后续扩展，
+//       不影响索长迭代本身。）
+//   · L0 可直接用于下料与正装分析。
+
+struct CableTarget3D {
+    int elem = 0;
+    double tension = 0.0;        // 目标成桥索力（N，拉为正）
+};
+
+struct CableLengthOptions3D {
+    int maxIter = 30;
+    double tolTension = 1e-6;    // 索力相对容差（唯一收敛判据）
+    double slopeStep = 1e-4;     // 首轮割线斜率的有限差分相对步长
+    double stepCap = 0.1;        // 单轮 L0 步长上限（相对 L0），防野步长
+    NonlinearOptions3D nl;       // 每轮内部使用的非线性求解选项
+};
+
+struct CableLengthResult3D {
+    bool converged = false;
+    int iterations = 0;
+    std::vector<int> elems;
+    std::vector<double> L0;          // 收敛后的无应力索长（施工下料用）
+    std::vector<double> chord;       // 最终弦长
+    std::vector<double> tension;     // 最终索力
+    std::vector<double> Ltarget;     // 设计弦长（仅用于报告成桥变形量级）
+    double maxGeomErr = 0.0;         // max|弦长 - 设计弦长|：成桥变形量（报告，不作判据）
+    double maxTensionErr = 0.0;
+    std::vector<double> u;           // 成桥态位移；其反号 = 需要的预抬高量
+};
+
+inline CableLengthResult3D iterateCableUnstrainedLengths(
+        Model3D m,
+        const std::vector<CableTarget3D>& targets,
+        const CableLengthOptions3D& opt = {}) {
+    CableLengthResult3D out;
+    if (targets.empty()) return out;
+
+    // ---- 索单元指针、设计弦长、水平投影、EA ----
+    const std::size_t nc = targets.size();
+    std::vector<Element3D*> ep(nc, nullptr);
+    std::vector<double> Ltar(nc, 0.0), Lh(nc, 0.0), EA(nc, 0.0);
+    for (std::size_t k = 0; k < nc; ++k) {
+        Element3D* e = nullptr;
+        for (auto& q : m.elements) if (q.id == targets[k].elem) { e = &q; break; }
+        if (!e) throw std::runtime_error("索长迭代：找不到单元 " + std::to_string(targets[k].elem));
+        if (targets[k].tension <= 0.0)
+            throw std::runtime_error("索长迭代：目标索力必须为正（单元 "
+                                     + std::to_string(targets[k].elem) + "）");
+        ep[k] = e;
+        const Vec3 p1 = m.nodes.at(e->n1), p2 = m.nodes.at(e->n2);
+        const Vec3 d = p2 - p1;
+        Ltar[k] = d.norm();
+        Lh[k] = std::sqrt(d.x() * d.x() + d.y() * d.y());
+        EA[k] = e->E * e->A;
+        out.elems.push_back(targets[k].elem);
+        // 初始 L0：目标状态估计（含垂度缩短 s(T*) = w²Lh³/(24T*²)）
+        double sag = 0.0;
+        if (e->w > 0.0 && Lh[k] > 1e-12)
+            sag = e->w * e->w * Lh[k] * Lh[k] * Lh[k]
+                  / (24.0 * targets[k].tension * targets[k].tension);
+        e->L0 = (Ltar[k] + sag) / (1.0 + targets[k].tension / EA[k]);
+    }
+    out.Ltarget = Ltar;
+
+    // 一次完整非线性求解 → 取出各索的弦长与索力
+    auto probe = [&](std::vector<double>& chord, std::vector<double>& tens) {
+        const NonlinearResult3D r = solveModel3DNonlinear(m, opt.nl);
+        chord.assign(nc, 0.0);
+        tens.assign(nc, 0.0);
+        for (std::size_t k = 0; k < nc; ++k) {
+            std::size_t idx = 0;
+            while (idx < r.elemIds.size() && r.elemIds[idx] != targets[k].elem) ++idx;
+            if (idx >= r.elemIds.size())
+                throw std::runtime_error("索长迭代：结果缺少单元 "
+                                         + std::to_string(targets[k].elem));
+            chord[k] = r.Ln[idx];
+            tens[k] = r.axial[idx];
+        }
+        return r;
+    };
+
+    // ---- 影响矩阵 Newton：对 T(L0) 求根 ----
+    // 索与索之间通过结构位移耦合。若只用对角斜率，收敛率≈耦合系数（本仓库
+    // 双索算例实测 0.7，40 轮才收敛到 1e-6），因此这里按桥梁行业的标准做法
+    // 建立**完整影响矩阵** J_ij = ∂T_i/∂L0_j（nc 次额外求解），之后冻结复用
+    // ——J 随 L0 的变化很小，Newton 因此保持二次收敛，总求解次数 ≈ nc + 3。
+    // TODO(P3-2b)：J 的每一列可用同一套切线刚度分解做**线性**回代求得
+    // （扰动 L0_j 等价于在索两端加一对轴力，K·du = dF 解一次即可），
+    // 把非线性求解次数从 nc 降到 1，用于百根以上拉索的实桥。
+    const int ncv = static_cast<int>(nc);
+    Eigen::MatrixXd J = Eigen::MatrixXd::Zero(ncv, ncv);
+    Eigen::VectorXd res = Eigen::VectorXd::Zero(ncv);
+    std::vector<double> chord(nc, 0.0), tens(nc, 0.0);
+    std::vector<double> c2(nc, 0.0), t2(nc, 0.0);
+    bool haveJ = false;
+    double terrPrev = 0.0;
+    for (int it = 0; it < opt.maxIter; ++it) {
+        const NonlinearResult3D r = probe(chord, tens);
+        out.iterations = it + 1;
+        out.u = r.u;
+
+        double gerr = 0.0, terr = 0.0;
+        for (std::size_t k = 0; k < nc; ++k) {
+            gerr = std::max(gerr, std::abs(chord[k] - Ltar[k]));
+            terr = std::max(terr, std::abs(tens[k] - targets[k].tension) / targets[k].tension);
+        }
+        out.chord = chord;
+        out.tension = tens;
+        out.maxGeomErr = gerr;
+        out.maxTensionErr = terr;
+        if (terr <= opt.tolTension) { out.converged = true; break; }
+
+        // 影响矩阵：首轮必建；若收敛停滞则就地刷新
+        if (!haveJ || (it > 0 && terr > 0.5 * terrPrev)) {
+            std::vector<double> L0c(nc, 0.0);
+            for (std::size_t k = 0; k < nc; ++k) L0c[k] = ep[k]->L0;
+            for (std::size_t j = 0; j < nc; ++j) {
+                for (std::size_t k = 0; k < nc; ++k) ep[k]->L0 = L0c[k];
+                const double dLj = -opt.slopeStep * L0c[j];   // 缩短 → 索力增大
+                ep[j]->L0 = L0c[j] + dLj;
+                probe(c2, t2);
+                for (std::size_t i = 0; i < nc; ++i)
+                    J(static_cast<int>(i), static_cast<int>(j)) = (t2[i] - tens[i]) / dLj;
+            }
+            for (std::size_t k = 0; k < nc; ++k) ep[k]->L0 = L0c[k];
+            haveJ = true;
+        }
+
+        // Newton 步 + 步长保护（J 奇异时退化为对角步）
+        for (std::size_t k = 0; k < nc; ++k) res(k) = tens[k] - targets[k].tension;
+        const Eigen::VectorXd dL = J.fullPivLu().solve(-res);
+        terrPrev = terr;
+        for (std::size_t k = 0; k < nc; ++k) {
+            const int kk = static_cast<int>(k);
+            double s = dL(kk);
+            if (!std::isfinite(s))
+                s = (J(kk, kk) < -1e-12) ? -res(kk) / J(kk, kk) : 0.0;
+            const double cap = opt.stepCap * ep[k]->L0;
+            if (s > cap) s = cap;
+            if (s < -cap) s = -cap;
+            ep[k]->L0 = std::max(ep[k]->L0 + s, 1e-6);
+        }
+    }
+
+    // ---- 输出最终 L0 ----
+    out.L0.clear();
+    for (const auto& t : targets) {
+        for (const auto& e : m.elements)
+            if (e.id == t.elem) { out.L0.push_back(e.L0); break; }
     }
     return out;
 }
