@@ -212,6 +212,7 @@ fem_add_executable(example_modal example_modal.cpp)
 fem_add_executable(example_3d_modal example_3d_modal.cpp)
 fem_add_executable(example_3d_report example_3d_report.cpp)
 fem_add_executable(modal_bench bench/modal_bench.cpp)
+fem_add_executable(nl_bench bench/nl_bench.cpp)
 
 # ---- 2D/3D 分库 ----
 # 2D 层（fem_2d）编译为静态库；共享核心 fem.hpp 与 3D 层 fem_3d.hpp 为纯头文件。

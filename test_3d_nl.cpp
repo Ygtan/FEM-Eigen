@@ -620,6 +620,82 @@ void testCompletionStateThreeCable() {
                 cs.tension[2] / 1e3, cs.maxClosureErr);
 }
 
+// ---------------------------------------------------------------
+// 13. 索影响矩阵：解析式 J = M·D 必须等于"逐根扰动 + 完整重算"的黄金标准。
+//     这条是用以确保"提速不损失正确性"的硬约束：P3 提速把建立 J 的代价从
+//     nc 次非线性求解降为 1 次分解 + nc 次回代，二者必须给出同一个 J。
+//     三索模型索间耦合最强（中索一动，两根边索都跟着变），是理想试金石。
+// ---------------------------------------------------------------
+void testCableInfluenceMatrix() {
+    std::printf("\n[索影响矩阵：解析 J = M·D vs 逐根扰动重算]\n");
+    const double L = 30.0, H = 40.0, P = 1.0e6;
+    Model3D m = makeThreeCableBeam(L, H, 3.45e10, 6.0, 4.0, 1.95e11, 5.0e-3, P);
+    const std::vector<int> ids = {10, 11, 12};
+    const std::vector<double> Ttar = {5.0 * P / 16.0, 11.0 * P / 8.0, 5.0 * P / 16.0};
+    for (std::size_t k = 0; k < 3; ++k) {
+        for (auto& e : m.elements) {
+            if (e.id != ids[k]) continue;
+            const Vec3 d3 = m.nodes.at(e.n2) - m.nodes.at(e.n1);
+            e.L0 = cableUnstrainedLengthForTension(d3.norm(), Ttar[k], e.E * e.A, e.w,
+                                                   std::sqrt(d3.x() * d3.x() + d3.y() * d3.y()));
+        }
+    }
+
+    NonlinearOptions3D nl;
+    nl.loadSteps = 2; nl.maxIter = 40; nl.tolForce = 1e-11;
+    NLTangent3D tan;
+    const NonlinearResult3D r0 = solveModel3DNonlinear(m, nl, &tan);
+    std::vector<double> T0(3, 0.0);
+    for (int k = 0; k < 3; ++k) {
+        std::size_t i = 0;
+        while (r0.elemIds[i] != ids[k]) ++i;
+        T0[k] = r0.axial[i];
+    }
+
+    const DofMap3D dm = buildDofMap3D(m);
+    const int nd = dm.nDofs;
+    std::vector<char> isC(nd, 0), isT(nd, 0);
+    for (const auto& c : m.constraints) {
+        if (c.k > 0.0) continue;
+        const int d = dm.safeDof(c.node, c.dof - 1);
+        if (d >= 0) isC[d] = 1;
+    }
+    for (std::size_t i = 0; i < dm.nodeIds.size(); ++i)
+        for (int a = 0; a < std::min(dm.dofCount[i], 3); ++a) isT[dm.dofStart[i] + a] = 1;
+    for (int d = 0; d < nd; ++d) if (isC[d]) isT[d] = 0;
+
+    const CableSensitivity3D s = cableSensitivity3D(m, dm, ids, r0.u, T0, isT, tan);
+    const Eigen::MatrixXd J = s.M * s.D.asDiagonal();
+
+    // 黄金标准：逐根扰动 L0_j，完整重算，取 (T_i(L0_j+δ) - T_i)/δ
+    const double relp = 1e-4;
+    double maxRel = 0.0;
+    for (int j = 0; j < 3; ++j) {
+        Model3D mj = m;
+        double dL = 0.0;
+        for (auto& e : mj.elements)
+            if (e.id == ids[j]) { dL = -relp * e.L0; e.L0 += dL; break; }
+        const NonlinearResult3D rj = solveModel3DNonlinear(mj, nl, nullptr);
+        for (int i = 0; i < 3; ++i) {
+            std::size_t q = 0;
+            while (rj.elemIds[q] != ids[i]) ++q;
+            const double Jnum = (rj.axial[q] - T0[i]) / dL;
+            const double den = std::max(std::abs(Jnum), std::abs(J(i, j)));
+            maxRel = std::max(maxRel, std::abs(Jnum - J(i, j)) / std::max(den, 1e-12));
+        }
+    }
+    // 一阶影响矩阵：扰动量 1e-4 下的二阶残差应在 1e-3 以内
+    check("影响矩阵：解析 J = M·D vs 扰动重算（最大相对差）", maxRel, 0.0, 2e-3);
+    // 对角元必须是 dT/dL0 的量级且为负（索做短 → 索力增大）
+    check("影响矩阵：对角元为负（L0 缩短 → 索力增大）",
+          (J(0, 0) < 0.0 && J(1, 1) < 0.0 && J(2, 2) < 0.0) ? 1.0 : 0.0, 1.0, 0.0);
+    // 非对角元非零 = 索间耦合确实存在（否则退化成对角割线，收敛会变慢）
+    check("影响矩阵：非对角元非零（索间耦合）",
+          std::abs(J(0, 1)) > 1e-8 * std::abs(J(1, 1)) ? 1.0 : 0.0, 1.0, 0.0);
+    std::printf("  J 对角=(%.4g, %.4g, %.4g) N/m；最大相对差=%.2e\n",
+                J(0, 0), J(1, 1), J(2, 2), maxRel);
+}
+
 }  // namespace
 
 int main() {
@@ -639,6 +715,7 @@ int main() {
         testRigidSupportCableTension();
         testCompletionStateSingleCable();
         testCompletionStateThreeCable();
+        testCableInfluenceMatrix();
     } catch (const std::exception& e) {
         std::printf("\n[ERROR] 异常: %s\n", e.what());
         ++g_fail;

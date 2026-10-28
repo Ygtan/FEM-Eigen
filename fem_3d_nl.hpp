@@ -69,7 +69,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <map>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -462,6 +464,12 @@ struct NonlinearOptions3D {
     double tolForce = 1e-6;      // 残差相对外荷载范数
     double tolDisp = 1e-9;       // 位移增量相对范数
     bool verbose = false;
+    // Newton 迭代内复用符号分解（只做数值分解）。默认开；关掉可用于对照计时。
+    bool reuseFactorization = true;
+    // 线性求解后端。默认 SimplicialLDLT；装了 SuiteSparse 时可显式选 CHOLMOD
+    // （大规模稀疏上通常快数倍——这是把 P1-7 里"从未接到求解路径"的 CHOLMOD
+    // 真正用起来的地方）。不可用时 Factorization3D 会自动回退。
+    SolverType solver = SolverType::SimplicialLDLT;
 };
 
 struct NonlinearResult3D {
@@ -537,6 +545,9 @@ inline NonlinearResult3D solveModel3DNonlinear(const Model3D& m,
         if (d2 >= 0) Fext(d2) += half;
     }
 
+    // Newton 迭代用的可复用分解（整个求解只 compute 一次，其余 refactorize）
+    std::unique_ptr<Factorization3D> fac;
+
     // ---- 状态：位移（约束自由度直接置为指定值）----
     Eigen::VectorXd u = Eigen::VectorXd::Zero(nd);
     for (std::size_t i = 0; i < cdofs.size(); ++i) u(cdofs[i]) = cvals[i];
@@ -548,25 +559,50 @@ inline NonlinearResult3D solveModel3DNonlinear(const Model3D& m,
     };
 
     // 组装 F_int 与 K_t（K_t 可跳过）
+    //
+    // 稀疏模式"单调增长"：位置一旦进入 pattern 就不再移除，只有新增时才
+    // 触发重新分解。这是 Newton 迭代里复用符号分解的前提——Eigen 的
+    // factorize() 要求矩阵稀疏结构逐次不变，若模式抖动就会读到错误的符号
+    // 分解（表现为 Newton 突然不收敛）。
+    //
+    // 关键坑：pattern 不能在 u=0 时一次性定死。几何刚度 Kσ 正比于内力，
+    // 在参考态恒为零，它的非零位置此刻全部落在阈值以下；一旦结构受力，
+    // Kσ 出现而 pattern 里没有 → 切线缺一大块 → 收敛失败（实测即如此）。
+    // 单调增长让 Kσ 的结构在第一次受力时自动补进来，之后就稳定了。
+    std::vector<std::vector<std::pair<int, int>>> pat;
+    std::vector<std::vector<char>> inPat;
+    bool patChanged = false;
+
     auto assemble = [&](Eigen::VectorXd& Fint, SparseMat3D& K, bool wantK) {
         Fint = Eigen::VectorXd::Zero(nd);
         std::vector<Eigen::Triplet<double>> trips;
         Eigen::Matrix<double, 14, 1> ue;
         Eigen::Matrix<double, 14, 1> fe;
         Eigen::Matrix<double, 14, 14> Ke;
-        for (const auto& ed : eds) {
+        if (wantK && pat.empty()) {
+            pat.resize(eds.size());
+            inPat.assign(eds.size(), std::vector<char>(196, 0));
+        }
+        for (std::size_t ei = 0; ei < eds.size(); ++ei) {
+            const auto& ed = eds[ei];
             gather(ed, ue);
             crElementInternal(ed, ue, fe, wantK, wantK ? &Ke : nullptr);
             for (int k = 0; k < ed.n; ++k) Fint(ed.gdofs[k]) += fe[k];
-            if (wantK) {
-                const double scale = std::max(1.0, Ke.topLeftCorner(ed.n, ed.n).cwiseAbs().maxCoeff());
-                for (int r = 0; r < ed.n; ++r)
-                    for (int c = 0; c < ed.n; ++c) {
-                        const double v = Ke(r, c);
-                        if (std::abs(v) > 1e-12 * scale)
-                            trips.emplace_back(ed.gdofs[r], ed.gdofs[c], v);
+            if (!wantK) continue;
+            const double scale = std::max(1.0, Ke.topLeftCorner(ed.n, ed.n).cwiseAbs().maxCoeff());
+            for (int r = 0; r < ed.n; ++r)
+                for (int c = 0; c < ed.n; ++c) {
+                    const double v = Ke(r, c);
+                    const int p = r * 14 + c;
+                    if (inPat[ei][p]) {
+                        trips.emplace_back(ed.gdofs[r], ed.gdofs[c], v);
+                    } else if (std::abs(v) > 1e-12 * scale) {
+                        inPat[ei][p] = 1;
+                        pat[ei].push_back({r, c});
+                        trips.emplace_back(ed.gdofs[r], ed.gdofs[c], v);
+                        patChanged = true;
                     }
-            }
+                }
         }
         // 弹性支承：内力侧为 k·u（等效外荷载 k·value 已计入 Fext）
         for (const auto& s : springs) Fint(s.dof) += s.k * u(s.dof);
@@ -616,7 +652,15 @@ inline NonlinearResult3D solveModel3DNonlinear(const Model3D& m,
             // 约束自由度：增量恒为 0（u 已含指定位移）
             std::vector<double> zeros(cdofs.size(), 0.0);
             applyDirichlet(K, R, cdofs, zeros);
-            const Eigen::VectorXd du = solveSparse3D(K, R);
+            // 复用符号分解：矩阵结构不变，只有数值变 → 只做数值分解，
+            // 省掉重复的符号分解与列排序（大模型上通常是 factorize 的大头）。
+            if (!fac || patChanged || !opt.reuseFactorization) {
+                fac.reset(new Factorization3D(K, opt.solver));
+                patChanged = false;
+            } else {
+                fac->refactorize(K);
+            }
+            const Eigen::VectorXd du = fac->solve(R);
 
             // 收敛判据（只看自由自由度）
             double rn = 0.0, fn = 0.0, dn = 0.0;
@@ -683,6 +727,98 @@ inline NonlinearResult3D solveModel3DNonlinear(const Model3D& m,
     return out;
 }
 
+// ==================== 索体系的低秩敏感度算子 ====================
+//
+// 索承结构里，凡是"动索参数 → 看索力怎么变"的问题，敏感度都是**低秩**的：
+//
+//     B   (nd×nc)：列 k = 索 k 的轴向方向向量 [-e_k; +e_k]
+//     Kc  (nc)   ：dT_k/dLn_k（Ernst 切线，含垂度软化）
+//     D   (nc)   ：dT_k/dL0_k（固定弦长，纯标量关系）
+//     W   = K⁻¹B （一次分解，nc 次回代）
+//     M   = I - Kc·(BᵀW)      （nc×nc）
+//
+// 有了它，下面两件事都不再需要"每根索扰动一次、重跑一次完整非线性求解"：
+//
+//   · 索长迭代的影响矩阵   J = ∂T_i/∂L0_j = M·D
+//       推导：扰动 L0_j → 索 j 内力变化 D_j·ΔL0_j → 不平衡力 -D_j·b_j·ΔL0_j
+//             → du = K⁻¹(-D_j b_j ΔL0_j) → 索 i 索力变化 -Kc_i b_iᵀ K⁻¹ b_j D_j ΔL0_j
+//             加上 i=j 的直接项 D_i·ΔL0_j，整理即得 J = (I - Kc BᵀK⁻¹B)·D = M·D
+//
+//   · 成桥态几何迭代       (I + G)⁻¹，G = -K⁻¹B Kc Bᵀ（Woodbury，见 P3-3）
+//
+// 两者共用同一次矩阵分解：nc 根索的算价从 O(nc) 次非线性求解降到
+// 1 次分解 + nc 次回代。对百根以上拉索的实桥，这是数量级的差别。
+
+struct CableSensitivity3D {
+    Eigen::MatrixXd B;      // nd×nc
+    Eigen::VectorXd Kc;     // nc：dT/dLn
+    Eigen::VectorXd D;      // nc：dT/dL0
+    Eigen::MatrixXd W;      // nd×nc：K⁻¹B
+    Eigen::MatrixXd M;      // nc×nc：I - Kc·(BᵀW)
+};
+
+inline CableSensitivity3D cableSensitivity3D(const Model3D& m, const DofMap3D& dm,
+                                             const std::vector<int>& cableIds,
+                                             const std::vector<double>& u,
+                                             const std::vector<double>& tension,
+                                             const std::vector<char>& isT,
+                                             const NLTangent3D& tan) {
+    const int nd = dm.nDofs;
+    const int nc = static_cast<int>(cableIds.size());
+    CableSensitivity3D s;
+    s.B = Eigen::MatrixXd::Zero(nd, nc);
+    s.Kc = Eigen::VectorXd::Zero(nc);
+    s.D = Eigen::VectorXd::Zero(nc);
+    for (int k = 0; k < nc; ++k) {
+        const Element3D* e = nullptr;
+        for (const auto& q : m.elements) if (q.id == cableIds[k]) { e = &q; break; }
+        if (!e) throw std::runtime_error("索敏感度：找不到单元 " + std::to_string(cableIds[k]));
+        const int s1 = dm.dofStart[dm.index.at(e->n1)];
+        const int s2 = dm.dofStart[dm.index.at(e->n2)];
+        Vec3 p1 = m.nodes.at(e->n1), p2 = m.nodes.at(e->n2);
+        for (int a = 0; a < 3; ++a) { p1[a] += u[s1 + a]; p2[a] += u[s2 + a]; }
+        const Vec3 d3 = p2 - p1;
+        const double Ln = d3.norm();
+        if (Ln < 1e-12) throw std::runtime_error("索敏感度：索 "
+                                                 + std::to_string(cableIds[k]) + " 弦长退化");
+        const Vec3 ev = d3 / Ln;
+        const double Lh = std::sqrt(d3.x() * d3.x() + d3.y() * d3.y());
+        const double L0 = (e->L0 > 0.0) ? e->L0 : Ln;
+        for (int a = 0; a < 3; ++a) {
+            if (isT[s1 + a]) s.B(s1 + a, k) = -ev[a];
+            if (isT[s2 + a]) s.B(s2 + a, k) = +ev[a];
+        }
+        const double EA = e->E * e->A;
+        // 松弛索（T ≤ 0）不提供刚度，也不参与敏感度——否则会给 Newton 一个
+        // "这根索还能拉"的错误方向。
+        s.Kc(k) = (tension[k] > 0.0)
+                      ? cableErnstModulus(e->E, e->A, e->w, Lh, tension[k], L0) * e->A / L0
+                      : 0.0;
+        // D = ∂T/∂L0（固定弦长）：只是标量关系，中心差分代价可忽略且不会推错
+        const double h = 1e-7 * L0;
+        s.D(k) = (cableTensionFromChord(Ln, L0 + h, EA, e->w, Lh)
+                  - cableTensionFromChord(Ln, L0 - h, EA, e->w, Lh)) / (2.0 * h);
+    }
+    Factorization3D fac(tan.K);
+    s.W = fac.solveMulti(s.B);
+    for (int d = 0; d < nd; ++d) if (!isT[d]) s.W.row(d).setZero();
+    s.M = Eigen::MatrixXd::Identity(nc, nc) - s.Kc.asDiagonal() * (s.B.transpose() * s.W);
+    if (getenv("FEM_NL_DIAG")) {
+        // λ_k = Kc_k·b_kᵀK⁻¹b_k ∈ (0,1)：→1 表示"索刚度远大于结构其余刚度"，
+        // (I+G) 的对应特征值 1-λ → 0，Newton 步会被放大 1/(1-λ) 倍。
+        double lmin = 1e30, lmax = -1e30;
+        for (int k = 0; k < nc; ++k) {
+            const double lam = s.Kc(k) * (s.B.transpose() * s.W)(k, k);
+            lmin = std::min(lmin, lam); lmax = std::max(lmax, lam);
+        }
+        const Eigen::VectorXcd ev = s.M.eigenvalues();
+        double emin = 1e30;
+        for (int k = 0; k < ev.size(); ++k) emin = std::min(emin, std::abs(ev(k)));
+        std::printf("  [diag] λ∈[%.4g, %.4g]，|M 最小特征值|=%.4g\n", lmin, lmax, emin);
+    }
+    return s;
+}
+
 // ==================== 成桥态：无应力索长迭代 ====================
 //
 // 成桥态的目标：在设计线形下恒载由索力平衡，各索达到目标索力 T*。
@@ -726,7 +862,6 @@ struct CableTarget3D {
 struct CableLengthOptions3D {
     int maxIter = 30;
     double tolTension = 1e-6;    // 索力相对容差（唯一收敛判据）
-    double slopeStep = 1e-4;     // 首轮割线斜率的有限差分相对步长
     double stepCap = 0.1;        // 单轮 L0 步长上限（相对 L0），防野步长
     NonlinearOptions3D nl;       // 每轮内部使用的非线性求解选项
 };
@@ -778,9 +913,44 @@ inline CableLengthResult3D iterateCableUnstrainedLengths(
     }
     out.Ltarget = Ltar;
 
-    // 一次完整非线性求解 → 取出各索的弦长与索力
-    auto probe = [&](std::vector<double>& chord, std::vector<double>& tens) {
-        const NonlinearResult3D r = solveModel3DNonlinear(m, opt.nl);
+    // ---- 影响矩阵 Newton：对 T(L0) 求根 ----
+    // 索与索之间通过结构位移耦合。若只用对角斜率，收敛率≈耦合系数（本仓库
+    // 双索算例实测 0.7，40 轮才收敛到 1e-6），因此必须建立**完整影响矩阵**
+    // J_ij = ∂T_i/∂L0_j。
+    //
+    // J 不再靠"每根索扰动一次 + 重跑一次完整非线性求解"去凑，而是闭式给出：
+    //     J = M·D，  M = I - Kc·(BᵀK⁻¹B)，  D = diag(dT/dL0)
+    // 推导见 cableSensitivity3D。代价 = 1 次矩阵分解 + nc 次回代，而不是
+    // nc 次非线性求解（每含若干 Newton 迭代 + 若干次分解）。
+    // 之后冻结复用 J——它随 L0 的变化很小，Newton 保持二次收敛；
+    // 若某轮收敛停滞（残差降不到一半）就重建一次。
+    const DofMap3D dm = buildDofMap3D(m);
+    const int nd = dm.nDofs;
+    std::vector<char> isC(nd, 0), isT(nd, 0);
+    for (const auto& c : m.constraints) {
+        if (c.k > 0.0) continue;
+        const int d = dm.safeDof(c.node, c.dof - 1);
+        if (d >= 0) isC[d] = 1;
+    }
+    for (std::size_t i = 0; i < dm.nodeIds.size(); ++i) {
+        const int cnt = std::min(dm.dofCount[i], 3);
+        for (int a = 0; a < cnt; ++a) isT[dm.dofStart[i] + a] = 1;
+    }
+    for (int d = 0; d < nd; ++d) if (isC[d]) isT[d] = 0;
+
+    std::vector<int> ids(nc, 0);
+    for (std::size_t k = 0; k < nc; ++k) ids[k] = targets[k].elem;
+
+    const int ncv = static_cast<int>(nc);
+    Eigen::MatrixXd J = Eigen::MatrixXd::Zero(ncv, ncv);
+    Eigen::VectorXd res = Eigen::VectorXd::Zero(ncv);
+    std::vector<double> chord(nc, 0.0), tens(nc, 0.0);
+    bool needJ = true;
+    double terrPrev = 0.0;
+    for (int it = 0; it < opt.maxIter; ++it) {
+        NLTangent3D tan;
+        const NonlinearResult3D r =
+            solveModel3DNonlinear(m, opt.nl, needJ ? &tan : nullptr);
         chord.assign(nc, 0.0);
         tens.assign(nc, 0.0);
         for (std::size_t k = 0; k < nc; ++k) {
@@ -792,26 +962,6 @@ inline CableLengthResult3D iterateCableUnstrainedLengths(
             chord[k] = r.Ln[idx];
             tens[k] = r.axial[idx];
         }
-        return r;
-    };
-
-    // ---- 影响矩阵 Newton：对 T(L0) 求根 ----
-    // 索与索之间通过结构位移耦合。若只用对角斜率，收敛率≈耦合系数（本仓库
-    // 双索算例实测 0.7，40 轮才收敛到 1e-6），因此这里按桥梁行业的标准做法
-    // 建立**完整影响矩阵** J_ij = ∂T_i/∂L0_j（nc 次额外求解），之后冻结复用
-    // ——J 随 L0 的变化很小，Newton 因此保持二次收敛，总求解次数 ≈ nc + 3。
-    // TODO(P3-2b)：J 的每一列可用同一套切线刚度分解做**线性**回代求得
-    // （扰动 L0_j 等价于在索两端加一对轴力，K·du = dF 解一次即可），
-    // 把非线性求解次数从 nc 降到 1，用于百根以上拉索的实桥。
-    const int ncv = static_cast<int>(nc);
-    Eigen::MatrixXd J = Eigen::MatrixXd::Zero(ncv, ncv);
-    Eigen::VectorXd res = Eigen::VectorXd::Zero(ncv);
-    std::vector<double> chord(nc, 0.0), tens(nc, 0.0);
-    std::vector<double> c2(nc, 0.0), t2(nc, 0.0);
-    bool haveJ = false;
-    double terrPrev = 0.0;
-    for (int it = 0; it < opt.maxIter; ++it) {
-        const NonlinearResult3D r = probe(chord, tens);
         out.iterations = it + 1;
         out.u = r.u;
 
@@ -826,25 +976,17 @@ inline CableLengthResult3D iterateCableUnstrainedLengths(
         out.maxTensionErr = terr;
         if (terr <= opt.tolTension) { out.converged = true; break; }
 
-        // 影响矩阵：首轮必建；若收敛停滞则就地刷新
-        if (!haveJ || (it > 0 && terr > 0.5 * terrPrev)) {
-            std::vector<double> L0c(nc, 0.0);
-            for (std::size_t k = 0; k < nc; ++k) L0c[k] = ep[k]->L0;
-            for (std::size_t j = 0; j < nc; ++j) {
-                for (std::size_t k = 0; k < nc; ++k) ep[k]->L0 = L0c[k];
-                const double dLj = -opt.slopeStep * L0c[j];   // 缩短 → 索力增大
-                ep[j]->L0 = L0c[j] + dLj;
-                probe(c2, t2);
-                for (std::size_t i = 0; i < nc; ++i)
-                    J(static_cast<int>(i), static_cast<int>(j)) = (t2[i] - tens[i]) / dLj;
-            }
-            for (std::size_t k = 0; k < nc; ++k) ep[k]->L0 = L0c[k];
-            haveJ = true;
+        // 影响矩阵：J = M·D（一次分解 + nc 次回代）
+        if (needJ) {
+            const CableSensitivity3D s =
+                cableSensitivity3D(m, dm, ids, r.u, tens, isT, tan);
+            J = s.M * s.D.asDiagonal();
         }
 
         // Newton 步 + 步长保护（J 奇异时退化为对角步）
         for (std::size_t k = 0; k < nc; ++k) res(k) = tens[k] - targets[k].tension;
         const Eigen::VectorXd dL = J.fullPivLu().solve(-res);
+        needJ = (it > 0 && terrPrev > 0.0 && terr > 0.5 * terrPrev);   // 停滞则重建
         terrPrev = terr;
         for (std::size_t k = 0; k < nc; ++k) {
             const int kk = static_cast<int>(k);
@@ -887,6 +1029,25 @@ inline CableLengthResult3D iterateCableUnstrainedLengths(
 // 调索力，再把位移反号当预抬高，二者互相打架：闭环增益 = Kc/(kb + Kc)，
 // 索-梁刚度同量级时 ≈ 0.5，不动点迭代数十轮，单次代入必过冲（P3-2 实测）。
 // 本方案 L0 一步到位，几何迭代只处理剩下的弱耦合，Newton 2~3 轮收敛。
+//
+// 几何闭合方程的 Jacobian 是良态的，但**条件数随索刚度增大而恶化**：
+//      ∂u/∂ΔX = -K⁻¹K_索   ⇒   I + ∂u/∂ΔX = K⁻¹K_梁塔
+// （K = K_梁塔 + K_索）。索越刚、梁塔相对越柔，K⁻¹K_梁塔 越小 → Newton 步被
+// 放大 1/|λ_min| 倍（斜拉桥算例实测 λ_min ≈ 0.03，步长放大 30 倍）。因此
+// 几何迭代**必须**带回溯线搜索：取整步会直接反弹发散。
+//
+// 还有一条实测教训：上式只计入了索。梁的参考轴方向同样参与——移动锚点会
+// 改变梁的参考轴，在"空间增量约定"（T = expMap(ψ)·E0）下节点三元组跟着转，
+// 局部转角因此改变一阶量；实测扰动一个**没有索**的主梁节点也能引起位移变化，
+// 量级与索项相当（斜拉桥算例里 G 的误差约 20%）。完整计入需构造材料刚度并
+// 令 G = -K⁻¹K_mat（TODO(P3-3b)）。因此保留了"Newton 步失效 → 退化为不动点
+// 步"的兜底，作为不依赖敏感度的收敛保证。
+//
+// 最后一条工程判断：预抬高量应当**小**（厘米～分米级）。若迭代给出的 ΔX 达到
+// 米级，说明目标索力本身不合理（梁被强迫变形到设计线形会产生巨大内力），
+// 应当回到索力的确定方法，而不是靠几何迭代硬凑——刚性支承连续梁法在"支座与
+// 索锚点紧邻"时会给出畸变的反力（实测 min/max 相差 17 倍），这是它的已知局限，
+// 实桥应改用最小弯曲能量法/影响矩阵法（后续阶段）。
 //
 // 几何迭代的敏感度是**低秩**的：共转梁单元对节点坐标的平移/转动严格不变
 // （刚体不变性，test_3d_nl 已钉死到 1e-16），所以 ΔX 只通过索产生不平衡力：
@@ -994,6 +1155,8 @@ struct ErectionGeometryOptions3D {
     int maxIter = 20;
     double tolClosure = 1e-9;    // 几何闭合容差（m）
     double stepCap = 2.0;        // 单轮节点坐标变化上限（m），防野步长
+    int maxLineSearch = 8;       // 回溯线搜索次数
+    double lineSearchFactor = 0.4;   // 每次回溯的衰减系数
     bool verbose = false;
     NonlinearOptions3D nl;
 };
@@ -1043,96 +1206,126 @@ inline ErectionGeometryResult3D iterateErectionGeometry(Model3D m,
                                              + std::to_string(cableIds[k]));
     }
 
-    std::vector<double> dX(nd, 0.0);                    // 制造线形相对设计线形的偏移
-    Eigen::VectorXd Fv = Eigen::VectorXd::Zero(nd);
-
-    for (int it = 0; it < opt.maxIter; ++it) {
-        // ---- ① 把 ΔX 落到节点坐标上（参考构形随之改变 = 制造线形无应力）----
+    // 一次"应用几何 → 非线性求解 → 取闭合残差"
+    struct GeomEval {
+        double err = 0.0;
+        std::vector<double> u, tension, chord;
+        Eigen::VectorXd Fv;
+    };
+    auto evalGeom = [&](const std::vector<double>& dx, NLTangent3D* tan) {
+        // 把 ΔX 落到节点坐标上（参考构形随之改变 = 制造线形无应力）
         for (std::size_t i = 0; i < dm.nodeIds.size(); ++i) {
             const int s = dm.dofStart[i];
             Vec3 p = X0.at(dm.nodeIds[i]);
             const int cnt = std::min(dm.dofCount[i], 3);
-            for (int a = 0; a < cnt; ++a) p[a] += dX[s + a];
+            for (int a = 0; a < cnt; ++a) p[a] += dx[s + a];
             m.nodes[dm.nodeIds[i]] = p;
         }
-
-        // ---- ② 完整非线性求解（恒载 + 索自重 + 索力）----
-        NLTangent3D tan;
-        const NonlinearResult3D r = solveModel3DNonlinear(m, opt.nl, &tan);
-        out.iterations = it + 1;
-        out.u = r.u;
-        out.tension.assign(nc, 0.0);
-        out.chord.assign(nc, 0.0);
+        const NonlinearResult3D r = solveModel3DNonlinear(m, opt.nl, tan);
+        GeomEval g;
+        g.u = r.u;
+        g.chord.assign(nc, 0.0);
+        g.tension.assign(nc, 0.0);
         for (std::size_t k = 0; k < nc; ++k) {
             std::size_t idx = 0;
             while (idx < r.elemIds.size() && r.elemIds[idx] != cableIds[k]) ++idx;
             if (idx >= r.elemIds.size())
                 throw std::runtime_error("制造线形迭代：结果缺少索单元 "
                                          + std::to_string(cableIds[k]));
-            out.chord[k] = r.Ln[idx];
-            out.tension[k] = r.axial[idx];
+            g.chord[k] = r.Ln[idx];
+            g.tension[k] = r.axial[idx];
         }
-
-        // ---- ③ 闭合残差 F = ΔX + u ----
+        g.Fv = Eigen::VectorXd::Zero(nd);
         double err = 0.0;
         for (int d = 0; d < nd; ++d) {
-            if (!isT[d]) { Fv(d) = 0.0; continue; }
-            Fv(d) = dX[d] + r.u[d];
-            err = std::max(err, std::abs(Fv(d)));
+            if (!isT[d]) continue;
+            g.Fv(d) = dx[d] + r.u[d];
+            err = std::max(err, std::abs(g.Fv(d)));
         }
-        out.maxClosureErr = err;
-        if (opt.verbose) std::printf("  几何迭代 %d：闭合误差 = %.3e m\n", it + 1, err);
-        if (err <= opt.tolClosure) { out.converged = true; break; }
+        g.err = err;
+        return g;
+    };
 
-        // ---- ④ 低秩 Newton（Woodbury）----
-        // B 的列 = 索轴向方向向量（在成桥构形上取），Kc = dT/dLn（Ernst 切线）
-        Eigen::MatrixXd B = Eigen::MatrixXd::Zero(nd, static_cast<int>(nc));
-        Eigen::VectorXd Kc = Eigen::VectorXd::Zero(static_cast<int>(nc));
-        for (std::size_t k = 0; k < nc; ++k) {
-            const Element3D& e = *ep[k];
-            const int s1 = dm.dofStart[dm.index.at(e.n1)];
-            const int s2 = dm.dofStart[dm.index.at(e.n2)];
-            Vec3 p1 = m.nodes.at(e.n1), p2 = m.nodes.at(e.n2);
-            for (int a = 0; a < 3; ++a) {
-                p1[a] += r.u[s1 + a];
-                p2[a] += r.u[s2 + a];
-            }
-            Vec3 d3 = p2 - p1;
-            const double Ln = d3.norm();
-            if (Ln < 1e-12) throw std::runtime_error("制造线形迭代：索 "
-                                                     + std::to_string(cableIds[k]) + " 弦长退化");
-            const Vec3 ev = d3 / Ln;
-            const double Lh = std::sqrt(d3.x() * d3.x() + d3.y() * d3.y());
-            const double L0 = (e.L0 > 0.0) ? e.L0 : Ln;
-            for (int a = 0; a < 3; ++a) {
-                if (isT[s1 + a]) B(s1 + a, static_cast<int>(k)) = -ev[a];
-                if (isT[s2 + a]) B(s2 + a, static_cast<int>(k)) = +ev[a];
-            }
-            Kc(static_cast<int>(k)) =
-                cableErnstModulus(e.E, e.A, e.w, Lh, out.tension[k], L0) * e.A / L0;
+    std::vector<double> dX(nd, 0.0);                    // 制造线形相对设计线形的偏移
+    CableSensitivity3D sens;                            // 冻结复用（G 随 ΔX 变化很小）
+    bool haveS = false;
+    double errPrev = 0.0;
+    GeomEval cur;
+
+    for (int it = 0; it < opt.maxIter; ++it) {
+        NLTangent3D tan;
+        const bool needS = !haveS || (it > 0 && errPrev > 0.0 && cur.err > 0.5 * errPrev);
+        cur = evalGeom(dX, needS ? &tan : nullptr);
+        out.iterations = it + 1;
+        out.u = cur.u;
+        out.tension = cur.tension;
+        out.chord = cur.chord;
+        out.maxClosureErr = cur.err;
+        if (opt.verbose)
+            std::printf("  几何迭代 %d：闭合误差 = %.3e m\n", it + 1, cur.err);
+        if (cur.err <= opt.tolClosure) { out.converged = true; break; }
+        if (needS) {
+            sens = cableSensitivity3D(m, dm, cableIds, cur.u, cur.tension, isT, tan);
+            haveS = true;
         }
+        errPrev = cur.err;
 
-        Factorization3D fac(tan.K);
-        Eigen::MatrixXd W = fac.solveMulti(B);          // W = K⁻¹B（nc 次回代，一次分解）
-        for (int d = 0; d < nd; ++d) if (!isT[d]) W.row(d).setZero();
-
-        const Eigen::MatrixXd M =
-            Eigen::MatrixXd::Identity(static_cast<int>(nc), static_cast<int>(nc))
-            - Kc.asDiagonal() * (B.transpose() * W);
-        const Eigen::VectorXd y = M.fullPivLu().solve(Kc.asDiagonal() * (B.transpose() * Fv));
-        Eigen::VectorXd delta = -Fv - W * y;
-
-        // 步长保护：按节点整体缩放，避免单点跑飞
+        // ---- 低秩 Newton（Woodbury）：共用索敏感度算子 ----
+        const Eigen::VectorXd y =
+            sens.M.fullPivLu().solve(sens.Kc.asDiagonal() * (sens.B.transpose() * cur.Fv));
+        Eigen::VectorXd delta = -cur.Fv - sens.W * y;
         for (int d = 0; d < nd; ++d) if (!isT[d]) delta(d) = 0.0;
+
+        // ---- 回溯线搜索 ----
+        // Newton 步在远离解时会严重超调：(I+G) 的最小特征值实测可达 0.03，
+        // 步长被放大 30 倍，直接取整步会让误差反弹震荡（实桥算例实测）。
+        // Armijo 条件按**实际**闭合误差衰减步长，是这里唯一可靠的判据。
         double mx = 0.0;
         for (std::size_t i = 0; i < dm.nodeIds.size(); ++i) {
             const int s = dm.dofStart[i];
-            const double nrm = std::sqrt(delta(s) * delta(s) + delta(s + 1) * delta(s + 1)
-                                         + delta(s + 2) * delta(s + 2));
-            mx = std::max(mx, nrm);
+            mx = std::max(mx, std::sqrt(delta(s) * delta(s) + delta(s + 1) * delta(s + 1)
+                                        + delta(s + 2) * delta(s + 2)));
         }
-        const double scale = (mx > opt.stepCap) ? opt.stepCap / mx : 1.0;
-        for (int d = 0; d < nd; ++d) dX[d] += scale * delta(d);
+        double alpha = (mx > opt.stepCap) ? opt.stepCap / mx : 1.0;
+        bool accepted = false;
+        GeomEval bestG = cur;
+        std::vector<double> bestDx = dX;
+        double bestErr = cur.err;
+        for (int ls = 0; ls < opt.maxLineSearch; ++ls) {
+            std::vector<double> trial(nd, 0.0);
+            for (int d = 0; d < nd; ++d) trial[d] = dX[d] + alpha * delta(d);
+            const GeomEval g = evalGeom(trial, nullptr);
+            if (g.err < bestErr) { bestErr = g.err; bestDx = trial; bestG = g; }
+            if (opt.verbose)
+                std::printf("      线搜索 α=%.4g → %.3e m\n", alpha, g.err);
+            if (g.err <= opt.tolClosure || g.err <= (1.0 - 1.0e-4 * alpha) * cur.err) {
+                dX = trial;
+                cur = g;
+                accepted = true;
+                break;
+            }
+            alpha *= opt.lineSearchFactor;
+        }
+        if (!accepted) {
+            // Newton 方向失效时的兜底：退化为不动点步 ΔX ← -u。
+            //
+            // 上面的 G 只计入了索（ΔX 只通过索的弦长产生不平衡力），而梁的
+            // 参考形状同样参与：移动锚点会改变梁的参考轴方向，在"空间增量
+            // 约定"下节点三元组跟着转、局部转角因此改变一阶量——实测扰动无
+            // 索节点也能引起位移变化，且量级与索项相当（斜拉桥算例里 G 的
+            // 误差约 20%）。完整计入需要构造材料刚度 K_mat 并令 G=-K⁻¹K_mat，
+            // 代价是每轮多一次差分装配（见 TODO(P3-3b)）。
+            //
+            // 不动点步 ΔX ← -u 的收敛率 = |G| 的谱半径 < 1（结构稳定时），
+            // 不需要任何敏感度，是这里唯一的收敛保证。
+            std::vector<double> fp(nd, 0.0);
+            for (int d = 0; d < nd; ++d) if (isT[d]) fp[d] = -cur.u[d];
+            const GeomEval g = evalGeom(fp, nullptr);
+            if (opt.verbose)
+                std::printf("      Newton 步失效 → 不动点步 → %.3e m\n", g.err);
+            if (g.err < bestErr) { dX = fp; cur = g; }
+            else { dX = bestDx; cur = bestG; }   // 取试过的最优点
+        }
     }
 
     out.camber = dX;
