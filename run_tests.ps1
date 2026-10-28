@@ -7,6 +7,8 @@ $tests = @(
   # 解析解断言：校验数值结果本身，而不只是"程序没崩"
   @{ exe="test_2d.exe"; args=@() },
   @{ exe="test_3d.exe"; args=@() },
+  # 几何非线性（共转列式）：刚体不变性 / 卷圆 / 梁柱 P-Δ / 索无应力长度
+  @{ exe="test_3d_nl.exe"; args=@() },
   @{ exe="example_1d_bar.exe"; args=@() },
   @{ exe="example_2d_truss.exe"; args=@() },
   @{ exe="example_2d_plane.exe"; args=@() },

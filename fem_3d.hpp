@@ -178,6 +178,10 @@ struct Element3D {
     double Iw = 0.0;                 // 扇形惯性矩/翘曲常数（BEAM7 约束扭转用）
     double dens = 0.0, addmass = 0.0;   // 密度 kg/m^3、附加线质量 kg/m（模态/自重）
     double istrn = 0.0;
+    // 无应力长度（m）：CABLE/索长迭代用；<=0 表示取几何长度。
+    // 索的"无应力索长"是成桥态找形的核心量——给定索力与几何即可反算 L0，
+    // 给定 L0 才能在非线性求解里得到正确的成桥态（见索长迭代）。
+    double L0 = 0.0;
     double Wtop = 0.0, Wbot = 0.0;
     double Wy = 0.0;   // 绕 y 轴截面模量（水平弯曲 My 用）
     double Wt = 0.0;   // 扭转截面模量 J/r_max（扭转剪应力 τ=T/Wt 用）

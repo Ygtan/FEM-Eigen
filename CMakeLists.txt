@@ -123,8 +123,10 @@ enable_testing()
 # 解析解断言测试：拆成 2D 与 3D 两个可执行，避免一个维度崩溃吞掉另一个维度的结果。
 fem_add_executable(test_2d test_2d.cpp)
 fem_add_executable(test_3d test_3d.cpp)
+fem_add_executable(test_3d_nl test_3d_nl.cpp)
 add_test(NAME analytical_exact_solutions_2d COMMAND test_2d)
 add_test(NAME analytical_exact_solutions_3d COMMAND test_3d)
+add_test(NAME nonlinear_co_rotational_3d COMMAND test_3d_nl)
 
 # .dat 逐字节回归比对：用当前构建重算 verify_*.dat，并与其黄金基线逐字节比对。
 # 依赖 Python3；未安装时仅跳过该测试，不影响编译与其它测试。
