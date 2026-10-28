@@ -94,7 +94,7 @@ endif()
 # 添加可执行目标的便捷函数。
 function(fem_add_executable target source)
     add_executable(${target} ${source})
-    target_link_libraries(${target} PRIVATE fem_core)
+    target_link_libraries(${target} PRIVATE fem_2d fem_3d)
     if(FEM_AMGCL_INCLUDE_DIR)
         target_include_directories(${target} PRIVATE "${FEM_AMGCL_INCLUDE_DIR}")
         target_compile_definitions(${target} PRIVATE AMGCL_NO_BOOST)
@@ -120,9 +120,11 @@ endfunction()
 # 而不只是检查程序有没有崩溃。
 enable_testing()
 
-# 解析解断言测试：用材料力学闭式解校验梁/桁架单元与求解器。
-fem_add_executable(test_analytical test_analytical.cpp)
-add_test(NAME analytical_exact_solutions COMMAND test_analytical)
+# 解析解断言测试：拆成 2D 与 3D 两个可执行，避免一个维度崩溃吞掉另一个维度的结果。
+fem_add_executable(test_2d test_2d.cpp)
+fem_add_executable(test_3d test_3d.cpp)
+add_test(NAME analytical_exact_solutions_2d COMMAND test_2d)
+add_test(NAME analytical_exact_solutions_3d COMMAND test_3d)
 
 # .dat 逐字节回归比对：用当前构建重算 verify_*.dat，并与其黄金基线逐字节比对。
 # 依赖 Python3；未安装时仅跳过该测试，不影响编译与其它测试。
@@ -209,20 +211,33 @@ fem_add_executable(example_3d_modal example_3d_modal.cpp)
 fem_add_executable(example_3d_report example_3d_report.cpp)
 fem_add_executable(modal_bench bench/modal_bench.cpp)
 
-# ---- 核心静态库（fem_io.cpp + 头文件）----
-# 将 fem_io.hpp 中的实现提取到 fem_io.cpp，减少编译时间并实现二进制隔离。
-add_library(fem_core STATIC fem_io.cpp)
-add_library(FEM_Solver::fem_core ALIAS fem_core)
-target_include_directories(fem_core PUBLIC
+# ---- 2D/3D 分库 ----
+# 2D 层（fem_2d）编译为静态库；共享核心 fem.hpp 与 3D 层 fem_3d.hpp 为纯头文件。
+# 3D 层用 INTERFACE 目标表达头文件与第三方依赖，不产生编译产物。
+add_library(fem_2d STATIC fem_2d.cpp)
+add_library(FEM_Solver::fem_2d ALIAS fem_2d)
+target_include_directories(fem_2d PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
     $<INSTALL_INTERFACE:include/FEM_Solver>
     $<BUILD_INTERFACE:${FEM_SPECTRA_INCLUDE_DIR}>
 )
+
+add_library(fem_3d INTERFACE)
+add_library(FEM_Solver::fem_3d ALIAS fem_3d)
+target_include_directories(fem_3d INTERFACE
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+    $<INSTALL_INTERFACE:include/FEM_Solver>
+    $<BUILD_INTERFACE:${FEM_SPECTRA_INCLUDE_DIR}>
+)
+
 if(TARGET Eigen3::Eigen)
-    target_link_libraries(fem_core PUBLIC Eigen3::Eigen)
+    target_link_libraries(fem_2d PUBLIC Eigen3::Eigen)
+    target_link_libraries(fem_3d INTERFACE Eigen3::Eigen)
 else()
     # 安装场景下要求消费方自行提供 Eigen3；此处仅把 vendored 路径用于构建期示例。
-    target_include_directories(fem_core PUBLIC
+    target_include_directories(fem_2d PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/external/eigen3>)
+    target_include_directories(fem_3d INTERFACE
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/external/eigen3>)
 endif()
 
@@ -230,7 +245,7 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/
     DESTINATION include/FEM_Solver
     FILES_MATCHING PATTERN "*.hpp"
 )
-install(TARGETS fem_core
+install(TARGETS fem_2d
     EXPORT FEM_SolverTargets
 )
 install(EXPORT FEM_SolverTargets

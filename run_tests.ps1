@@ -5,7 +5,8 @@ $bin = Join-Path $root "build"
 
 $tests = @(
   # 解析解断言：校验数值结果本身，而不只是"程序没崩"
-  @{ exe="test_analytical.exe"; args=@() },
+  @{ exe="test_2d.exe"; args=@() },
+  @{ exe="test_3d.exe"; args=@() },
   @{ exe="example_1d_bar.exe"; args=@() },
   @{ exe="example_2d_truss.exe"; args=@() },
   @{ exe="example_2d_plane.exe"; args=@() },
@@ -38,7 +39,9 @@ $tests = @(
   @{ exe="example_solvers.exe"; args=@() },
   @{ exe="example_cholmod.exe"; args=@() },
   @{ exe="example_amgcl.exe"; args=@() },
-  @{ exe="fem_solver.exe"; args=@() }
+  @{ exe="fem_solver.exe"; args=@() },
+  # 性能回归：模态/屈曲耗时阈值（防稠密 O(n^3) 回潮）
+  @{ exe="modal_bench.exe"; args=@("1000") }
 )
 
 $failed = 0

@@ -6,26 +6,27 @@
 
 ```
 .
-├── fem.hpp            # 二维内核 + 共用基础：求解器、DofMap、BeamElement、单元刚度
+├── fem.hpp            # 共用基础（2D/3D 共享）：求解器、DofMap、BeamElement、单元刚度
 ├── fem_3d.hpp         # 三维内核：Model3D、装配/求解、包络/影响线、模态/屈曲、BEAM7、读输入
-├── fem_io.hpp/.cpp    # 二维装配/求解/内力、输入解析、施工阶段、模态/屈曲（二维）
+├── fem_2d.hpp/.cpp    # 二维装配/求解/内力、输入解析、施工阶段、模态/屈曲（二维）
 ├── section.hpp        # 纤维截面：Fiber/Section、组合截面、变截面、材料非线性
 ├── code_loads.hpp     # JTG D60 规范荷载库
 ├── prestress_loss.hpp # 预应力损失分项（JTG 3362-2018）
 ├── example_*.cpp      # 可执行示例（每个对应一种分析能力）
-├── test_analytical.cpp# 解析解断言测试（147 项）
+├── test_2d.cpp        # 解析解断言测试（2D，108 项）
+├── test_3d.cpp        # 解析解断言测试（3D + 统一内核，47 项）
 ├── tests/regression/  # 逐字节回归（31 个黄金基线 + 比对脚本）
 ├── tests/benchmark/ansys/   # 100m 简支梁 ANSYS 对标
 ├── tests/benchmark/bridge/  # 80m 系杆拱 ANSYS 对标
-├── external/          # 自带 Eigen3 与 AMGCL 头文件
+├── external/          # 自带 Eigen3、AMGCL、Spectra 头文件
 └── run_tests.ps1      # 全量测试入口
 ```
 
-依赖：Eigen3（自带）、AMGCL（自带，可选）、SuiteSparse CHOLMOD（系统可选）。`fem_io.cpp` 编译进 `fem_core` 静态库，示例与测试链接它。
+依赖：Eigen3（自带）、AMGCL（自带，可选）、Spectra（自带，稀疏特征求解）、SuiteSparse CHOLMOD（系统可选）。`fem_2d.cpp` 编译进 `fem_2d` 静态库；`fem_3d.hpp` 与共享核心 `fem.hpp` 为纯头文件，3D 层以 INTERFACE 目标 `fem_3d` 表达。
 
 ## 2. 数据模型
 
-### 2.1 二维（`fem_io.hpp`）
+### 2.1 二维（`fem_2d.hpp`）
 
 - `Model2D`：`nodes`（map 节点号→二维坐标）、`elements`、`constraints`、`loads`、`elemLoads`、`prestresses`、`laneLoads`、`stages` 等。
 - `Model2D::Element`：`type`（`BEAM`/`TRUSS`/`CABLE`/`STRUT`/`RIGID`/`RIGID_PIN`）、`E/A/I/alpha/h/Wt/Wb/dens/addmass/istrn/nu/K`、`conn`、`releases`。
@@ -99,9 +100,11 @@ Newton-Raphson：`assembleState` 每步组装 `Fint/Fext` 与一致切线（轴�
 
 ## 6. 测试体系
 
-### 6.1 解析解断言（`test_analytical.cpp`）
+### 6.1 解析解断言（`test_2d.cpp` / `test_3d.cpp`）
 
-用材料力学闭式解校验数值结果，当前 147 项。`check(name, got, exact, tol)` 标量、`checkMat(...)` 矩阵。新增测试：写 `testXxx()` 并在 `main()` 中调用。
+用材料力学闭式解校验数值结果，当前 155 项（2D 108 项 + 3D/统一内核 47 项），拆成两个可执行，
+避免一个维度崩溃吞掉另一个维度的结果。公共断言辅助在 `test_common.hpp`。新增测试：写 `testXxx()`
+并在对应 `main()` 中调用。
 
 ### 6.2 逐字节回归（`tests/regression/`）
 
@@ -112,12 +115,12 @@ Newton-Raphson：`assembleState` 每步组装 `Fint/Fext` 与一致切线（轴�
 - `ansys/`：100m 简支梁，参考值为 ANSYS BEAM4 的欧拉-伯努利闭式解。
 - `bridge/`：80m 系杆拱，参考值来自用户提供的 ANSYS 结果（`bridge_tied_arch_80m_apdl_disp.txt`、`..._elemforce.txt`），`compare_bridge.py` 比对节点位移与单元内力。
 
-三者均接入 CTest（`analytical_exact_solutions`、`dat_byte_regression`、`ansys_benchmark`、`bridge_benchmark`）与 `run_tests.ps1`。
+三者均接入 CTest（`analytical_exact_solutions_2d`、`analytical_exact_solutions_3d`、`dat_byte_regression`、`ansys_benchmark`、`bridge_benchmark`）与 `run_tests.ps1`。
 
 ## 7. 构建与工具链
 
 - 必须使用统一的 mingw64 工具链。编译器与 CHOLMOD/OpenBLAS 必须同属 `C:\msys64\mingw64`；混用 ucrt64 会导致 C 运行库不一致（历史上曾出现“PATH 陷阱”）。CHOLMOD 仅安装在 mingw64。
-- CMake 目标：`fem_core`（静态库）+ 各 `example_*` + `test_analytical`。可选依赖：CHOLMOD（`FEM_USE_CHOLMOD`）、AMGCL。
+- CMake 目标：`fem_2d`（静态库）+ `fem_3d`（INTERFACE，纯头文件）+ 各 `example_*` + `test_2d` / `test_3d`。可选依赖：CHOLMOD（`FEM_USE_CHOLMOD`）、AMGCL。
 - 生成器：`MinGW Makefiles`；CMake 4.x 独立安装，`mingw32-make` 可用 CodeBlocks 自带或 MSYS2 `make`。
 
 ## 8. 提交规范

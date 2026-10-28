@@ -7,7 +7,7 @@
 仅绕 z 轴弯曲”的特例。
 
 原则：**先验后改**。每一步都要保证
-- `test_analytical`（解析解断言）全过；
+- `test_2d` / `test_3d`（解析解断言）全过；
 - `dat_byte_regression`（31 个黄金基线逐字节回归）全过；
 - `ansys_benchmark`（ANSYS BEAM4 对标）全过。
 
@@ -29,7 +29,7 @@
 新增 `BeamElement`（`fem.hpp`）：`localStiffness()`、`transformation()`、`stiffness()`、
 `consistentMassMatrix(rhoA)`、`geometricStiffness(N)`。
 
-等价性由 `test_analytical.cpp::testBeamElementUnification()` 逐元素校验：
+等价性由 `test_3d.cpp::testBeamElementUnification()` 逐元素校验：
 - 3D：与 `beam3DLocalStiffness` / `beam3DTransformation` 一致；
 - 2D：平面内 (u,v,θz) 子空间与 `EulerBeam2D`（含 Timoshenko）、一致质量、
   几何刚度一致。

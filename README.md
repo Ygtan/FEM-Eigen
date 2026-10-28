@@ -340,7 +340,7 @@ int main() {
 
 ### 3.8 输入文件（`*.dat`）与混合结构求解
 
-二维梁/桁架/索/压杆结构可以直接用关键字格式的文本文件描述，然后用 `fem_io.hpp` 读取求解。
+二维梁/桁架/索/压杆结构可以直接用关键字格式的文本文件描述，然后用 `fem_2d.hpp` 读取求解。
 自由度约定：**每节点 3 个自由度 `[u, v, θ]`**，文件里 `dof` 编号为 `1=u`、`2=v`、`3=θ`。
 桁架/索/压杆只贡献 u/v，梁贡献 u/v/θ，各类型可以混合。
 
@@ -487,7 +487,7 @@ ALL RHO 7850
 读取、求解与结果输出：
 
 ```cpp
-#include "fem_io.hpp"
+#include "fem_2d.hpp"
 
 Model2D m = readModel2D("model.dat");
 ModelResult r = solveModel2D(m, SolverType::SimplicialLDLT);
@@ -601,7 +601,7 @@ fem.hpp
 │     └── CHOLMOD（可选，CholmodSolver 类 + solveCHOLMOD 封装）
 └── 单元：TrussElement / TriangleCST / Tetra4 / EulerBeam2D
 
-fem_io.hpp（二维输入与求解层）
+fem_2d.hpp（二维输入与求解层）
 ├── Model2D / readModel2D：*.dat 关键字读取
 ├── solveModel2D：组装 + 边界 + 求解 + 反力
 ├── 荷载等效节点荷载：均布/自重/温度
