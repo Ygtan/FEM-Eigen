@@ -52,13 +52,22 @@
 //     · 纯扭转 δ₁=δ₂=αe1 → δθ_l = 0；
 //     · 仅节点 2 三元组转动、无平动 → θ_l = [0, δ]（应变能 = 2EIδ²/L 线性解）。
 //
-// 四、关于当前切线的实现方式
-//   K_σ 目前用**单元级中心差分**求得（每单元 2n 次内力重算，n = 12/14）。
-//   理由：CR 的 K_σ 解析式含大量有限转动相关项，写错不易察觉；而差分切线
-//   与内力严格共轭，Newton 收敛阶与解析切线相同（二次）。
-//   代价是单元形成时间约为解析式的 6~10 倍——但本内核的瓶颈在稀疏分解，
-//   单元形成不是主导项。
-//   TODO(P3-1b)：补解析 K_σ，并用本文件的差分切线作黄金基线回归。
+// 四、关于切线的实现方式（已从差分改为解析）
+//   早期版本用**单元级中心差分**求一致切线（每单元 2n 次内力重算），理由是
+//   CR 的几何刚度解析式容易写错。实测证明这个取舍不成立：单元级微基准
+//   （bench/nl_bench）显示差分把单元成本放大 26.7 倍、占单元耗时 96%，
+//   而稀疏分解只占小头——于是"耗时随单元数线性增长"而不是随自由度超线性。
+//   现在切线走解析式（crBeamTangent12 / 索的 G 块），差分路径保留为
+//   tangentByFD = true，作**黄金基线**回归（test_3d_nl 逐元素对照）。
+//   实测：单元切线 20.2 µs → 3.1 µs（切线本身 8.5x），单次非线性求解、
+//   索长迭代、成桥态闭环整体快 3.3~3.4x；解析式与差分一致到 4e-11。
+//
+//   推导中踩过的三个坑（都写进了对应函数注释）：
+//     ① f = Bᵀq 的全导 = Bᵀ·Kl·∂d/∂u + (∂Bᵀ/∂u)q，δq 项只属于前者；
+//        重复计入会让切线正好放大近 2 倍。
+//     ② 节点转角扰动是**分量**扰动：∂T/∂ψ_j = S(T·E0ᵀ·J_r(ψ)e_j)·T，
+//        需要的是 J_r 本身（不是 J_r⁻¹，也不是忽略）。忽略得 1.6e-3 误差。
+//     ③ (I-H) 与 Rr **不可交换**：(I-H)Rr q ≠ Rr(I-H)q，旋转块会错 13%。
 // ============================================================
 #pragma once
 
@@ -140,6 +149,55 @@ inline Vec3 logMapRot(const Eigen::Matrix3d& R) {
     a.normalize();
     // 注：θ 恰为 π 时轴的符号不可辨识。CR 单元局部转角是小量，正常不进入此分支。
     return CR_PI * a;
+}
+
+// 对数映射的**左** Jacobian 逆：δR = S(v)R  ⇒  δt = J_l⁻¹(t)·v
+//
+//      J_l⁻¹(t) = I - ½S(t) + (1/θ² - (1+cosθ)/(2θ·sinθ))·S(t)²
+//
+// 符号必须是 **-½S(t)**（左扰动）：本内核的节点转角按**空间增量**约定施加
+// （T = expMap(ψ)·E0），扰动在左侧，对应 J_l。数值验证见 test_3d_nl 的
+// "∂d/∂u 与差分一致"用例——这里若取 +½S(t) 会立刻被它抓出来。
+// θ→0 用级数（1/12 + θ²/720），θ→π 取极限值 1/θ²（CR 局部转角不会到 π）。
+inline Eigen::Matrix3d logMapLeftJacInv(const Vec3& t) {
+    const double th2 = t.squaredNorm();
+    const double th = std::sqrt(th2);
+    const Eigen::Matrix3d St = skew3(t);
+    const Eigen::Matrix3d St2 = St * St;
+    const Eigen::Matrix3d I3 = Eigen::Matrix3d::Identity();
+    // 局部转角是**变形**转角（共转列式已剔除刚体转动），恒为小量，
+    // 因此级数阈值取 0.3 rad：c2 = 1/12 + θ²/720 在 θ=0.3 时的下一项
+    // θ⁴/30240 ≈ 2.7e-7，相对 c2 只 3e-6，且省掉每单元 2 次 sin/cos。
+    if (th < 0.3) return I3 - 0.5 * St + (1.0 / 12.0 + th2 / 720.0) * St2;
+    const double sn = std::sin(th);
+    const double c2 = (std::abs(sn) < 1e-9)
+                          ? 1.0 / th2
+                          : 1.0 / th2 - (1.0 + std::cos(th)) / (2.0 * th * sn);
+    return I3 - 0.5 * St + c2 * St2;
+}
+
+// 对数映射的**右** Jacobian：Exp(ψ + δ) = Exp(ψ)·Exp(J_r(ψ)·δ)
+//
+//      J_r(t) = I - ((1-cosθ)/θ²)·S(t) + ((θ-sinθ)/θ³)·S(t)²
+//
+// 用途：节点转角的自由度是旋转向量的**分量**，差分与 Newton 都是直接扰动
+// 分量，故 ∂T/∂ψ_j = S(w)·T，其中 w = T·E0ᵀ·J_r(ψ)·e_j —— 左乘向量既不是
+// 简单的 e_j，也不是 T·J_r⁻¹e_j（两个都试过：忽略得 1.6e-3 误差，用逆得
+// 3.1e-3，用 J_r 本身才降到 1e-9 以内）。见 test_3d_nl 的对照用例。
+inline Eigen::Matrix3d logMapRightJac(const Vec3& t) {
+    const double th2 = t.squaredNorm();
+    const double th = std::sqrt(th2);
+    const Eigen::Matrix3d St = skew3(t);
+    const Eigen::Matrix3d St2 = St * St;
+    const Eigen::Matrix3d I3 = Eigen::Matrix3d::Identity();
+    if (th < 0.3) {
+        const double c1 = 0.5 - th2 / 24.0;
+        const double c2 = 1.0 / 6.0 - th2 / 120.0;
+        return I3 - c1 * St + c2 * St2;
+    }
+    const double c1 = (1.0 - std::cos(th)) / th2;
+    const double c2 = (th - std::sin(th)) / (th2 * th);
+    return I3 - c1 * St + c2 * St2;
 }
 
 // 单元参考三元组：与线性内核 beam3DTransformation 内部的 R 完全一致
@@ -229,6 +287,190 @@ inline CRBeamState crBeamState(const Vec3& p1c, const Vec3& p2c,
     // ---- 全局内力（虚功共轭：f = Bᵀ q）----
     st.f = st.B.transpose() * st.q;
     return st;
+}
+
+// ==================== 解析一致切线（CR 梁）====================
+//
+// 单元级微基准（bench/nl_bench）实测：差分切线要把单元成本放大 26.7 倍，
+// 占单元总耗时的 96%（每单元 2n 次内力评估，每次含 4 个超越函数）。
+// 这里给出解析式，把切线成本压到「1 次内力评估 + O(n³) 矩阵运算」。
+//
+// 把 B 的三个块代入 f = Bᵀq，按 [p1 ψ1 p2 ψ2] 分块展开，得显式结构
+// （记 w = q_t1 + q_t2，H = ½e1e1ᵀ，q_ax = q[6]；Rr 只以**左乘**出现，
+//  故 f 对 Rr 是线性的，对 Rr 的全部依赖可以收进一个刚体自旋 ω）：
+//     f_p1 = -S(e1)·Rr·w/Ln - e1·q_ax
+//     f_ψ1 = Rr·[(I-H)q_t1 - H q_t2]
+//     f_p2 = -f_p1
+//     f_ψ2 = Rr·[-H q_t1 + (I-H)q_t2]
+// 于是 δf = Bᵀ·Kl·Bd（材料项）+ ∂f/∂(e1,ω,δq,δLn)（几何项），
+// 其中 Bd = ∂d/∂u 是局部变形的精确导数（含对数映射的 Jacobian）。
+//
+// ω 的三个分量：δe1 = ω×e1 给出垂直于 e1 的两个；第三个由
+//     ω·e1 = δe2·e3,   e2 = P·qv/|P·qv|,  P = I - e1e1ᵀ
+// 补上（δe2 的 e1 分量对真旋转是冗余的，不必用）。
+//
+// 退化情形（平分向量与弦共线，nQ→0）与 crBeamState 的兜底分支同源，
+// 此时 ω 无定义，返回 false 由调用方退回差分。
+
+// 刚体三元组的自旋 ω（δRr = S(ω)Rr）
+inline Vec3 crRigidSpin(const CRBeamState& st, const Vec3& qv, double nQ,
+                        const Vec3& de1, const Vec3& dqv) {
+    const Vec3 e3 = st.Rr.col(2);
+    const double e1qv = st.e1.dot(qv);
+    const double wa = (dqv.dot(e3) - de1.dot(e3) * e1qv) / std::max(nQ, 1e-12);
+    return st.e1.cross(de1) + wa * st.e1;
+}
+
+// 单元切向的运动学辅助量（避免重复算 qv / P / Jacobian）
+struct CRTangentKin {
+    Vec3 e1 = Vec3::Zero();
+    Vec3 qv = Vec3::Zero();
+    double nQ = 0.0;
+    double Ln = 0.0;
+    Eigen::Matrix3d P = Eigen::Matrix3d::Identity();
+    Eigen::Matrix3d Rt = Eigen::Matrix3d::Identity();
+    Eigen::Matrix3d J1 = Eigen::Matrix3d::Identity();    // 左 Jacobian 逆 @ t1
+    Eigen::Matrix3d J2 = Eigen::Matrix3d::Identity();    // 左 Jacobian 逆 @ t2
+    Eigen::Matrix3d Jp1 = Eigen::Matrix3d::Identity();   // 右 Jacobian @ ψ1
+    Eigen::Matrix3d Jp2 = Eigen::Matrix3d::Identity();   // 右 Jacobian @ ψ2
+    // 分量扰动 ψ_j += h 对应的**等效空间转角向量** w = T·E0ᵀ·J_r(ψ)e_j
+    // （T = exp(ψ)E0 ⇒ ∂T/∂ψ_j = S(w)T）。参考态下 w = e_j，退回常规形式。
+    Eigen::Matrix3d W1 = Eigen::Matrix3d::Identity();
+    Eigen::Matrix3d W2 = Eigen::Matrix3d::Identity();
+};
+
+inline bool crTangentKin(const CRBeamState& st, const Eigen::Matrix3d& T1,
+                         const Eigen::Matrix3d& T2, const Eigen::Matrix3d& E0,
+                         const Vec3& psi1, const Vec3& psi2, CRTangentKin& k) {
+    k.e1 = st.e1;
+    k.Ln = st.Ln;
+    k.qv = 0.5 * (T1.col(1) + T2.col(1));
+    k.nQ = (k.qv - k.e1 * k.e1.dot(k.qv)).norm();
+    if (k.nQ < 1e-8) return false;              // 与 crBeamState 退化分支一致
+    k.P = Eigen::Matrix3d::Identity() - k.e1 * k.e1.transpose();
+    k.Rt = st.Rr.transpose();
+    k.J1 = logMapLeftJacInv(st.d.segment<3>(3));
+    k.J2 = logMapLeftJacInv(st.d.segment<3>(9));
+    k.Jp1 = logMapRightJac(psi1);
+    k.Jp2 = logMapRightJac(psi2);
+    k.W1 = T1 * (E0.transpose() * k.Jp1);
+    k.W2 = T2 * (E0.transpose() * k.Jp2);
+    return true;
+}
+
+// 第 j 个全局自由度方向上的局部运动学增量（de1, ω, δLn 与 δd）。
+// 转角方向上的 δψ_j 先换算成"等效空间转角向量" T·J_r⁻¹(ψ)e_j 再往下传。
+inline void crTangentDir(const CRBeamState& st, const CRTangentKin& k,
+                         const Eigen::Matrix3d& T1, const Eigen::Matrix3d& T2,
+                         int j, Vec3& de1, Vec3& om, double& dLn,
+                         Eigen::Matrix<double, 12, 1>& dd) {
+    de1.setZero(); om.setZero(); dLn = 0.0;
+    dd.setZero();
+    Vec3 dp1 = Vec3::Zero(), dp2 = Vec3::Zero(), dqv = Vec3::Zero();
+    if (j < 3)            { de1 = -k.P.col(j) / k.Ln;          dLn = -k.e1[j]; }
+    else if (j < 6)       { dp1 = k.W1.col(j - 3);
+                            dqv = -0.5 * T1.col(1).cross(dp1); }
+    else if (j < 9)       { de1 = k.P.col(j - 6) / k.Ln;       dLn = k.e1[j - 6]; }
+    else                  { dp2 = k.W2.col(j - 9);
+                            dqv = -0.5 * T2.col(1).cross(dp2); }
+
+    om = crRigidSpin(st, k.qv, k.nQ, de1, dqv);
+    dd.segment<3>(3) = k.J1 * (k.Rt * (dp1 - om));
+    dd[6] = dLn;
+    dd.segment<3>(9) = k.J2 * (k.Rt * (dp2 - om));
+}
+
+// ∂d/∂u 的解析式（12×12；行 = 局部自由度 d，列 = [u1 θ1 u2 θ2]）
+inline bool crBeamLocalDerivative(const CRBeamState& st, const Eigen::Matrix3d& T1,
+                                  const Eigen::Matrix3d& T2, const Eigen::Matrix3d& E0,
+                                  const Vec3& psi1, const Vec3& psi2,
+                                  Eigen::Matrix<double, 12, 12>& Bd) {
+    CRTangentKin k;
+    if (!crTangentKin(st, T1, T2, E0, psi1, psi2, k)) return false;
+    Bd.setZero();
+    Bd.block<1, 3>(6, 0) = -k.e1.transpose();
+    Bd.block<1, 3>(6, 6) = k.e1.transpose();
+    for (int j = 0; j < 12; ++j) {
+        Vec3 de1, om;
+        double dLn;
+        Eigen::Matrix<double, 12, 1> dd;
+        crTangentDir(st, k, T1, T2, j, de1, om, dLn, dd);
+        Bd.col(j) = dd;
+    }
+    return true;
+}
+
+// 解析一致切线 K = Bᵀ·Kl·Bd + K_g（12×12）。退化时返回 false。
+// Kg/Bd 非空时一并输出（BEAM7 的 14 维组装要用）。
+inline bool crBeamTangent12(const CRBeamState& st, const Eigen::Matrix3d& T1,
+                            const Eigen::Matrix3d& T2, const Eigen::Matrix3d& E0,
+                            const Vec3& psi1, const Vec3& psi2,
+                            const Eigen::Matrix<double, 12, 12>& Kl,
+                            const Eigen::Matrix<double, 12, 1>& q,
+                            Eigen::Matrix<double, 12, 12>& K,
+                            Eigen::Matrix<double, 12, 12>* KgOut = nullptr,
+                            Eigen::Matrix<double, 12, 12>* BdOut = nullptr) {
+    CRTangentKin k;
+    if (!crTangentKin(st, T1, T2, E0, psi1, psi2, k)) return false;
+
+    // 几何项用到的常量（一次算好，逐方向复用）
+    const Vec3 qa = q.segment<3>(3), qb = q.segment<3>(9);
+    const Vec3 w = qa + qb;
+    const double qax = q[6];
+    const Eigen::Matrix3d H = 0.5 * (k.e1 * k.e1.transpose());
+    const Vec3 Rw = st.Rr * w;
+    // f_ψ1 = Rr·q_t1 - H·Rr·w，f_ψ2 = Rr·q_t2 - H·Rr·w
+    // 注意 (I-H) 与 Rr **不可交换**：(I-H)Rr·q_t1 ≠ Rr·(I-H)·q_t1。
+    // （第一版按 Rr(I-H)q_t1 写，旋转块误差 13%，被"固定 q 只扰动 B"的
+    //   数值校验抓出来——平动块因为 Rr 直接乘向量而恰好正确。）
+    const Vec3 y1 = st.Rr * qa;
+    const Vec3 y2 = st.Rr * qb;
+
+    K.setZero();
+    Eigen::Matrix<double, 12, 12> Kg = Eigen::Matrix<double, 12, 12>::Zero();
+    Eigen::Matrix<double, 12, 12> Bd = Eigen::Matrix<double, 12, 12>::Zero();
+    Bd.block<1, 3>(6, 0) = -k.e1.transpose();
+    Bd.block<1, 3>(6, 6) = k.e1.transpose();
+
+    for (int j = 0; j < 12; ++j) {
+        Vec3 de1, om;
+        double dLn;
+        Eigen::Matrix<double, 12, 1> dd;
+        crTangentDir(st, k, T1, T2, j, de1, om, dLn, dd);
+        Bd.col(j) = dd;
+
+        // ---- 几何项：显式结构对 (e1, ω, δLn) 求导 ----
+        // 注意：**不能**把 ∂f/∂q·δq 的项放进来——那部分正是材料项 Bᵀ·Kl·Bd
+        // 已经覆盖的内容（f = Bᵀq 对 u 的全导 = Bᵀ Kl Bd + (∂Bᵀ/∂u)q），
+        // 重复计入会让切线正好放大近 2 倍（第一版就踩了这个坑）。
+        // 这里只保留 B 显式依赖 e1 与 Rr 的项。
+        // δH 作用在 Rr·w 上（不是 w 上）
+        const Vec3 dHRw = 0.5 * ((de1.dot(Rw)) * k.e1 + (k.e1.dot(Rw)) * de1);
+        const Vec3 hTerm = H * (om.cross(Rw));
+
+        // f_p1 及其负 = f_p2
+        const Vec3 dfp1 = Rw.cross(de1) / k.Ln
+                        + k.e1.cross(Rw.cross(om)) / k.Ln
+                        + (k.e1.cross(Rw)) * (dLn / (k.Ln * k.Ln))
+                        - de1 * qax;
+        Kg.block<3, 1>(0, j) += dfp1;
+        Kg.block<3, 1>(6, j) -= dfp1;
+
+        // f_ψ1 / f_ψ2：δ(Rr q) = -（Rr q)×ω，δH·Rw，以及 -H·δ(Rr w)
+        Kg.block<3, 1>(3, j) = -(y1.cross(om)) - dHRw - hTerm;
+        Kg.block<3, 1>(9, j) = -(y2.cross(om)) - dHRw - hTerm;
+    }
+    // ---- 材料项一次性成块：Bᵀ·Kl·Bd ----
+    // 逐列做两个 12×1 的矩阵-向量乘（每列 288 次乘加，SIMD 利用率极低）会
+    // 吃掉大半时间；改成两次 12×12 整块乘（Eigen 走分块 + 向量化）快得多。
+    const Eigen::Matrix<double, 12, 12> Km = st.B.transpose() * (Kl * Bd);
+    K = Km + Kg;
+    // 对称化：f = Bᵀq 中 B ≠ ∂d/∂u（B 是一阶近似），故严格 Jacobian 微不对称；
+    // 与旧差分路径保持一致（那边也做了对称化，LDLT 只取三角）。
+    K = 0.5 * (K + K.transpose());
+    if (KgOut) *KgOut = Kg;
+    if (BdOut) *BdOut = Bd;
+    return true;
 }
 
 // ==================== 缆索垂度（sag）====================
@@ -353,9 +595,13 @@ inline void crElementInternal(const CRElemData& ed,
                               bool wantTangent,
                               Eigen::Matrix<double, 14, 14>* Ke = nullptr,
                               Eigen::Matrix<double, 14, 1>* ql = nullptr,
-                              double* axial = nullptr) {
-    // 由单元位移向量算全局内力（含 12/14 两种梁与轴向单元）
-    auto eval = [&](const Eigen::Matrix<double, 14, 1>& v) -> Eigen::Matrix<double, 14, 1> {
+                              double* axial = nullptr,
+                              bool tangentByFD = false) {
+    bool tangentOk = false;      // 解析切线是否可用（退化时为 false，退回差分）
+    // 由单元位移向量算全局内力（含 12/14 两种梁与轴向单元）；
+    // Kout 非空时同时给出**解析**一致切线
+    auto eval = [&](const Eigen::Matrix<double, 14, 1>& v,
+                    Eigen::Matrix<double, 14, 14>* Kout) -> Eigen::Matrix<double, 14, 1> {
         Eigen::Matrix<double, 14, 1> f = Eigen::Matrix<double, 14, 1>::Zero();
 
         if (ed.n == 6) {
@@ -365,23 +611,60 @@ inline void crElementInternal(const CRElemData& ed,
             const Vec3 l = p2c - p1c;
             const double Ln = std::max(l.norm(), 1e-12);
             const Vec3 c = l / Ln;
+            const double Lh = std::sqrt(l.x() * l.x() + l.y() * l.y());
+            const double EA = ed.Eeff * ed.A;
             const bool tensionOnly = (ed.type == "CABLE");
+            const bool sag = tensionOnly && ed.w > 0.0;
             double N = 0.0;
-            if (tensionOnly && ed.w > 0.0) {
-                // 缆索垂度：弦长 → 索力走弹性悬链线的精确反解；
-                // 切线由外层差分自动得到，其极限值正是 Ernst 等效模量
-                // （dT/dLn = Eeq·A/L0），因此内力与切线严格共轭。
-                const double Lh = std::sqrt(l.x() * l.x() + l.y() * l.y());
-                N = cableTensionFromChord(Ln, ed.L0, ed.Eeff * ed.A, ed.w, Lh);
+            if (sag) {
+                // 缆索垂度：弦长 → 索力走浅垂度弹性悬链线的精确反解
+                // （N = N(Ln, Lh)，下面给出它的两个偏导，二者共同构成切线）
+                N = cableTensionFromChord(Ln, ed.L0, EA, ed.w, Lh);
             } else {
-                N = ed.Eeff * ed.A / ed.L0 * (Ln - ed.L0);
+                N = EA / ed.L0 * (Ln - ed.L0);
             }
-            N -= ed.Eeff * ed.A * ed.istrnEff;       // 初应变（可作为索力调整手段）
-            if (tensionOnly && N < 0.0) N = 0.0;     // 索：松弛时不传力
+            N -= EA * ed.istrnEff;                   // 初应变（可作为索力调整手段）
+            const bool slack = (tensionOnly && N < 0.0);
+            if (slack) N = 0.0;                      // 索：松弛时不传力
             f.segment<3>(0) = -N * c;
             f.segment<3>(3) = N * c;
             if (ql) { (*ql).setZero(); (*ql)[0] = -N; (*ql)[1] = N; }
             if (axial) *axial = N;
+
+            // ---- 解析切线 ----
+            // f = [-N·c; N·c]，N = N(Ln, Lh)，Ln、Lh 都只通过 l = p2c-p1c 依赖位移：
+            //     a = k1·c + k2·g,  k1 = ∂N/∂Ln, k2 = ∂N/∂Lh, g = (lx,ly,0)/Lh
+            //     K = [[G, -G], [-G, G]],   G = c·aᵀ - (N/Ln)·(I - c cᵀ)
+            // 松弛索不传力 ⇒ 切线为零（与差分的活动集一致）。
+            if (Kout) {
+                Kout->setZero();
+                if (!slack) {
+                    double k1 = EA / ed.L0, k2 = 0.0;
+                    if (sag && Lh > 1e-12) {
+                        // 隐式求导：g(T,Ln,Lh) = L0 + L0T/EA - cSag/T² - Ln = 0
+                        //   ∂T/∂Ln = 1/(L0/EA + 2cSag/T³)  ← 就是 Ernst 切线 Eeq·A/L0
+                        //   ∂T/∂Lh = k1·w²Lh²/(8T²)
+                        const double Tstar = N + EA * ed.istrnEff;   // 未扣初应变的索力
+                        const double cSag = ed.w * ed.w * Lh * Lh * Lh / 24.0;
+                        if (Tstar > 1e-6) {
+                            k1 = 1.0 / (ed.L0 / EA + 2.0 * cSag / (Tstar * Tstar * Tstar));
+                            k2 = k1 * (ed.w * ed.w * Lh * Lh / (8.0 * Tstar * Tstar));
+                        }
+                    }
+                    const Vec3 g = (k2 != 0.0 && Lh > 1e-12)
+                                       ? Vec3(l.x() / Lh, l.y() / Lh, 0.0)
+                                       : Vec3::Zero();
+                    const Vec3 a = k1 * c + k2 * g;
+                    const Eigen::Matrix3d Pm =
+                        Eigen::Matrix3d::Identity() - c * c.transpose();
+                    const Eigen::Matrix3d G = c * a.transpose() + (N / Ln) * Pm;
+                    Kout->block<3, 3>(0, 0) = G;
+                    Kout->block<3, 3>(0, 3) = -G;
+                    Kout->block<3, 3>(3, 0) = -G;
+                    Kout->block<3, 3>(3, 3) = G;
+                }
+                tangentOk = true;
+            }
             return f;
         }
 
@@ -403,6 +686,14 @@ inline void crElementInternal(const CRElemData& ed,
             f.head<12>() = st.B.transpose() * q;
             if (ql) { (*ql).setZero(); ql->head<12>() = q; }
             if (axial) *axial = -q[0];          // q[0] = -N（受拉为正）
+            if (Kout) {
+                Eigen::Matrix<double, 12, 12> K12;
+                if (crBeamTangent12(st, T1, T2, ed.E0, th1, th2, ed.Kl12, q, K12)) {
+                    Kout->setZero();
+                    Kout->topLeftCorner(12, 12) = K12;
+                    tangentOk = true;
+                }
+            }
             return f;
         }
 
@@ -430,29 +721,60 @@ inline void crElementInternal(const CRElemData& ed,
         f.head<14>() = f14;
         if (ql) *ql = q;
         if (axial) *axial = -q[0];
+        if (Kout) {
+            // 12 维的几何刚度与 ∂d/∂u（B14 对位移的依赖与 B 完全同源），
+            // 材料项必须用 14 维的 Kl14（含翘曲—扭转耦合，不能靠嵌入代替）。
+            Eigen::Matrix<double, 12, 1> q12;
+            for (int i = 0; i < 6; ++i) { q12[i] = q[i]; q12[6 + i] = q[7 + i]; }
+            Eigen::Matrix<double, 12, 12> Ktmp, Kg12, Bd12;
+            if (crBeamTangent12(st, T1, T2, ed.E0, th1, th2, ed.Kl12, q12, Ktmp, &Kg12, &Bd12)) {
+                const auto idx = [](int i) { return (i < 6) ? i : i + 1; };
+                Eigen::Matrix<double, 14, 14> Bd14 = Eigen::Matrix<double, 14, 14>::Zero();
+                for (int i = 0; i < 12; ++i)
+                    for (int j = 0; j < 12; ++j) Bd14(idx(i), idx(j)) = Bd12(i, j);
+                Bd14(6, 6) = 1.0;
+                Bd14(13, 13) = 1.0;
+                Eigen::Matrix<double, 14, 14> K14 = B14.transpose() * (ed.Kl14 * Bd14);
+                for (int i = 0; i < 12; ++i)
+                    for (int j = 0; j < 12; ++j) K14(idx(i), idx(j)) += Kg12(i, j);
+                K14 = 0.5 * (K14 + K14.transpose());
+                Kout->setZero();
+                *Kout = K14;
+                tangentOk = true;
+            }
+        }
         return f;
     };
 
-    fe = eval(ue);
+    // ---------------- 一致切线 ----------------
+    // 默认走解析式（见上文 crBeamTangent12 / 轴向单元的 G 块）：成本约等于
+    // 1 次内力评估 + O(n³) 矩阵运算，而差分要 2n 次内力评估（实测 26.7 倍）。
+    // tangentByFD = true 保留原差分路径，作为解析式的**黄金基线**（回归测试
+    // 逐元素对照）与退化情形的兜底。
+    const bool wantAnalytic = wantTangent && Ke && !tangentByFD;
+    Eigen::Matrix<double, 14, 14> Kt = Eigen::Matrix<double, 14, 14>::Zero();
+    fe = eval(ue, wantAnalytic ? &Kt : nullptr);
 
-    // ---------------- 一致切线：单元级中心差分 ----------------
-    // 扰动直接加在自由度上（转角按空间增量约定经 expMapRot 施加），
-    // 因此差分切线与内力严格共轭，Newton 保持二次收敛。
     if (wantTangent && Ke) {
-        const double h = 1e-5;   // 差分步长：1e-6 时转角自由度上噪声过大，1e-5 兼顾截断与舍入
-        Eigen::Matrix<double, 14, 14> Kt = Eigen::Matrix<double, 14, 14>::Zero();
-        for (int j = 0; j < ed.n; ++j) {
-            Eigen::Matrix<double, 14, 1> vp = ue, vm = ue;
-            vp[j] += h;
-            vm[j] -= h;
-            const Eigen::Matrix<double, 14, 1> fp = eval(vp);
-            const Eigen::Matrix<double, 14, 1> fm = eval(vm);
-            Kt.block(0, j, ed.n, 1) = (fp - fm).head(ed.n) / (2.0 * h);
+        if (wantAnalytic && tangentOk) {
+            *Ke = Kt;
+        } else {
+            // 单元级中心差分：扰动直接加在自由度上（转角按空间增量约定经
+            // expMapRot 施加），因此与内力严格共轭。
+            const double h = 1e-5;   // 1e-6 时转角自由度上噪声过大，1e-5 兼顾截断与舍入
+            for (int j = 0; j < ed.n; ++j) {
+                Eigen::Matrix<double, 14, 1> vp = ue, vm = ue;
+                vp[j] += h;
+                vm[j] -= h;
+                const Eigen::Matrix<double, 14, 1> fp = eval(vp, nullptr);
+                const Eigen::Matrix<double, 14, 1> fm = eval(vm, nullptr);
+                Kt.block(0, j, ed.n, 1) = (fp - fm).head(ed.n) / (2.0 * h);
+            }
+            // 差分带来的轻微非对称 → 对称化（保证稀疏 LDLT 行为一致）
+            Kt.topLeftCorner(ed.n, ed.n) =
+                0.5 * (Kt.topLeftCorner(ed.n, ed.n) + Kt.topLeftCorner(ed.n, ed.n).transpose());
+            *Ke = Kt;
         }
-        // 差分带来的轻微非对称 → 对称化（保证稀疏 LDLT 行为一致）
-        Kt.topLeftCorner(ed.n, ed.n) =
-            0.5 * (Kt.topLeftCorner(ed.n, ed.n) + Kt.topLeftCorner(ed.n, ed.n).transpose());
-        *Ke = Kt;
     }
 }
 

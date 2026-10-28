@@ -149,6 +149,59 @@ int main(int argc, char** argv) {
                 Lm, Ls, Ht, static_cast<int>(m0.elements.size()), nc,
                 static_cast<int>(m0.nodes.size()), dm.nDofs);
 
+    // ---- 0. 单元级微基准：内力 / 解析切线 / 差分切线 ----
+    // 这是定位"耗时随单元数线性增长"的关键实验：差分切线每单元要 2n 次内力
+    // 评估，而内力评估本身含 4 个超越函数，于是切线吃掉 96% 的单元时间。
+    {
+        std::vector<CRElemData> eds;
+        for (const auto& e : m0.elements) eds.push_back(crMakeElemData(m0, e, dm));
+        int ib = -1, ic = -1;
+        for (std::size_t i = 0; i < eds.size(); ++i) {
+            if (eds[i].n == 12 && ib < 0) ib = static_cast<int>(i);
+            if (eds[i].n == 6 && ic < 0) ic = static_cast<int>(i);
+        }
+        const int N = 20000;
+        double sink = 0.0;
+        // mode: 0 = 只算内力, 1 = 解析切线, 2 = 差分切线
+        auto timeElem = [&](const CRElemData& ed, int mode) {
+            Eigen::Matrix<double, 14, 1> ue = Eigen::Matrix<double, 14, 1>::Zero();
+            ue[0] = 2e-4; ue[2] = 1e-3; ue[4] = 3e-3; ue[7] = -2e-4; ue[10] = -1e-4;
+            Eigen::Matrix<double, 14, 1> fe;
+            Eigen::Matrix<double, 14, 14> Ke;
+            double best = 1e30;
+            for (int rep = 0; rep < 3; ++rep) {          // 取最小，避开调度噪声
+                const double t0 = nowMs();
+                for (int k = 0; k < N; ++k) {
+                    crElementInternal(ed, ue, fe, mode != 0,
+                                      mode != 0 ? &Ke : nullptr, nullptr, nullptr,
+                                      mode == 2);
+                    sink += fe[0] + (mode != 0 ? Ke(0, 0) + Ke(ed.n - 1, ed.n - 1) : 0.0);
+                }
+                best = std::min(best, (nowMs() - t0) * 1e3 / N);
+            }
+            return best;                                 // µs / 次
+        };
+        if (ib >= 0) {
+            const double tf = timeElem(eds[ib], 0);
+            const double ta = timeElem(eds[ib], 1);
+            const double td = timeElem(eds[ib], 2);
+            std::printf("\n[单元级微基准 BEAM(12)]\n");
+            std::printf("  只算内力:        %7.3f µs\n", tf);
+            std::printf("  内力+解析切线:   %7.3f µs  ← 默认\n", ta);
+            std::printf("  内力+差分切线:   %7.3f µs  （每单元 2n=24 次内力评估）\n", td);
+            std::printf("  解析切线加速:    %.1fx（切线本身 %.1fx）\n",
+                        td / ta, (td - tf) / std::max(ta - tf, 1e-9));
+        }
+        if (ic >= 0) {
+            const double tf = timeElem(eds[ic], 0);
+            const double ta = timeElem(eds[ic], 1);
+            const double td = timeElem(eds[ic], 2);
+            std::printf("[单元级微基准 CABLE(6)] 内力 %.3f / 解析 %.3f / 差分 %.3f µs  → %.1fx\n",
+                        tf, ta, td, td / ta);
+        }
+        if (sink == 1.2345) std::printf("");   // 防优化消除
+    }
+
     // ---- 1. 单次非线性求解：复用分解 vs 每次完整分解 ----
     auto timeSolve = [&](bool reuse, SolverType st) {
         Model3D m = m0;

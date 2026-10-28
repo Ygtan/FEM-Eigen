@@ -11,6 +11,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <ctime>
 #include <string>
 #include <vector>
 
@@ -696,6 +697,135 @@ void testCableInfluenceMatrix() {
                 J(0, 0), J(1, 1), J(2, 2), maxRel);
 }
 
+// ---------------------------------------------------------------
+// 10. 解析切线 vs 差分切线（黄金基线）
+//
+// 解析式（P3 提速）必须与"逐自由度中心差分"逐元素一致，否则 Newton 的
+// 二次收敛就没了——而且这种错误不会体现在任何静力结果里，只体现在迭代
+// 次数上，极难察觉。因此把它钉成断言，三种单元各比一次：
+//   · BEAM(12)   —— 材料项 + 几何项（含平分三元组的自旋 ω）
+//   · BEAM7(14)  —— 14 维材料项（翘曲—扭转耦合不能靠嵌入代替）
+//   · CABLE(6)   —— 含垂度，N = N(Ln, Lh) 的两个偏导
+// 比较状态取**有限变形**（弯曲 + 扭转 + 轴向），此时几何刚度非零。
+// ---------------------------------------------------------------
+namespace {
+
+// 解析 vs 差分：返回最大相对差，同时回填两侧最大绝对量级
+double tangentGap(const CRElemData& ed, const Eigen::Matrix<double, 14, 1>& ue,
+                  int n, double* scaleOut = nullptr) {
+    Eigen::Matrix<double, 14, 1> fe;
+    Eigen::Matrix<double, 14, 14> Ka, Kf;
+    crElementInternal(ed, ue, fe, true, &Ka, nullptr, nullptr, false);
+    crElementInternal(ed, ue, fe, true, &Kf, nullptr, nullptr, true);   // 差分
+    double md = 0.0, sc = 0.0;
+    for (int i = 0; i < n; ++i)
+        for (int j = 0; j < n; ++j) {
+            md = std::max(md, std::abs(Ka(i, j) - Kf(i, j)));
+            sc = std::max(sc, std::abs(Kf(i, j)));
+        }
+    if (scaleOut) *scaleOut = sc;
+    return md / std::max(sc, 1e-30);
+}
+
+}  // namespace
+
+void testAnalyticTangentVsFD() {
+    std::printf("\n[解析切线 vs 差分切线（黄金基线）]\n");
+    const double E = 2.1e11, A = 0.02, Iy = 3e-4, Iz = 2e-4, J = 5e-4, G = 8.1e10;
+    const Vec3 p1(0.0, 0.0, 0.0), p2(3.0, 4.0, 5.0);
+
+    // 有限变形的位移场（弯曲 5e-2 rad、扭转 2e-3 rad、轴向 1.2e-2 m）
+    Eigen::Matrix<double, 14, 1> u = Eigen::Matrix<double, 14, 1>::Zero();
+    u[0] = 1.2e-2; u[1] = 3.0e-3; u[2] = -2.0e-3;
+    u[3] = 2.0e-3; u[4] = 5.0e-2; u[5] = -3.0e-2;
+    u[6] = -8.0e-3; u[7] = 5.0e-3; u[8] = 4.0e-3;
+    u[9] = -3.0e-3; u[10] = 5.5e-2; u[11] = 2.5e-2;
+
+    // (a) 参考态：切线必须等于线性刚度，解析式与差分都必须命中
+    {
+        Model3D m = oneBeam(p1, p2, E, A, Iy, Iz, J, G);
+        const DofMap3D dm = buildDofMap3D(m);
+        const CRElemData ed = crMakeElemData(m, m.elements[0], dm);
+        Eigen::Matrix<double, 14, 1> z = Eigen::Matrix<double, 14, 1>::Zero();
+        check("解析切线：参考态 vs 差分", tangentGap(ed, z, 12), 0.0, 1e-8);
+    }
+
+    // (b) BEAM(12) 有限变形
+    {
+        Model3D m = oneBeam(p1, p2, E, A, Iy, Iz, J, G);
+        const DofMap3D dm = buildDofMap3D(m);
+        const CRElemData ed = crMakeElemData(m, m.elements[0], dm);
+        double sc = 0.0;
+        const double gap = tangentGap(ed, u, 12, &sc);
+        check("解析切线：BEAM(12) 大变形 vs 差分", gap, 0.0, 1e-8);
+    }
+
+    // (c) BEAM7(14) 有限变形（含翘曲自由度）
+    {
+        Model3D m = oneBeam(p1, p2, E, A, Iy, Iz, J, G);
+        m.elements[0].type = "BEAM7";
+        m.elements[0].Iw = 1.0e-8;
+        const DofMap3D dm = buildDofMap3D(m);
+        const CRElemData ed = crMakeElemData(m, m.elements[0], dm);
+        Eigen::Matrix<double, 14, 1> u7 = Eigen::Matrix<double, 14, 1>::Zero();
+        for (int i = 0; i < 6; ++i) { u7[i] = u[i]; u7[7 + i] = u[6 + i]; }
+        u7[6] = 1.0e-3;
+        u7[13] = -1.5e-3;
+        check("解析切线：BEAM7(14) 大变形 vs 差分", tangentGap(ed, u7, 14), 0.0, 1e-8);
+    }
+
+    // (d) 含垂度的索（N = N(Ln, Lh)，切线含 k2 = ∂N/∂Lh）
+    {
+        Model3D m;
+        m.nodes[1] = Vec3(0.0, 0.0, 0.0);
+        m.nodes[2] = Vec3(100.0, 0.0, 40.0);
+        Element3D e;
+        e.id = 1; e.type = "CABLE"; e.E = 1.95e11; e.A = 6.0e-3; e.w = 50.0;
+        e.L0 = 105.0; e.n1 = 1; e.n2 = 2;
+        m.elements.push_back(e);
+        const DofMap3D dm = buildDofMap3D(m);
+        const CRElemData ed = crMakeElemData(m, m.elements[0], dm);
+        Eigen::Matrix<double, 14, 1> uc = Eigen::Matrix<double, 14, 1>::Zero();
+        uc[0] = 1e-2; uc[1] = -2e-2; uc[2] = 1e-2;
+        uc[3] = -1e-3; uc[4] = 2e-3; uc[5] = 1e-3;
+        check("解析切线：垂度索 vs 差分", tangentGap(ed, uc, 6), 0.0, 1e-8);
+    }
+}
+
+// ---------------------------------------------------------------
+// 11. 解析切线的提速效果（自检：解析路径不得慢于差分路径）
+//     这里是粗粒度计时，只用于防止"优化变慢"的回归；
+//     正式对标见 bench/nl_bench。
+// ---------------------------------------------------------------
+void testAnalyticTangentSpeed() {
+    std::printf("\n[解析切线 vs 差分切线（单元级耗时）]\n");
+    const double E = 2.1e11, A = 0.02, Iy = 3e-4, Iz = 2e-4, J = 5e-4, G = 8.1e10;
+    Model3D m = oneBeam(Vec3(0, 0, 0), Vec3(3, 4, 5), E, A, Iy, Iz, J, G);
+    const DofMap3D dm = buildDofMap3D(m);
+    const CRElemData ed = crMakeElemData(m, m.elements[0], dm);
+    Eigen::Matrix<double, 14, 1> ue = Eigen::Matrix<double, 14, 1>::Zero();
+    ue[0] = 1.2e-2; ue[4] = 5.0e-2; ue[10] = 5.5e-2;
+
+    const int N = 20000;
+    double sink = 0.0;
+    auto timeIt = [&](bool byFD) {
+        Eigen::Matrix<double, 14, 1> fe;
+        Eigen::Matrix<double, 14, 14> Ke;
+        const clock_t t0 = std::clock();
+        for (int k = 0; k < N; ++k) {
+            crElementInternal(ed, ue, fe, true, &Ke, nullptr, nullptr, byFD);
+            sink += Ke(0, 0);
+        }
+        return static_cast<double>(std::clock() - t0) / CLOCKS_PER_SEC / N * 1e6;
+    };
+    const double tA = timeIt(false);
+    const double tF = timeIt(true);
+    if (sink == 1.2345) std::printf("");
+    std::printf("  解析 %.2f µs / 差分 %.2f µs → %.1fx\n", tA, tF, tF / tA);
+    // 门限放宽（CI 机器噪声大），只要求解析路径不慢于差分的一半
+    check("解析切线：单元级耗时 ≤ 差分的一半", tA / tF, 0.0, 0.5);
+}
+
 }  // namespace
 
 int main() {
@@ -715,6 +845,8 @@ int main() {
         testRigidSupportCableTension();
         testCompletionStateSingleCable();
         testCompletionStateThreeCable();
+        testAnalyticTangentVsFD();
+        testAnalyticTangentSpeed();
         testCableInfluenceMatrix();
     } catch (const std::exception& e) {
         std::printf("\n[ERROR] 异常: %s\n", e.what());
