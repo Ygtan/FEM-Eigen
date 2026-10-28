@@ -1358,18 +1358,24 @@ inline CableLengthResult3D iterateCableUnstrainedLengths(
 // 放大 1/|λ_min| 倍（斜拉桥算例实测 λ_min ≈ 0.03，步长放大 30 倍）。因此
 // 几何迭代**必须**带回溯线搜索：取整步会直接反弹发散。
 //
-// 还有一条实测教训：上式只计入了索。梁的参考轴方向同样参与——移动锚点会
-// 改变梁的参考轴，在"空间增量约定"（T = expMap(ψ)·E0）下节点三元组跟着转，
-// 局部转角因此改变一阶量；实测扰动一个**没有索**的主梁节点也能引起位移变化，
-// 量级与索项相当（斜拉桥算例里 G 的误差约 20%）。完整计入需构造材料刚度并
-// 令 G = -K⁻¹K_mat（TODO(P3-3b)）。因此保留了"Newton 步失效 → 退化为不动点
-// 步"的兜底，作为不依赖敏感度的收敛保证。
+// 这个"只计索"的 Jacobian 究竟够不够？实测（46 索斜拉桥、在成桥构形上逐列
+// 对拍：扰动一个节点坐标、重解、与预测的 dF/dΔX 比较）：
+//     主跨跨中梁竖向 1.1%、索锚点梁竖向 1.9%、塔顶竖向 0.4%
+// 即已经准到 1~2%。早前注释里"G 的误差约 20%"是在**畸变索力**下测的，属于
+// 另一个问题（索力确定法），不是 Jacobian 的锅。
+// 残下这 1~2% 来自梁的**参考轴**项：移动节点同时改变参考长度 L0，轴力随之
+// 变化，量级 N/L（与梁弯曲刚度 12EI/L³ 相比约 1%，恰好对上实测）。
+// 它使收敛从二次退化为线性（每轮 ×0.12，46 索算例 10 轮收敛到 1e-9）。
+// 补齐这一项要精确的 ∂F_int/∂X，而且一旦 K_X 变成满秩，(I+G) 不再是低秩形式、
+// Woodbury 直接失效，必须改成每次分解 (K - K_X)——在 145 ms 的成桥态里只能
+// 省下 4 轮，不划算。因此这里保留低秩 Newton + 线搜索 + 不动点兜底。
+// （试过的弯路：把 K_X 猜成轴力几何刚度 (N/L)[[I,-I],[-I,I]]，结果比不加更差
+//   70 倍——说明真修正项的符号/结构都不平凡，必须严格推导，不能拍脑袋。）
 //
 // 最后一条工程判断：预抬高量应当**小**（厘米～分米级）。若迭代给出的 ΔX 达到
 // 米级，说明目标索力本身不合理（梁被强迫变形到设计线形会产生巨大内力），
 // 应当回到索力的确定方法，而不是靠几何迭代硬凑——刚性支承连续梁法在"支座与
-// 索锚点紧邻"时会给出畸变的反力（实测 min/max 相差 17 倍），这是它的已知局限，
-// 实桥应改用最小弯曲能量法/影响矩阵法（后续阶段）。
+// 索锚点紧邻"时会给出畸变的反力（实测 min/max 相差 17 倍），这是它的已知局限。
 //
 // 几何迭代的敏感度是**低秩**的：共转梁单元对节点坐标的平移/转动严格不变
 // （刚体不变性，test_3d_nl 已钉死到 1e-16），所以 ΔX 只通过索产生不平衡力：
@@ -1386,9 +1392,10 @@ inline CableLengthResult3D iterateCableUnstrainedLengths(
 //
 // 对百根以上拉索的实桥，这正是把成桥态从"几十次非线性求解"降到"几次"的关键。
 //
-// 目标索力 T* 若未给定，用**刚性支承连续梁法**自动确定：把索换成锚点处的
-// 刚性竖向支承，求恒载下的支承反力，再沿索向分解。这是斜拉桥成桥索力的
-// 经典确定法之一（"刚性支承连续梁"状态梁的弯矩最小、且分布均匀）。
+// 目标索力 T* 若未给定，用**最小弯曲能量法**自动确定（见 ②b）：令全桥弯曲应变
+// 能最小，等价于"每根索两端锚点沿索向的相对位移为零"的变形协调方程。相比刚性
+// 支承连续梁法（把每个锚点的竖向位移各自压成 0），它在锚点紧邻支座时不会给出
+// 畸变反力，索力沿跨径平滑分布。
 
 // ① 由设计弦长与目标索力闭式反算无应力（下料）索长。
 //    即 Ln = L0(1 + T/EA) - s(T) 对 L0 求解，s(T) = w²Lh³/(24T²)。
@@ -1472,6 +1479,263 @@ inline std::vector<double> cableTensionsRigidSupport(const Model3D& m,
     return T;
 }
 
+// ②b 最小弯曲能量法（斜拉桥成桥索力的经典优化方法，本内核默认）
+//
+// 目标函数：恒载 + 索力作用下全桥（主梁 + 桥塔）的弯曲应变能
+//      U(T) = ∫ M²/(2EI) ds ,     T = 各索索力（作为赘余力）
+//
+// 关键实现技巧：**不必真的去积分弯矩图**。由虚功原理，U 对 T 的一、二阶导数
+// 都能用裸结构（去掉全部索）的**柔度**表示：
+//      f_i = 索 i 的单位力对（锚点 +e_i、另端 -e_i 的自平衡力系）
+//      u_j = K⁻¹ f_j ,   u_0 = 裸结构在恒载下的位移
+//      F_ij = f_i·u_j ,  g_i = f_i·u_0
+//      ⇒  U(T) = U_0 + ½TᵀFT + Tᵀg ,   ∂U/∂T = 0  ⇒  F·T = -g
+// 算价 = 1 次分解 + (nc+1) 次回代（与索长迭代共用同一套低秩思路），
+// 对 100 根索的实桥也是毫秒级——而不是"nc 次完整求解 + 逐个积分弯矩"。
+//
+// 这个方程的力学含义很清楚：f_i·u = -(u_B - u_A)·e_i = -δ_i，故 F·T = -g 就是
+//      δ_i(T) = 0   —— 每根索两端锚点**沿索向**的相对位移为零（索视为不可伸长）
+// 即力法的变形协调方程。它和"刚性竖向支承法"的区别正在这里：
+//   · 刚性支承法把锚点的**竖向位移**各自压成 0：锚点紧邻支座时该点竖向刚度
+//     极大，反力按局部刚度比例分配，实测 min/max 相差 17 倍（畸变）；
+//   · 最小弯曲能量法约束的是**沿索向的相对位移**（允许锚点随塔顶一起位移），
+//     力由变形协调而非局部刚度决定，索力沿跨径平滑分布。
+//
+// 计入索自身伸长时（rigidCables = false），协调方程变为
+//      δ_i(T) = T_i·L_i/(EA_i)   ⇒   F 的对角加 L_i/(EA_i)
+// 等价于"把索换成刚度 EA/L 的弹性支承"，可用线性模型的弹性支承反力独立校核。
+//
+// 已知局限（工程上公认）：跨中短索（紧邻塔柱）可能算出零/负索力——那里梁本身
+// 刚度大、不需要索。本实现用**主动集**把这类索固定在下限（默认 0）后重解其余
+// 索，而不是让它们参与方程制造噪声。实桥若要求所有索都受力，应改用影响矩阵法
+// 或直接指定索力。
+struct CableForceOptions3D {
+    bool rigidCables = true;     // true = 经典最小弯曲能量法（索不可伸长）
+    double minTension = 0.0;     // 索力下限（绝对值）：低于此值的索钉在该值
+    double minTensionFraction = 0.02;  // 保力下限 = 该比例 × 最大索力（短索不为 0）
+    int maxActiveSet = 40;       // 主动集迭代上限
+    bool checkStability = true;  // 检查"去掉索后结构是否仍稳定"（见下）
+    bool verbose = false;
+};
+
+inline std::vector<double> cableTensionsMinBendingEnergy(const Model3D& m,
+                                                         const std::vector<CableAnchor3D>& cables,
+                                                         const CableForceOptions3D& opt = {}) {
+    const std::size_t nc = cables.size();
+    if (nc == 0) return {};
+
+    // ---- 裸结构：去掉全部待定索；只由索连接的孤立节点补齐约束 ----
+    Model3D mc = m;
+    {
+        std::vector<Element3D> keep;
+        keep.reserve(mc.elements.size());
+        for (const auto& e : mc.elements) {
+            bool isTgt = false;
+            for (const auto& c : cables) if (c.elem == e.id) { isTgt = true; break; }
+            if (!isTgt) keep.push_back(e);
+        }
+        mc.elements = keep;
+    }
+    // 只由索连接的孤立节点（例如去索后的浮式塔顶）：补齐约束避免矩阵奇异。
+    // **不能直接调 constrainDisconnected3D** —— 它会把有弹簧支承的节点也硬约束
+    // 掉，于是"塔顶柔性"变成"塔顶刚性"，弹簧刚度彻底失效，索力退化成刚性支承
+    // 法的结果（实测：本该 947 kN 的索被算成 2400 kN = P，恰好等于把塔当无限刚）。
+    // 这里只补"没有弹簧支承"的那些自由度。
+    {
+        std::map<int, bool> connected;
+        for (const auto& e : mc.elements) { connected[e.n1] = true; connected[e.n2] = true; }
+        const DofMap3D dm0 = buildDofMap3D(mc);
+        for (const auto& [id, x] : mc.nodes) {
+            (void)x;
+            if (connected[id]) continue;
+            for (int k = 0; k < dm0.count(id); ++k) {
+                bool hasSpring = false;
+                for (const auto& c : mc.constraints)
+                    if (c.node == id && c.dof == k + 1 && c.k > 0.0) { hasSpring = true; break; }
+                if (!hasSpring) mc.constraints.push_back({id, k + 1, 0.0, 0.0});
+            }
+        }
+    }
+
+    DofMap3D dm = buildDofMap3D(mc);
+    const int nd = dm.nDofs;
+    SparseMat3D K = assembleStiffness3D(mc, dm);
+    Eigen::VectorXd F0 = Eigen::VectorXd::Zero(nd);
+    for (const auto& [node, dof, val] : mc.loads) {
+        const int d = dm.safeDof(node, dof - 1);
+        if (d >= 0) F0(d) += val;
+    }
+    // 弹性支承（k>0）：直接进切线并贡献 k·value 的荷载项
+    for (const auto& c : mc.constraints) {
+        if (c.k <= 0.0) continue;
+        const int d = dm.safeDof(c.node, c.dof - 1);
+        if (d < 0) continue;
+        K.coeffRef(d, d) += c.k;
+        F0(d) += c.k * c.value;
+    }
+    std::vector<int> cdofs;
+    std::vector<double> cvals;
+    for (const auto& c : mc.constraints) {
+        if (c.k > 0.0) continue;
+        const int d = dm.safeDof(c.node, c.dof - 1);
+        if (d < 0) continue;
+        auto it = std::find(cdofs.begin(), cdofs.end(), d);
+        if (it == cdofs.end()) { cdofs.push_back(d); cvals.push_back(c.value); }
+        else cvals[std::distance(cdofs.begin(), it)] = c.value;
+    }
+    Eigen::VectorXd Fdl = F0;
+    applyDirichlet(K, Fdl, cdofs, cvals);
+
+    // ---- 单位力对矩阵 Ld（nd×nc）：列 k = 锚点 +e、另端 -e ----
+    const auto isC = [&](int d) {
+        return std::find(cdofs.begin(), cdofs.end(), d) != cdofs.end();
+    };
+    Eigen::MatrixXd Ld = Eigen::MatrixXd::Zero(nd, static_cast<int>(nc));
+    std::vector<double> chord(nc, 0.0), EA(nc, 0.0);
+    for (std::size_t k = 0; k < nc; ++k) {
+        const Element3D* e = nullptr;
+        for (const auto& q : m.elements) if (q.id == cables[k].elem) { e = &q; break; }
+        if (!e) throw std::runtime_error("最小弯曲能量法：找不到索单元 "
+                                         + std::to_string(cables[k].elem));
+        const int A = cables[k].anchorNode;
+        const int B = (e->n1 == A) ? e->n2 : e->n1;
+        if (A != e->n1 && A != e->n2)
+            throw std::runtime_error("最小弯曲能量法：锚点 " + std::to_string(A)
+                                     + " 不是索单元 " + std::to_string(e->id) + " 的端点");
+        const Vec3 d3 = m.nodes.at(B) - m.nodes.at(A);
+        const double L = d3.norm();
+        if (L < 1e-12) throw std::runtime_error("最小弯曲能量法：索 "
+                                                + std::to_string(e->id) + " 长度退化");
+        chord[k] = L;
+        EA[k] = e->E * e->A;
+        const Vec3 ev = d3 / L;
+        const int sA = dm.dofStart[dm.index.at(A)];
+        const int sB = dm.dofStart[dm.index.at(B)];
+        // 单位**拉力**对：锚点被拉向另一端（+e），另一端被拉向锚点（-e）。
+        // 符号不能反：写成"压力对"时整个解会反号，索力被解成负值后被主动集
+        // 钉在下限 0 上（第一版就是这样，T 全是 0）。
+        for (int a = 0; a < 3; ++a) {
+            const int dA = sA + a, dB = sB + a;
+            if (!isC(dA)) Ld(dA, static_cast<int>(k)) = +ev[a];
+            if (!isC(dB)) Ld(dB, static_cast<int>(k)) = -ev[a];
+        }
+    }
+
+    // ---- 柔度矩阵：一次分解 + (nc+1) 次回代 ----
+    Factorization3D fac(K);
+
+    // 裸结构稳定性自检：最小弯曲能量法的前提是"去掉索后结构仍稳定"。
+    // 这在索承体系里并非自动成立——若主梁的竖向支承全由索提供（纯索承、
+    // 无支座），去索后梁在竖向是**机构**，柔度矩阵毫无意义，解出来的索力是
+    // 舍入噪声（实测：三索算例的端索被解成 0）。用"随机向量 → K⁻¹ → 回代"
+    // 检验分解是否为真逆：机构会沿零能模式放大到天文数字。
+    if (opt.checkStability && nd > 0) {
+        double eworst = 0.0;
+        for (int probe = 0; probe < 2; ++probe) {
+            Eigen::VectorXd r = Eigen::VectorXd::Zero(nd);
+            for (int d = 0; d < nd; ++d) {
+                if (isC(d)) continue;
+                r(d) = (probe == 0) ? std::sin(1.7 * d + 0.3)
+                                    : std::cos(0.31 * d + 1.1);
+            }
+            if (r.norm() < 1e-12) continue;
+            const Eigen::VectorXd z = fac.solve(K * r);
+            eworst = std::max(eworst, (z - r).norm() / r.norm());
+        }
+        if (!(eworst < 1e-4))
+            throw std::runtime_error(
+                "最小弯曲能量法：去掉索后结构接近机构（回代相对误差 "
+                + std::to_string(eworst) + "），柔度矩阵不可用。"
+                "该体系的主梁竖向支承由索提供（纯索承），请改用刚性支承连续梁法"
+                "（CompletionStateOptions3D::CableForceMethod::RigidSupport）或直接指定索力。");
+    }
+
+    const Eigen::VectorXd u0 = fac.solve(Fdl);
+    const Eigen::MatrixXd U = fac.solveMulti(Ld);
+    Eigen::MatrixXd Fm = Ld.transpose() * U;
+    Fm = 0.5 * (Fm + Fm.transpose());                  // 消掉舍入造成的非对称
+    Eigen::VectorXd g = Ld.transpose() * u0;
+    if (!opt.rigidCables)
+        for (std::size_t k = 0; k < nc; ++k) Fm(static_cast<int>(k), static_cast<int>(k))
+                                                += chord[k] / EA[k];
+
+    // 锚点自由度全被约束时该索无法定力（柔度恒为 0）——直接报错，而不是给个伪解
+    {
+        double dmax = 0.0;
+        for (std::size_t k = 0; k < nc; ++k) dmax = std::max(dmax, std::abs(Fm(static_cast<int>(k), static_cast<int>(k))));
+        for (std::size_t k = 0; k < nc; ++k) {
+            if (std::abs(Fm(static_cast<int>(k), static_cast<int>(k))) <= 1e-14 * std::max(dmax, 1e-30))
+                throw std::runtime_error("最小弯曲能量法：索 " + std::to_string(cables[k].elem)
+                                         + " 的锚点自由度被完全约束，无法由变形协调定力");
+        }
+    }
+
+    // ---- 主动集：解 F·T = -g；低于下限的索钉住后重解其余 ----
+    //
+    // 下限的来历：跨中短索（紧邻塔柱）在最小弯曲能量下可能算出 0 或**负**索力
+    // ——那里梁本身刚度大、确实"不需要"这根索。但实桥不许索松弛（风振、疲劳、
+    // 索力测点、换索），工程上统一按"短索保力"处理：给一个下限，把这根索从
+    // 方程中移出、力固定在下限。下限取**最大索力的固定比例**（默认 2%），
+    // 这样与桥的规模、单位无关。
+    auto runActiveSet = [&](double floor, std::vector<double>& Tv) {
+        Tv.assign(nc, 0.0);
+        std::vector<char> fx(nc, 0);
+        int npin = 0;
+        for (int pass = 0; pass < opt.maxActiveSet; ++pass) {
+            std::vector<int> freeIdx;
+            for (std::size_t k = 0; k < nc; ++k) if (!fx[k]) freeIdx.push_back(static_cast<int>(k));
+            if (freeIdx.empty()) break;
+            const int nf = static_cast<int>(freeIdx.size());
+            Eigen::MatrixXd Fr(nf, nf);
+            Eigen::VectorXd gr(nf);
+            for (int i = 0; i < nf; ++i) {
+                const int ki = freeIdx[i];
+                double bi = -g(ki);
+                for (std::size_t k = 0; k < nc; ++k)
+                    if (fx[k]) bi -= Fm(ki, static_cast<int>(k)) * Tv[k];
+                gr(i) = bi;
+                for (int j = 0; j < nf; ++j) Fr(i, j) = Fm(ki, freeIdx[j]);
+            }
+            const Eigen::VectorXd Ts = Fr.ldlt().solve(gr);
+            for (int i = 0; i < nf; ++i) Tv[freeIdx[i]] = Ts(i);
+            int added = 0;
+            for (int i = 0; i < nf; ++i) {
+                const int ki = freeIdx[i];
+                if (!(Tv[ki] > floor)) { Tv[ki] = floor; fx[ki] = 1; ++added; }
+            }
+            npin += added;
+            if (added == 0) break;
+        }
+        return npin;
+    };
+
+    std::vector<double> T;
+    int pinned = runActiveSet(opt.minTension, T);
+    if (opt.minTensionFraction > 0.0) {
+        double Tmax0 = 0.0;
+        for (double t : T) Tmax0 = std::max(Tmax0, t);
+        const double floor = std::max(opt.minTension, opt.minTensionFraction * Tmax0);
+        if (floor > opt.minTension) {
+            // 只需在"确有索低于该下限"时才重跑
+            bool need = false;
+            for (double t : T) if (t < floor) { need = true; break; }
+            if (need) pinned = runActiveSet(floor, T);
+        }
+    }
+    if (opt.verbose) {
+        double tmin = 1e30, tmax = -1e30, sum = 0.0;
+        for (std::size_t k = 0; k < nc; ++k) {
+            tmin = std::min(tmin, T[k]);
+            tmax = std::max(tmax, T[k]);
+            sum += T[k];
+        }
+        std::printf("  [最小弯曲能量] T ∈ [%.4g, %.4g] kN，ΣT = %.4g kN，"
+                    "保力下限钉住 %d 根（下限 %.4g kN）\n",
+                    tmin / 1e3, tmax / 1e3, sum / 1e3, pinned, tmin / 1e3);
+    }
+    return T;
+}
+
 // ③ 制造线形（预抬高）迭代：解几何闭合 ΔX + u(X0 + ΔX) = 0。
 struct ErectionGeometryOptions3D {
     int maxIter = 20;
@@ -1479,6 +1743,9 @@ struct ErectionGeometryOptions3D {
     double stepCap = 2.0;        // 单轮节点坐标变化上限（m），防野步长
     int maxLineSearch = 8;       // 回溯线搜索次数
     double lineSearchFactor = 0.4;   // 每次回溯的衰减系数
+    // 每轮刷新索敏感度（W=K⁻¹B 与 Kc）。关掉能省一次分解，但 W 被冻在误差最大
+    // 的那一轮上，收敛会明显变慢（实测 8 轮 → 10 轮，且每轮收敛率更差）。
+    bool refreshSensitivity = true;
     bool verbose = false;
     NonlinearOptions3D nl;
 };
@@ -1508,17 +1775,21 @@ inline ErectionGeometryResult3D iterateErectionGeometry(Model3D m,
 
     // 约束自由度（不可动）与平动自由度（几何闭合只针对位置，不含转角）：
     // 制造线形是节点坐标，梁端转角由变形自行决定，不参与闭合方程。
-    std::vector<char> isC(nd, 0), isT(nd, 0);
+    // **弹性支承（k>0）的自由度必须排除**：弹簧的平衡本身决定 u = T/k ≠ 0，
+    // 这个沉降是物理的（基础/支座沉降），不能靠预抬高"抬掉"——若把它写进闭合
+    // 方程，迭代会不断要求 u→0，而弹簧力只认位移，最终把索力压到零（实测）。
+    std::vector<char> isC(nd, 0), isT(nd, 0), isSpring(nd, 0);
     for (const auto& c : m.constraints) {
-        if (c.k > 0.0) continue;
         const int d = dm.safeDof(c.node, c.dof - 1);
-        if (d >= 0) isC[d] = 1;
+        if (d < 0) continue;
+        if (c.k > 0.0) { isSpring[d] = 1; continue; }
+        isC[d] = 1;
     }
     for (std::size_t i = 0; i < dm.nodeIds.size(); ++i) {
         const int cnt = std::min(dm.dofCount[i], 3);
         for (int a = 0; a < cnt; ++a) isT[dm.dofStart[i] + a] = 1;
     }
-    for (int d = 0; d < nd; ++d) if (isC[d]) isT[d] = 0;   // 支座节点位置不动
+    for (int d = 0; d < nd; ++d) if (isC[d] || isSpring[d]) isT[d] = 0;
 
     const std::size_t nc = cableIds.size();
     std::vector<const Element3D*> ep(nc, nullptr);
@@ -1576,7 +1847,8 @@ inline ErectionGeometryResult3D iterateErectionGeometry(Model3D m,
 
     for (int it = 0; it < opt.maxIter; ++it) {
         NLTangent3D tan;
-        const bool needS = !haveS || (it > 0 && errPrev > 0.0 && cur.err > 0.5 * errPrev);
+        const bool needS = !haveS || opt.refreshSensitivity ||
+                       (it > 0 && errPrev > 0.0 && cur.err > 0.5 * errPrev);
         cur = evalGeom(dX, needS ? &tan : nullptr);
         out.iterations = it + 1;
         out.u = cur.u;
@@ -1662,11 +1934,18 @@ struct CompletionCable3D {
     double tension = 0.0;     // 目标成桥索力；<=0 表示用刚性支承连续梁法自动确定
 };
 
+// ---- 目标索力：给定则用；否则按所选方法自动确定 ----
 struct CompletionStateOptions3D {
     int maxIter = 20;
     double tolClosure = 1e-9;    // 几何闭合容差（m）
     double stepCap = 2.0;
     bool verbose = false;
+    // 自动定索力的方法：默认最小弯曲能量法（见 ②b）。
+    // RigidSupport 保留作对照——它在锚点紧邻支座时会给出畸变索力，只适合
+    // 无塔、竖索、锚点远离支座的简单体系。
+    enum class CableForceMethod { MinBendingEnergy, RigidSupport };
+    CableForceMethod cableForce = CableForceMethod::MinBendingEnergy;
+    CableForceOptions3D minEnergy;      // 最小弯曲能量法的选项
     NonlinearOptions3D nl;
 };
 
@@ -1694,7 +1973,7 @@ inline CompletionStateResult3D solveCompletionState3D(Model3D m,
     out.elems.resize(nc);
     for (std::size_t k = 0; k < nc; ++k) out.elems[k] = cables[k].elem;
 
-    // ---- 目标索力：给定则用；否则刚性支承连续梁法自动定 ----
+    // ---- 目标索力：给定则用；否则按所选方法自动定 ----
     std::vector<double> Tst(nc, 0.0);
     std::vector<int> needAuto;
     for (std::size_t k = 0; k < nc; ++k) {
@@ -1704,8 +1983,25 @@ inline CompletionStateResult3D solveCompletionState3D(Model3D m,
     if (!needAuto.empty()) {
         std::vector<CableAnchor3D> ca;
         for (int k : needAuto) ca.push_back({cables[k].elem, cables[k].anchorNode});
-        const std::vector<double> Ta = cableTensionsRigidSupport(m, ca);
-        for (std::size_t j = 0; j < needAuto.size(); ++j) Tst[needAuto[j]] = Ta[j];
+        std::vector<double> Ta;
+        if (opt.cableForce == CompletionStateOptions3D::CableForceMethod::RigidSupport) {
+            Ta = cableTensionsRigidSupport(m, ca);
+        } else {
+            CableForceOptions3D fo = opt.minEnergy;
+            fo.verbose = opt.minEnergy.verbose || opt.verbose;
+            Ta = cableTensionsMinBendingEnergy(m, ca, fo);
+        }
+        for (std::size_t j = 0; j < needAuto.size(); ++j) {
+            Tst[needAuto[j]] = Ta[j];
+            // 索力非正 ⇒ 下料索长反算无解（索做多长都张不紧）。必须报错而不是
+            // 塞一个数进去：这意味着该索在此恒载下不参与受力（短索紧邻塔柱时
+            // 常见），应当指定索力或用影响矩阵法。
+            if (Ta[j] <= 0.0)
+                throw std::runtime_error(
+                    "成桥态求解：自动定出的索力非正（索 " + std::to_string(cables[needAuto[j]].elem)
+                    + " = " + std::to_string(Ta[j] / 1e3) + " kN）。"
+                    "请指定该索的目标索力，或改用影响矩阵法/最小弯曲能量法加索力下限。");
+        }
     }
 
     // ---- 下料索长：由设计弦长 + 目标索力闭式反算（无需任何结构迭代）----

@@ -229,9 +229,18 @@ int main(int argc, char** argv) {
     // ---- 2. 索长迭代（影响矩阵 J = M·D）----
     {
         Model3D m = m0;
+        // 目标索力用最小弯曲能量法的解，而不是"所有索统一 3 MN"——后者在扇形
+        // 索面里物理上不自洽（外索与内索的合理索力差可达十倍），80 索时会让
+        // 非线性求解不收敛（实测）。
+        std::vector<CableAnchor3D> ca;
+        for (const auto& e : m.elements) {
+            if (e.type != "CABLE") continue;
+            const int anchor = (m.nodes.at(e.n1).z() < m.nodes.at(e.n2).z()) ? e.n1 : e.n2;
+            ca.push_back({e.id, anchor});
+        }
+        const std::vector<double> Tref = cableTensionsMinBendingEnergy(m, ca, CableForceOptions3D{});
         std::vector<CableTarget3D> tg;
-        for (const auto& e : m.elements)
-            if (e.type == "CABLE") tg.push_back({e.id, 3.0e6});
+        for (std::size_t k = 0; k < ca.size(); ++k) tg.push_back({ca[k].elem, Tref[k]});
         CableLengthOptions3D co;
         co.maxIter = 15; co.tolTension = 1e-7;
         co.nl.loadSteps = 3; co.nl.maxIter = 30; co.nl.tolForce = 1e-8;
@@ -257,23 +266,49 @@ int main(int argc, char** argv) {
             cc.push_back({e.id, anchor, 0.0});
             cc2.push_back({e.id, anchor});
         }
-        if (argc > 3) {
-            const std::vector<double> T = cableTensionsRigidSupport(m, cc2);
-            double tmin = 1e30, tmax = -1e30, sum = 0.0;
-            for (double t : T) { tmin = std::min(tmin, t); tmax = std::max(tmax, t); sum += t; }
-            std::printf("  诊断：刚性支承法索力 min=%.4g max=%.4g sum=%.4g kN\n",
-                        tmin / 1e3, tmax / 1e3, sum / 1e3);
-        }
+        // ---- 两种自动定索力方法对照 ----
+        // 判据两条：① 沿索向竖向分量之和必须等于总恒载（全局平衡，与算法无关）；
+        //          ② 索力分布的 max/min（刚性支承法在锚点紧邻支座时会畸变）。
+        double Wtot = 0.0;
+        for (const auto& [node, dof, val] : m.loads) if (dof == 3) Wtot -= val;
+        auto report = [&](const char* tag, const std::vector<double>& T) {
+            double tmin = 1e30, tmax = -1e30, sum = 0.0, vsum = 0.0;
+            for (std::size_t k = 0; k < T.size(); ++k) {
+                tmin = std::min(tmin, T[k]);
+                tmax = std::max(tmax, T[k]);
+                sum += T[k];
+                const Element3D* e = nullptr;
+                for (const auto& q : m.elements) if (q.id == cc[k].elem) { e = &q; break; }
+                const int A = cc[k].anchorNode;
+                const int B = (e->n1 == A) ? e->n2 : e->n1;
+                const Vec3 ev = (m.nodes.at(B) - m.nodes.at(A)).normalized();
+                vsum += T[k] * ev.z();
+            }
+            std::printf("  %-16s T∈[%.4g, %.4g] kN，ΣT=%.4g kN，max/min=%.1f\n",
+                        tag, tmin / 1e3, tmax / 1e3, sum / 1e3, tmax / std::max(tmin, 1e-9));
+            std::printf("  %-16s 竖向分量 Σ=%.4g kN（总恒载 %.4g kN，偏差 %.1f%%）\n",
+                        "", vsum / 1e3, Wtot / 1e3,
+                        100.0 * (vsum - Wtot) / std::max(Wtot, 1e-9));
+        };
+        report("刚性支承连续梁法", cableTensionsRigidSupport(m, cc2));
+        report("最小弯曲能量法", cableTensionsMinBendingEnergy(m, cc2, CableForceOptions3D{}));
+
         CompletionStateOptions3D co;
-        co.maxIter = 12; co.tolClosure = 1e-8; co.verbose = (argc > 3);
+        co.maxIter = 20; co.tolClosure = 1e-8; co.verbose = (argc > 3);
         co.nl.loadSteps = 3; co.nl.maxIter = 30; co.nl.tolForce = 1e-8;
         const double t0 = nowMs();
         const CompletionStateResult3D cs = solveCompletionState3D(m, cc, co);
         const double t1 = nowMs();
         std::printf("\n[成桥态闭环：自动定索力 + 下料长度 + 制造线形]\n");
         std::printf("  %d 轮几何迭代，耗时 %.1f ms；闭合误差 %.2e m，收敛=%d\n",
-                    cs.iterations, t1 - t0, cs.maxClosureErr,
-                    cs.converged ? 1 : 0);
+                    cs.iterations, t1 - t0, cs.maxClosureErr, cs.converged ? 1 : 0);
+        std::printf("  成桥索力误差 %.2e（相对目标），最大预抬高 %.1f mm\n",
+                    cs.maxTensionErr,
+                    1e3 * [&] {
+                        double mx = 0.0;
+                        for (std::size_t i = 0; i < cs.camber.size(); ++i) mx = std::max(mx, std::abs(cs.camber[i]));
+                        return mx;
+                    }());
     }
 
     std::printf("\n====================================\n");

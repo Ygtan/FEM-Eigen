@@ -526,6 +526,194 @@ void testRigidSupportCableTension() {
 }
 
 // ---------------------------------------------------------------
+// 10b. 最小弯曲能量法：成桥索力优化
+//      体系：悬臂主梁（kb = 3EI/L³）+ 锚点竖向弹性支承（kt，代表塔顶柔性），
+//      一根竖索把梁端吊到锚点。
+//        变形协调（索不可伸长 ⇒ 两端锚点沿索向相对位移为 0）：
+//            v2 = v3   ⇒   (P - T)/kb = T/kt   ⇒   T = P·kt/(kb + kt)
+//        计入索自身伸长（v2 - v3 = T·L/EA）：
+//            T = (P/kb) / (1/kb + 1/kt + L/EA)
+//      对照：刚性支承连续梁法把锚点竖向位移压成 0 ⇒ T = P（塔当无限刚），
+//      这正是在"塔柔"时给出偏差的根源。
+//      再加一条**不依赖任何推导**的检验：以索力为变量算全桥应变能，它是 T 的
+//      二次函数，三点抛物线拟合的极小点必须正好落在内核算出的索力上。
+// ---------------------------------------------------------------
+namespace {
+// 独立路径求"裸结构（去索）+ 索力对 + 恒载"的总应变能 ½uᵀK u。
+// 刻意不复用内核的柔度矩阵 F = LdᵀK⁻¹Ld，以免"用同一个式子验证自己"。
+double bareStructureEnergy(const Model3D& m, const std::vector<CableAnchor3D>& ca,
+                           const std::vector<double>& T) {
+    Model3D mc = m;
+    std::vector<Element3D> keep;
+    for (const auto& e : mc.elements) {
+        bool tgt = false;
+        for (const auto& c : ca) if (c.elem == e.id) { tgt = true; break; }
+        if (!tgt) keep.push_back(e);
+    }
+    mc.elements = keep;
+    DofMap3D dm = buildDofMap3D(mc);
+    const int nd = dm.nDofs;
+    SparseMat3D K0 = assembleStiffness3D(mc, dm);
+    Eigen::VectorXd F = Eigen::VectorXd::Zero(nd);
+    for (const auto& [node, dof, val] : mc.loads) {
+        const int d = dm.safeDof(node, dof - 1);
+        if (d >= 0) F(d) += val;
+    }
+    for (const auto& c : mc.constraints) {
+        if (c.k <= 0.0) continue;
+        const int d = dm.safeDof(c.node, c.dof - 1);
+        if (d < 0) continue;
+        K0.coeffRef(d, d) += c.k;
+        F(d) += c.k * c.value;
+    }
+    for (std::size_t k = 0; k < ca.size(); ++k) {
+        const Element3D* e = nullptr;
+        for (const auto& q : m.elements) if (q.id == ca[k].elem) { e = &q; break; }
+        const int A = ca[k].anchorNode;
+        const int B = (e->n1 == A) ? e->n2 : e->n1;
+        const Vec3 ev = (m.nodes.at(B) - m.nodes.at(A)).normalized();
+        const int sA = dm.dofStart[dm.index.at(A)], sB = dm.dofStart[dm.index.at(B)];
+        for (int a = 0; a < 3; ++a) {          // 张力对：锚点拉向另端
+            F(sA + a) += T[k] * ev[a];
+            F(sB + a) -= T[k] * ev[a];
+        }
+    }
+    SparseMat3D K = K0;
+    std::vector<int> cd;
+    std::vector<double> cv;
+    for (const auto& c : mc.constraints) {
+        if (c.k > 0.0) continue;
+        const int d = dm.safeDof(c.node, c.dof - 1);
+        if (d < 0) continue;
+        cd.push_back(d);
+        cv.push_back(c.value);
+    }
+    applyDirichlet(K, F, cd, cv);
+    const Eigen::VectorXd u = solveSparse3D(K, F);
+    return 0.5 * u.dot(K0 * u);
+}
+
+// 悬臂梁 + 锚点竖向弹性支承 kt + 竖索
+Model3D makeSpringAnchoredCantilever(double Lb, double Hc, double Eb, double Ab,
+                                     double Ib, double Ec, double Ac, double kt,
+                                     double P) {
+    Model3D m;
+    m.nodes[1] = Vec3(0.0, 0.0, 0.0);       // 梁根（固结）
+    m.nodes[2] = Vec3(Lb, 0.0, 0.0);        // 梁端 = 索下锚点
+    m.nodes[3] = Vec3(Lb, 0.0, Hc);         // 索上锚点（竖向弹性支承 = 塔顶柔性）
+    Element3D g; g.id = 1; g.type = "BEAM";
+    g.E = Eb; g.A = Ab; g.Iy = Ib; g.Iz = Ib; g.J = 2.0 * Ib; g.G = 1.4e10;
+    g.n1 = 1; g.n2 = 2; m.elements.push_back(g);
+    Element3D c; c.id = 10; c.type = "CABLE";
+    c.E = Ec; c.A = Ac; c.w = 0.0;
+    c.n1 = 2; c.n2 = 3; m.elements.push_back(c);
+    for (int d = 1; d <= 6; ++d) m.constraints.push_back({1, d, 0.0, 0.0});
+    for (int d = 1; d <= 6; ++d)
+        if (d != 3) m.constraints.push_back({3, d, 0.0, 0.0});
+    m.constraints.push_back({3, 3, 0.0, kt});       // 竖向弹性支承
+    m.loads.push_back({2, 3, -P});
+    return m;
+}
+
+// 悬臂梁 + 真实悬臂桥塔 + 斜索（几何更接近实桥，用于最优性检验）
+Model3D makeTowerCableModel(double Lb, double Ht, double Eb, double Ab, double Ib,
+                            double Et, double At, double It, double Ec, double Ac,
+                            double P) {
+    Model3D m;
+    m.nodes[1] = Vec3(0.0, 0.0, 0.0);       // 梁根
+    m.nodes[2] = Vec3(Lb, 0.0, 0.0);        // 梁端（索下锚点）
+    m.nodes[3] = Vec3(0.0, 0.0, Ht);        // 塔顶（索上锚点）
+    m.nodes[4] = Vec3(0.0, 0.0, 0.0);       // 塔底
+    Element3D g; g.id = 1; g.type = "BEAM";
+    g.E = Eb; g.A = Ab; g.Iy = Ib; g.Iz = Ib; g.J = 2.0 * Ib; g.G = 1.4e10;
+    g.n1 = 1; g.n2 = 2; m.elements.push_back(g);
+    Element3D t; t.id = 2; t.type = "BEAM";
+    t.E = Et; t.A = At; t.Iy = It; t.Iz = It; t.J = 2.0 * It; t.G = 1.4e10;
+    t.n1 = 4; t.n2 = 3; m.elements.push_back(t);
+    Element3D c; c.id = 10; c.type = "CABLE";
+    c.E = Ec; c.A = Ac; c.w = 0.0;
+    c.n1 = 2; c.n2 = 3; m.elements.push_back(c);
+    for (int d = 1; d <= 6; ++d) {
+        m.constraints.push_back({1, d, 0.0, 0.0});
+        m.constraints.push_back({4, d, 0.0, 0.0});
+    }
+    m.loads.push_back({2, 3, -P});
+    return m;
+}
+}  // namespace
+
+void testMinEnergyCableForce() {
+    std::printf("\n[最小弯曲能量法：成桥索力 vs 闭式解]\n");
+    const double Eb = 3.45e10, Ab = 6.0, Ib = 6.0;
+    const double Ec = 1.95e11, Ac = 6.0e-3;
+    const double Lb = 30.0, Hc = 40.0, P = 2.4e6, kt = 1.5e7;
+
+    const Model3D m = makeSpringAnchoredCantilever(Lb, Hc, Eb, Ab, Ib, Ec, Ac, kt, P);
+    const double kb = 3.0 * Eb * Ib / (Lb * Lb * Lb);
+    const double EA = Ec * Ac;
+
+    // (a) 索不可伸长（经典法）
+    const std::vector<double> Tr =
+        cableTensionsMinBendingEnergy(m, {{10, 2}}, CableForceOptions3D{});
+    const double Texact = P * kt / (kb + kt);
+    check("最小弯曲能量：T = P·kt/(kb+kt)", Tr[0], Texact, 1e-9);
+
+    // (b) 计入索自身伸长：T = (P/kb)/(1/kb + 1/kt + L/EA)
+    CableForceOptions3D fo;
+    fo.rigidCables = false;
+    const std::vector<double> Ts = cableTensionsMinBendingEnergy(m, {{10, 2}}, fo);
+    const double TexactS = (P / kb) / (1.0 / kb + 1.0 / kt + Hc / EA);
+    check("最小弯曲能量（计索伸长）：T = (P/kb)/Σ柔度", Ts[0], TexactS, 1e-9);
+    check("计索伸长后索力更小（索变软）", Ts[0] < Tr[0] ? 1.0 : 0.0, 1.0, 0.0);
+
+    // (c) 对照：刚性支承连续梁法把锚点竖向位移压成 0 ⇒ T = P（塔当无限刚）
+    const std::vector<double> Trs = cableTensionsRigidSupport(m, {{10, 2}});
+    check("对照：刚性支承法把塔当无限刚 ⇒ T = P", Trs[0], P, 1e-9);
+
+    // (d) 不依赖推导的检验：应变能是 T 的二次函数，三点抛物线的极小点 = T*
+    const double h = 0.2 * Tr[0];
+    const double U0 = bareStructureEnergy(m, {{10, 2}}, {Tr[0] - h});
+    const double U1 = bareStructureEnergy(m, {{10, 2}}, {Tr[0]});
+    const double U2 = bareStructureEnergy(m, {{10, 2}}, {Tr[0] + h});
+    const double vertex = Tr[0] + h * (U0 - U2) / (2.0 * (U0 - 2.0 * U1 + U2));
+    check("应变能抛物线极小点 = 内核索力", vertex, Tr[0], 1e-8);
+    check("应变能在 T* 处取极小（左）", U1 < U0 ? 1.0 : 0.0, 1.0, 0.0);
+    check("应变能在 T* 处取极小（右）", U1 < U2 ? 1.0 : 0.0, 1.0, 0.0);
+    std::printf("  T=%.6g kN（刚性支承法 %.6g kN），应变能 U*=%.6g J\n",
+                Tr[0] / 1e3, Trs[0] / 1e3, U1);
+}
+
+void testMinEnergyOptimality() {
+    std::printf("\n[最小弯曲能量法：真实桥塔模型的最优性检验]\n");
+    const double Eb = 3.45e10, Ab = 6.0, Ib = 6.0;
+    const double Et = 3.45e10, At = 8.0, It = 20.0;
+    const double Ec = 1.95e11, Ac = 6.0e-3;
+    const double Lb = 30.0, Ht = 40.0, P = 2.4e6;
+
+    const Model3D m = makeTowerCableModel(Lb, Ht, Eb, Ab, Ib, Et, At, It, Ec, Ac, P);
+    const std::vector<double> T =
+        cableTensionsMinBendingEnergy(m, {{10, 2}}, CableForceOptions3D{});
+    check("桥塔模型：索力为正", T[0] > 0.0 ? 1.0 : 0.0, 1.0, 0.0);
+
+    const double h = 0.1 * T[0];
+    const double U0 = bareStructureEnergy(m, {{10, 2}}, {T[0] - h});
+    const double U1 = bareStructureEnergy(m, {{10, 2}}, {T[0]});
+    const double U2 = bareStructureEnergy(m, {{10, 2}}, {T[0] + h});
+    const double vertex = T[0] + h * (U0 - U2) / (2.0 * (U0 - 2.0 * U1 + U2));
+    check("桥塔模型：抛物线极小点 = 内核索力", vertex, T[0], 1e-7);
+    check("桥塔模型：T* 处应变能最低（左）", U1 < U0 ? 1.0 : 0.0, 1.0, 0.0);
+    check("桥塔模型：T* 处应变能最低（右）", U1 < U2 ? 1.0 : 0.0, 1.0, 0.0);
+
+    // 与刚性支承法对比：后者把梁端竖向位移压成 0 ⇒ 索力偏大、应变能更高
+    const std::vector<double> Trs = cableTensionsRigidSupport(m, {{10, 2}});
+    const double Urs = bareStructureEnergy(m, {{10, 2}}, Trs);
+    check("桥塔模型：最小弯曲能量法的应变能更低",
+          U1 < Urs ? 1.0 : 0.0, 1.0, 0.0);
+    std::printf("  T=%.6g kN，刚性支承法 %.6g kN；U=%.6g vs %.6g J（低 %.1f%%）\n",
+                T[0] / 1e3, Trs[0] / 1e3, U1, Urs, 100.0 * (1.0 - U1 / Urs));
+}
+
+// ---------------------------------------------------------------
 // 11. 成桥态闭环：单索悬臂梁（有完整闭式解）
 //     梁根固结、梁端竖向恒载 P、竖索到上方固定点，目标成桥索力 T*。
 //       · 下料索长：L0 = Hc/(1 + T*/EA)（竖索无垂度，闭式）
@@ -604,7 +792,11 @@ void testCompletionStateThreeCable() {
     co.nl.loadSteps = 2;
     co.nl.maxIter = 40;
     co.nl.tolForce = 1e-11;
-    // tension = 0 → 由刚性支承连续梁法自动定
+    // 这个模型的竖向支承**全部由索提供**（梁在两个端节点之外没有竖向支座），
+    // 去掉索后就是机构，柔度矩阵不存在 ⇒ 最小弯曲能量法在这里不适用（内核会
+    // 明确报错）。纯索承体系只能用刚性支承法：把索当作支承求反力。
+    co.cableForce = CompletionStateOptions3D::CableForceMethod::RigidSupport;
+    // tension = 0 → 由所选方法自动定
     const CompletionStateResult3D cs =
         solveCompletionState3D(m, {{10, 1, 0.0}, {11, 3, 0.0}, {12, 5, 0.0}}, co);
 
@@ -843,6 +1035,8 @@ int main() {
         testCableSagVsExactCatenary();
         testCableLengthIteration();
         testRigidSupportCableTension();
+        testMinEnergyCableForce();
+        testMinEnergyOptimality();
         testCompletionStateSingleCable();
         testCompletionStateThreeCable();
         testAnalyticTangentVsFD();
