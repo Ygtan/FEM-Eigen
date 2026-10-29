@@ -1427,6 +1427,8 @@ inline Model3D readModel3D(const std::string& path) {
     std::map<int, double> realIstrn;
     std::map<int, double> mpDens, realAddmass;
     std::map<int,double> realWtop, realWbot, realWy, realWt, realIw;
+    // 索参数（CABLE 用）：W= 单位长度重量 N/m（垂度），L0= 无应力索长 m
+    std::map<int,double> realCableW, realCableL0;
     int activeType = 0, activeMat = 0, activeReal = 0;
     std::string section;
     std::string line;
@@ -1450,6 +1452,16 @@ inline Model3D readModel3D(const std::string& path) {
                         e.dens=mpDens[activeMat]; e.addmass=realAddmass[activeReal];
                         e.Wtop=realWtop[activeReal]; e.Wbot=realWbot[activeReal]; e.Wy=realWy[activeReal]; e.Wt=realWt[activeReal];
                         e.Iw=realIw[activeReal];
+                        e.w=realCableW[activeReal]; e.L0=realCableL0[activeReal];
+                        // 单元级覆盖：*EN,id,n1,n2 W=<N/m> L0=<m>
+                        // 每根索的 W/L0 本来就各不相同（下料长度是逐根量），
+                        // 只靠 *R 共享一份会逼得同类索拆成多个实常数。
+                        std::string kv;
+                        while (ss >> kv) {
+                            if (kv.rfind("W=",0)==0) e.w=std::stod(kv.substr(2));
+                            else if (kv.rfind("L0=",0)==0) e.L0=std::stod(kv.substr(3));
+                            else std::cerr << "[警告] *EN 未知关键字: " << kv << "\n";
+                        }
                         m.elements.push_back(e);
                     }
                 }
@@ -1512,6 +1524,10 @@ inline Model3D readModel3D(const std::string& path) {
                 else if (kv.rfind("WY=",0)==0) realWy[id]=std::stod(kv.substr(3));
                 else if (kv.rfind("WTORS=",0)==0) realWt[id]=std::stod(kv.substr(7));
                 else if (kv.rfind("IW=",0)==0) realIw[id]=std::stod(kv.substr(3));
+                // 索参数：W 单位线重 N/m（垂度/Ernst 用），L0 无应力索长 m。
+                // 注意 "W=" 与 "WT=/WB=/WY=/WTORS=" 前缀不同，靠精确前两位区分。
+                else if (kv.rfind("W=",0)==0) realCableW[id]=std::stod(kv.substr(2));
+                else if (kv.rfind("L0=",0)==0) realCableL0[id]=std::stod(kv.substr(3));
                 else std::cerr << "[警告] *R 未知关键字: " << kv << "\n";
             }
             areas[id]=A;

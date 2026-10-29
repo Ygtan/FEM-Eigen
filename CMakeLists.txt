@@ -213,6 +213,8 @@ fem_add_executable(example_3d_modal example_3d_modal.cpp)
 fem_add_executable(example_3d_report example_3d_report.cpp)
 fem_add_executable(modal_bench bench/modal_bench.cpp)
 fem_add_executable(nl_bench bench/nl_bench.cpp)
+# 斜拉桥成桥态 CLI 接缝：BridgeStudio 导出 .dat → 这里 → <stem>_cable.txt
+fem_add_executable(cable_solver cable_solver.cpp)
 
 # ---- 2D/3D 分库 ----
 # 2D 层（fem_2d）编译为静态库；共享核心 fem.hpp 与 3D 层 fem_3d.hpp 为纯头文件。
