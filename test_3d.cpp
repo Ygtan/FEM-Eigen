@@ -811,6 +811,107 @@ void testJtgD60AutoLaneLoad() {
 
 } // namespace
 
+// ============================================================
+// [18] 压缩输入语法（*FILL / *DO / 索引表达式）
+// ============================================================
+// 导出的 .dat 允许把等间距节点写成起止两点 + *FILL，把规则排列的单元写成
+// *DO/*ENDDO 循环。这两个特性只要有一个读错，模型就"少几个单元/节点"而
+// 不报错——力学结果全错但看不出错在哪。所以用同一模型的两种写法对拍：
+// 解析结果必须逐字段相同。这是"导出器可以放心压缩"的前提。
+void testCompactInput() {
+    std::printf("\n[18] 压缩输入语法 *FILL / *DO 与逐行展开写法对拍\n");
+
+    // 展开写法：节点 1001..1011（x = 0,10,…,100），
+    //   单元 1..10  ：1001-1002, 1002-1003, …（步长 1）
+    //   单元 21..25 ：1001-1003, 1003-1005, …（步长 2，验证 2*I+c 系数）
+    //   单元 26     ：1001-1011，带单元级 W= 覆盖
+    const std::string full =
+        "*NODE\n"
+        "1001 0 0 0\n1002 10 0 0\n1003 20 0 0\n1004 30 0 0\n1005 40 0 0\n"
+        "1006 50 0 0\n1007 60 0 0\n1008 70 0 0\n1009 80 0 0\n1010 90 0 0\n"
+        "1011 100 0 0\n"
+        "*ET\n1 BEAM\n"
+        "*MP\n1 E=3.0e10 DENS=2500\n"
+        "*R\n1 A=1.0 IY=0.1 IZ=0.2 J=0.3 G=1.2e10\n"
+        "*TYPE,1\n*MAT,1\n*REAL,1\n"
+        "*EN,1,1001,1002\n*EN,2,1002,1003\n*EN,3,1003,1004\n*EN,4,1004,1005\n"
+        "*EN,5,1005,1006\n*EN,6,1006,1007\n*EN,7,1007,1008\n*EN,8,1008,1009\n"
+        "*EN,9,1009,1010\n*EN,10,1010,1011\n"
+        "*EN,21,1001,1003\n*EN,22,1003,1005\n*EN,23,1005,1007\n"
+        "*EN,24,1007,1009\n*EN,25,1009,1011\n"
+        "*EN,26,1001,1011 W=88.5\n"
+        "*END\n";
+
+    // 压缩写法：节点只剩首末两点；单元全部走循环
+    const std::string compact =
+        "*NODE\n"
+        "1001 0 0 0\n1011 100 0 0\n"
+        "*FILL 1001 1011\n"
+        "*ET\n1 BEAM\n"
+        "*MP\n1 E=3.0e10 DENS=2500\n"
+        "*R\n1 A=1.0 IY=0.1 IZ=0.2 J=0.3 G=1.2e10\n"
+        "*TYPE,1\n*MAT,1\n*REAL,1\n"
+        "*DO I 1 10\n*EN,I,I+1000,I+1001\n*ENDDO\n"
+        "*DO I 21 25\n*EN,I,2*I+959,2*I+961\n*ENDDO\n"
+        "*EN,26,1001,1011 W=88.5\n"
+        "*END\n";
+
+    const std::string pf = "_tmp_compact_full.dat";
+    const std::string pc = "_tmp_compact_compact.dat";
+    {
+        std::ofstream f(pf); f << full;
+        std::ofstream g(pc); g << compact;
+    }
+    const Model3D a = readModel3D(pf);
+    const Model3D b = readModel3D(pc);
+    std::remove(pf.c_str());
+    std::remove(pc.c_str());
+
+    check("*FILL 补齐节点数", static_cast<double>(b.nodes.size()),
+          static_cast<double>(a.nodes.size()));
+    check("*DO 展开单元数", static_cast<double>(b.elements.size()),
+          static_cast<double>(a.elements.size()));
+
+    double nerr = 0.0;
+    for (const auto& kv : a.nodes) {
+        const auto it = b.nodes.find(kv.first);
+        if (it == b.nodes.end()) { nerr = 1e9; break; }
+        nerr = std::max(nerr, (kv.second - it->second).cwiseAbs().maxCoeff());
+    }
+    check("*FILL 插值坐标", nerr, 0.0);
+
+    // 单元按 id 排序后逐项对齐（*DO 段与直接写法的书写顺序不同）
+    auto byId = [](const Model3D& m3) {
+        std::vector<Element3D> v = m3.elements;
+        std::sort(v.begin(), v.end(),
+                  [](const Element3D& x, const Element3D& y) { return x.id < y.id; });
+        return v;
+    };
+    const std::vector<Element3D> ea = byId(a), eb = byId(b);
+    double cerr = 0.0, perr = 0.0;
+    for (std::size_t k = 0; k < std::min(ea.size(), eb.size()); ++k) {
+        if (ea[k].n1 != eb[k].n1 || ea[k].n2 != eb[k].n2) cerr = 1e9;
+        if (ea[k].id != eb[k].id) perr = 1e9;
+    }
+    check("*DO 索引表达式求值（含 2*I+c）", cerr, 0.0);
+    check("*DO 单元编号", perr, 0.0);
+
+    // 循环体内的 W= 覆盖：压缩后必须仍带在最后一根单元上
+    check("循环外单元级 W= 覆盖仍生效",
+          eb.empty() ? -1.0 : eb.back().w, 88.5);
+
+    // 端点引用不存在的节点：必须只是告警，不能让整份文件解析失败
+    {
+        const std::string pbad = "_tmp_compact_badfill.dat";
+        { std::ofstream f(pbad);
+          f << "*NODE\n1001 0 0 0\n*FILL 1001 9999\n*END\n"; }
+        bool threw = false;
+        try { readModel3D(pbad); } catch (const std::exception&) { threw = true; }
+        std::remove(pbad.c_str());
+        check("*FILL 悬空引用不中断解析", threw ? 0.0 : 1.0, 1.0);
+    }
+}
+
 int main() {
     setupConsoleUTF8();
     std::setvbuf(stdout, nullptr, _IONBF, 0);   // 崩溃时也能看到已输出的内容
@@ -833,6 +934,7 @@ int main() {
         testUnifiedEndForces();
         testElasticSupport();
         testJtgD60AutoLaneLoad();
+        testCompactInput();
     } catch (const std::exception& e) {
         std::printf("\n[ERROR] 异常: %s\n", e.what());
         ++g_fail;

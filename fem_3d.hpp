@@ -9,7 +9,9 @@
 #include <Eigen/Sparse>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <fstream>
 #include <functional>
 #include <map>
@@ -1416,6 +1418,103 @@ inline void applyJtgD60LaneLoads(Model3D& m) {
 
 // ==================== 输入文件读取 ====================
 
+// ---- 压缩输入支持：受限四则表达式求值器 ----
+// 导出的 .dat 允许把规则排列的单元写成循环（见 BridgeStudio 的
+// write_self_input_file / 手册 §7 的“紧凑输出”约定）：
+//
+//     *DO I 9001 9048
+//     *EN,I,2001+I-9000,1001+I-9000
+//     *ENDDO
+//
+// 以及把等间距节点写成起止两点 + *FILL：
+//
+//     1001 0 0 0
+//     1051 200 0 0
+//     *FILL 1001 1051
+//
+// 之所以只做“整数 + 单变量 + 四则运算”的受限求值，而不是塞一个通用脚本
+// 引擎：这些表达式完全由导出器生成（形态只有 k*I+c 的几种变体），需要的
+// 是可读的报错，不是图灵完备。解析失败必须报出原始文本，绝不静默跳过——
+// 静默少一个单元，比报错难查一个数量级。
+inline double crEvalSum(const std::string& s, std::size_t& pos,
+                        const std::string& var, double varVal, bool& ok);
+inline double crEvalProduct(const std::string& s, std::size_t& pos,
+                            const std::string& var, double varVal, bool& ok);
+
+inline double crEvalAtom(const std::string& s, std::size_t& pos,
+                         const std::string& var, double varVal, bool& ok) {
+    while (pos < s.size() && (s[pos] == ' ' || s[pos] == '\t')) ++pos;
+    if (pos >= s.size()) { ok = false; return 0.0; }
+    if (s[pos] == '(') {
+        ++pos;
+        const double v = crEvalSum(s, pos, var, varVal, ok);
+        if (!ok) return 0.0;
+        while (pos < s.size() && (s[pos] == ' ' || s[pos] == '\t')) ++pos;
+        if (pos >= s.size() || s[pos] != ')') { ok = false; return 0.0; }
+        ++pos;
+        return v;
+    }
+    if (std::isalpha(static_cast<unsigned char>(s[pos]))) {
+        const std::size_t b = pos;
+        while (pos < s.size() &&
+               (std::isalnum(static_cast<unsigned char>(s[pos])) || s[pos] == '_'))
+            ++pos;
+        if (s.compare(b, pos - b, var) != 0) { ok = false; return 0.0; }
+        return varVal;
+    }
+    char* endp = nullptr;
+    const double v = std::strtod(s.c_str() + pos, &endp);
+    if (endp == s.c_str() + pos) { ok = false; return 0.0; }
+    pos = static_cast<std::size_t>(endp - s.c_str());
+    return v;
+}
+
+inline double crEvalProduct(const std::string& s, std::size_t& pos,
+                            const std::string& var, double varVal, bool& ok) {
+    double v = crEvalAtom(s, pos, var, varVal, ok);
+    while (ok) {
+        while (pos < s.size() && (s[pos] == ' ' || s[pos] == '\t')) ++pos;
+        if (pos >= s.size() || (s[pos] != '*' && s[pos] != '/')) break;
+        const char op = s[pos++];
+        const double r = crEvalAtom(s, pos, var, varVal, ok);
+        if (!ok) return 0.0;
+        if (op == '*') v *= r;
+        else {
+            if (r == 0.0) { ok = false; return 0.0; }
+            v /= r;
+        }
+    }
+    return v;
+}
+
+inline double crEvalSum(const std::string& s, std::size_t& pos,
+                        const std::string& var, double varVal, bool& ok) {
+    double v = crEvalProduct(s, pos, var, varVal, ok);
+    while (ok) {
+        while (pos < s.size() && (s[pos] == ' ' || s[pos] == '\t')) ++pos;
+        if (pos >= s.size() || (s[pos] != '+' && s[pos] != '-')) break;
+        const char op = s[pos++];
+        const double r = crEvalProduct(s, pos, var, varVal, ok);
+        if (!ok) return 0.0;
+        v = (op == '+') ? v + r : v - r;
+    }
+    return v;
+}
+
+// 单个整数记号：字面量或含循环变量的表达式。结果的整性不强制（导出器保证），
+// 但要求整个 token 被完整消费，避免 "1000abc" 这类被截断后当 1000 用。
+inline bool crEvalToken(const std::string& tok, const std::string& var,
+                        double varVal, long long& out) {
+    std::size_t pos = 0;
+    bool ok = true;
+    const double v = crEvalSum(tok, pos, var, varVal, ok);
+    if (!ok) return false;
+    while (pos < tok.size() && (tok[pos] == ' ' || tok[pos] == '\t')) ++pos;
+    if (pos != tok.size()) return false;
+    out = static_cast<long long>(std::llround(v));
+    return true;
+}
+
 inline Model3D readModel3D(const std::string& path) {
     std::ifstream in(path);
     if (!in) throw std::runtime_error("无法打开三维输入文件: " + path);
@@ -1430,41 +1529,144 @@ inline Model3D readModel3D(const std::string& path) {
     // 索参数（CABLE 用）：W= 单位长度重量 N/m（垂度），L0= 无应力索长 m
     std::map<int,double> realCableW, realCableL0;
     int activeType = 0, activeMat = 0, activeReal = 0;
+    // *DO 循环状态（压缩单元定义）。loopBody 缓存 *DO 与 *ENDDO 之间的原始行，
+    // 到 *ENDDO 才对每个循环值重放一遍——不这么做就只能展开第一轮。
+    bool loopOn = false;
+    std::string loopVar = "I";
+    long long loopBegin = 0, loopEnd = 0, loopVal = 0;
+    std::vector<std::string> loopBody;
     std::string section;
     std::string line;
+
+    // *EN 解析（含 W=/L0= 覆盖）。直接写的单元与 *DO 展开的单元共用这一份逻辑，
+    // 否则"循环展开"和"手写"两条路径迟早行为不一致。
+    auto parseElementLine = [&](const std::string& rawArgs) {
+        std::string args = rawArgs;
+        std::replace(args.begin(), args.end(), ',', ' ');
+        std::istringstream ss(args);
+        std::string tId, t1, t2;
+        if (!(ss >> tId >> t1 >> t2)) {
+            std::cerr << "[警告] *EN 需要 id,n1,n2: " << rawArgs << "\n";
+            return;
+        }
+        long long id = 0, n1 = 0, n2 = 0;
+        const double iv = static_cast<double>(loopVal);
+        if (!crEvalToken(tId, loopVar, iv, id) ||
+            !crEvalToken(t1, loopVar, iv, n1) ||
+            !crEvalToken(t2, loopVar, iv, n2)) {
+            std::cerr << "[警告] *EN 的编号无法解析: " << rawArgs << "\n";
+            return;
+        }
+        Element3D e;
+        e.id = static_cast<int>(id);
+        e.type = types[activeType]; e.E = mats[activeMat]; e.A = areas[activeReal];
+        e.n1 = static_cast<int>(n1); e.n2 = static_cast<int>(n2);
+        e.Iy = realIy[activeReal]; e.Iz = realIz[activeReal];
+        e.J = realJ[activeReal];   e.G = realG[activeReal];
+        e.istrn = realIstrn[activeReal];
+        e.dens = mpDens[activeMat]; e.addmass = realAddmass[activeReal];
+        e.Wtop = realWtop[activeReal]; e.Wbot = realWbot[activeReal];
+        e.Wy = realWy[activeReal];     e.Wt = realWt[activeReal];
+        e.Iw = realIw[activeReal];
+        e.w = realCableW[activeReal];  e.L0 = realCableL0[activeReal];
+        // 单元级覆盖：*EN,id,n1,n2 W=<N/m> L0=<m>
+        // 每根索的 W/L0 本来就各不相同（下料长度是逐根量），只靠 *R 共享
+        // 一份会逼得同类索拆成多个实常数。
+        std::string kv;
+        while (ss >> kv) {
+            if (kv.rfind("W=", 0) == 0) e.w = std::stod(kv.substr(2));
+            else if (kv.rfind("L0=", 0) == 0) e.L0 = std::stod(kv.substr(3));
+            else std::cerr << "[警告] *EN 未知关键字: " << kv << "\n";
+        }
+        m.elements.push_back(e);
+    };
     while (std::getline(in, line)) {
         if (line.empty() || line[0] == '#' || line[0] == '!') continue;
         if (line[0] == '*') {
             const std::size_t sep = line.find_first_of(", \t");
             const std::string kw = (sep == std::string::npos) ? line : line.substr(0, sep);
-            if (kw == "*TYPE" || kw == "*MAT" || kw == "*REAL" || kw == "*EN") {
+            if (kw == "*DO") {
+                std::string args = (sep == std::string::npos) ? "" : line.substr(sep + 1);
+                std::replace(args.begin(), args.end(), ',', ' ');
+                std::istringstream ss(args);
+                std::string var;
+                long long a = 0, b = 0;
+                if (ss >> var >> a >> b) {
+                    loopOn = true; loopVar = var; loopBegin = a; loopEnd = b;
+                    loopBody.clear();
+                } else {
+                    std::cerr << "[警告] *DO 语法应为 *DO <变量> <起> <止>: " << line << "\n";
+                }
+                continue;
+            }
+            if (kw == "*ENDDO") {
+                if (!loopOn) {
+                    std::cerr << "[警告] 多余的 *ENDDO（无匹配的 *DO）\n";
+                    continue;
+                }
+                // 重放循环体。*DO 只压缩"编号按等差排列"的规律段，体内常规只有
+                // *EN；出现别的关键字一律报错，不猜测语义——猜错就是静默少单元。
+                for (long long v = loopBegin; v <= loopEnd; ++v) {
+                    loopVal = v;
+                    for (const std::string& body : loopBody) {
+                        if (body.empty() || body[0] == '#' || body[0] == '!') continue;
+                        if (body[0] != '*') continue;
+                        const std::size_t p2 = body.find_first_of(", \t");
+                        const std::string kw2 =
+                            (p2 == std::string::npos) ? body : body.substr(0, p2);
+                        if (kw2 == "*EN")
+                            parseElementLine(p2 == std::string::npos ? "" : body.substr(p2 + 1));
+                        else
+                            std::cerr << "[警告] *DO 循环体只支持 *EN，忽略: " << body << "\n";
+                    }
+                }
+                loopOn = false;
+                loopBody.clear();
+                continue;
+            }
+            if (loopOn) {                      // 循环体先缓存，*ENDDO 时统一重放
+                loopBody.push_back(line);
+                continue;
+            }
+            if (kw == "*FILL") {
+                std::string args = (sep == std::string::npos) ? "" : line.substr(sep + 1);
+                std::replace(args.begin(), args.end(), ',', ' ');
+                std::istringstream ss(args);
+                int a = 0, b = 0;
+                if (!(ss >> a >> b)) {
+                    std::cerr << "[警告] *FILL 语法应为 *FILL <首节点> <末节点>: " << line << "\n";
+                } else if (a == b) {
+                    // 单点，无需填充
+                } else {
+                    const auto ia = m.nodes.find(a), ib = m.nodes.find(b);
+                    if (ia == m.nodes.end() || ib == m.nodes.end()) {
+                        std::cerr << "[警告] *FILL 引用了未定义的端点节点: " << line << "\n";
+                    } else if (b - a < 2) {
+                        std::cerr << "[警告] *FILL 端点号不连续（需 b > a+1）: " << line << "\n";
+                    } else {
+                        // 等间距线性插值。导出器只在"三点以上共线且等距"时才写
+                        // *FILL，故按等差数列补中间点即可，不必再做曲率判断。
+                        const Vec3 pa = ia->second, pb = ib->second;
+                        const int nseg = b - a;
+                        for (int k = 1; k < nseg; ++k) {
+                            if (m.nodes.find(a + k) == m.nodes.end())
+                                m.nodes.emplace(a + k, pa + (pb - pa) * (static_cast<double>(k) / nseg));
+                        }
+                    }
+                }
+                continue;
+            }
+            if (kw == "*EN") {
+                parseElementLine(sep == std::string::npos ? "" : line.substr(sep + 1));
+                continue;
+            }
+            if (kw == "*TYPE" || kw == "*MAT" || kw == "*REAL") {
                 std::string args = (sep == std::string::npos) ? "" : line.substr(sep + 1);
                 std::replace(args.begin(), args.end(), ',', ' ');
                 std::istringstream ss(args);
                 if (kw == "*TYPE") ss >> activeType;
                 else if (kw == "*MAT") ss >> activeMat;
-                else if (kw == "*REAL") ss >> activeReal;
-                else {
-                    int id,n1,n2; if (ss >> id >> n1 >> n2) {
-                        Element3D e; e.id=id; e.type=types[activeType]; e.E=mats[activeMat]; e.A=areas[activeReal]; e.n1=n1; e.n2=n2;
-                        e.Iy=realIy[activeReal]; e.Iz=realIz[activeReal]; e.J=realJ[activeReal]; e.G=realG[activeReal];
-                        e.istrn=realIstrn[activeReal];
-                        e.dens=mpDens[activeMat]; e.addmass=realAddmass[activeReal];
-                        e.Wtop=realWtop[activeReal]; e.Wbot=realWbot[activeReal]; e.Wy=realWy[activeReal]; e.Wt=realWt[activeReal];
-                        e.Iw=realIw[activeReal];
-                        e.w=realCableW[activeReal]; e.L0=realCableL0[activeReal];
-                        // 单元级覆盖：*EN,id,n1,n2 W=<N/m> L0=<m>
-                        // 每根索的 W/L0 本来就各不相同（下料长度是逐根量），
-                        // 只靠 *R 共享一份会逼得同类索拆成多个实常数。
-                        std::string kv;
-                        while (ss >> kv) {
-                            if (kv.rfind("W=",0)==0) e.w=std::stod(kv.substr(2));
-                            else if (kv.rfind("L0=",0)==0) e.L0=std::stod(kv.substr(3));
-                            else std::cerr << "[警告] *EN 未知关键字: " << kv << "\n";
-                        }
-                        m.elements.push_back(e);
-                    }
-                }
+                else ss >> activeReal;
                 continue;
             }
             if (kw == "*CREEP" || kw == "*SHRINKAGE") {
