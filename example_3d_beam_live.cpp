@@ -14,7 +14,7 @@ int main(int argc, char** argv) {
     for (const auto& ei : m.elementInfluences) {
         for (const auto& lane : m.lanes) {
             auto eta = compute3DBeamAxialInfluence(m, ei.elem, lane);
-            auto env = envelope3DFromInfluence(lane, eta);
+            auto env = envelope3DFromInfluence(m, lane, eta);
             std::cout << "E" << ei.elem << " Nmax=" << env.first << " Nmin=" << env.second << "\n";
             report << ei.elem << ",N,1," << env.first << "," << env.second << "\n";
         }
@@ -24,27 +24,27 @@ int main(int argc, char** argv) {
         for (const auto& lane : m.lanes) {
             for (const std::string comp : {"MY","MZ"}) {
                 auto eta = compute3DBeamMomentInfluence(m, e.id, comp, 1, lane);
-                auto env = envelope3DFromInfluence(lane, eta);
+                auto env = envelope3DFromInfluence(m, lane, eta);
                 std::cout << "E" << e.id << " " << comp << "1 max=" << env.first << " min=" << env.second << "\n";
                 report << e.id << "," << comp << ",1," << env.first << "," << env.second << "\n";
             }
             for (const std::string comp : {"VY","VZ"}) {
                 auto eta = compute3DBeamShearInfluence(m, e.id, comp, 1, lane);
-                auto env = envelope3DFromInfluence(lane, eta);
+                auto env = envelope3DFromInfluence(m, lane, eta);
                 std::cout << "E" << e.id << " " << comp << "1 max=" << env.first << " min=" << env.second << "\n";
                 report << e.id << "," << comp << ",1," << env.first << "," << env.second << "\n";
             }
             if (e.Wtop > 0 && e.Wbot > 0) {
                 for (const std::string comp : {"TOP","BOT"}) {
                     auto eta = compute3DBeamStressInfluence(m, e.id, comp, 1, lane);
-                    auto env = envelope3DFromInfluence(lane, eta);
+                    auto env = envelope3DFromInfluence(m, lane, eta);
                     std::cout << "E" << e.id << " " << comp << "1 max=" << env.first << " min=" << env.second << "\n";
                     report << e.id << "," << comp << ",1," << env.first << "," << env.second << "\n";
                 }
             }
             if (e.type == "BEAM7") {
                 auto eta = compute3DBeamBimomentInfluence(m, e.id, 1, lane);
-                auto env = envelope3DFromInfluence(lane, eta);
+                auto env = envelope3DFromInfluence(m, lane, eta);
                 std::cout << "E" << e.id << " B1 max=" << env.first << " min=" << env.second << "\n";
                 report << e.id << ",B,1," << env.first << "," << env.second << "\n";
             }

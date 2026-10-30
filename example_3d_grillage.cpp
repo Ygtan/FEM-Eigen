@@ -31,11 +31,37 @@ int main(int argc, char** argv) {
             << " MzMin=" << e.MzMin << " MzMax=" << e.MzMax
             << (e.valid ? "" : " invalid=1") << "\n";
     }
+    // 成桥态（最后阶段）的恒载效应：运营期荷载组合的基准。
+    // 上面的 beam force 是跨阶段包络，含半成品构型的临时内力，
+    // 与运营期活载相加没有物理意义。
+    auto nz = [](double v) { return v == 0.0 ? 0.0 : v; };
+    auto endName = [](int end) { return end == 1 ? " i" : " j"; };
+    auto finalBeam = compute3DFinalStageBeamForces(m, stages);
+    out << "final stage beam force\n";
+    for (auto& e : finalBeam)
+        out << "E" << e.elem << endName(e.end)
+            << " N=" << nz(e.N) << " Vy=" << nz(e.Vy) << " Vz=" << nz(e.Vz)
+            << " T=" << nz(e.T) << " My=" << nz(e.My) << " Mz=" << nz(e.Mz) << "\n";
+    auto finalDisp = compute3DFinalStageDisplacement(m, stages);
+    out << "final stage displacement\n";
+    for (auto& e : finalDisp)
+        out << "N" << e.node << " dof" << e.dof << " u=" << nz(e.minVal) << "\n";
+
     if (!m.influences.empty()) {
         auto live = compute3DStageLiveEnvelope(m, m.influences.front());
         out << "stage live envelope\n";
         for (auto& e : live)
             out << "STAGE" << e.stage << " max=" << e.maxVal << " min=" << e.minVal << "\n";
+    }
+    // 活载内力包络：荷载组合（1.2S_G + 1.4S_Q）必须有活载产生的 M、V，
+    // 而上面那段只有影响点的位移。位移包络算不出承载力组合。
+    if (!m.lanes.empty()) {
+        auto liveBeam = compute3DLiveBeamEnvelope(m);
+        out << "live beam envelope\n";
+        for (auto& e : liveBeam)
+            out << "E" << e.elem << endName(e.end)
+                << " MyMin=" << nz(e.MyMin) << " MyMax=" << nz(e.MyMax)
+                << " VzMin=" << nz(e.VzMin) << " VzMax=" << nz(e.VzMax) << "\n";
     }
     std::cout << "summary written: " << path.substr(0,path.rfind(".dat"))+"_summary.txt" << "\n";
     return 0;

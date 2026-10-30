@@ -12,7 +12,7 @@ int main(int argc, char** argv) {
         double totalMax=-1e300, totalMin=1e300;
         for (const auto& lane : m.lanes) {
             auto eta = compute3DInfluence(m, spec, lane);
-            auto env = envelope3DFromInfluence(lane, eta);
+            auto env = envelope3DFromInfluence(m, lane, eta);
             totalMax = std::max(totalMax, env.first);
             totalMin = std::min(totalMin, env.second);
         }

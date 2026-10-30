@@ -1010,9 +1010,32 @@ inline std::vector<BeamEnvelope3D> compute3DBeamEnvelope(
     return out;
 }
 
-inline std::vector<DisplacementEnvelope3D> compute3DDisplacementEnvelope(
+// 成桥态（最后一个施工阶段）的梁端内力：运营期荷载组合的基准。
+// 实现放在 beamEndForcesAt 之后（见前文 LiveBeamEnvelope3D 一节），
+// 这里只留一条指向，避免把工具函数提前声明得七零八落。
+
+// 成桥态位移：阶段包络里同样混着半成品构型，运营期挠度组合要用单一状态。
+inline std::vector<DisplacementEnvelope3D> compute3DFinalStageDisplacement(
     const Model3D& m, const std::vector<StageResult3D>& stages) {
-    // 用"最后一个阶段"的映射决定输出哪些自由度；每个阶段再用它自己的映射取值。
+    std::vector<DisplacementEnvelope3D> out;
+    if (stages.empty()) return out;
+    const StageResult3D& sr = stages.back();
+    const DofMap3D& dm = sr.dm;
+    for (const auto& [id, x] : m.nodes) {
+        const int nd = dm.count(id);
+        for (int k = 0; k < nd; ++k) {
+            const int d = dm.safeDof(id, k);
+            const double v = (d >= 0 && d < static_cast<int>(sr.U.size())) ? sr.U[d] : 0.0;
+            DisplacementEnvelope3D e;
+            e.node = id; e.dof = k + 1; e.minVal = v; e.maxVal = v;
+            out.push_back(e);
+        }
+    }
+    return out;
+}
+
+inline std::vector<DisplacementEnvelope3D> compute3DDisplacementEnvelope(
+    const Model3D& m, const std::vector<StageResult3D>& stages) {    // 用"最后一个阶段"的映射决定输出哪些自由度；每个阶段再用它自己的映射取值。
     // 未激活阶段的自由度视为 0（该阶段此节点还没参与受力）。
     const DofMap3D dmLast = stages.empty() ? buildDofMap3D(m) : stages.back().dm;
     std::vector<DisplacementEnvelope3D> out;
@@ -1332,11 +1355,44 @@ inline std::pair<double,double> envelope3DFromSurface(
             surface.impact * factor * (surface.q * qMinArea + surface.p * pMinOrd)};
 }
 
-inline std::pair<double,double> envelope3DFromInfluence(const Model3D::Lane3D& lane,
+// 车道各加载位置的积分权重（梯形法则）。
+//
+// 为什么必须有这一步：线荷载 q 的效应是 ∫q·η dx，而影响线只在离散节点上
+// 有值。直接 Ση 等于假设"每个节点代表单位长度"，量纲少了一个 m——
+// q·Ση 得到的是 N 而不是 N·m，数值上偏小一个节点间距（本项目 2.5 m）。
+// 实测：中跨跨中单元，活载弯矩 q 项 72 kN·m（错）对 181 kN·m（对）；
+// 位移包络同样小 2.5 倍（−2.72 mm 应为 −6.8 mm）。
+//
+// 集中力 p 只在最不利的一个位置作用，取影响线最大竖标即可，不乘权重。
+inline std::vector<double> laneWeights3D(const Model3D& m,
+                                         const Model3D::Lane3D& lane) {
+    const std::size_t n = lane.nodes.size();
+    std::vector<double> w(n, 0.0);
+    if (n == 0) return w;
+    if (n == 1) { w[0] = 1.0; return w; }
+    auto seg = [&](std::size_t i, std::size_t j) {
+        const Vec3& a = m.nodes.at(lane.nodes[i]);
+        const Vec3& b = m.nodes.at(lane.nodes[j]);
+        const Vec3 d = b - a;
+        return std::sqrt(d.x() * d.x() + d.y() * d.y() + d.z() * d.z());
+    };
+    for (std::size_t i = 0; i < n; ++i) {
+        const double left = (i > 0) ? 0.5 * seg(i - 1, i) : 0.5 * seg(0, 1);
+        const double right = (i + 1 < n) ? 0.5 * seg(i, i + 1)
+                                         : 0.5 * seg(n - 2, n - 1);
+        w[i] = left + right;
+    }
+    return w;
+}
+
+inline std::pair<double,double> envelope3DFromInfluence(const Model3D& m,
+                                                        const Model3D::Lane3D& lane,
                                                         const std::vector<double>& eta) {
+    const std::vector<double> w = laneWeights3D(m, lane);
     double pos=0,neg=0,maxv=-1e300,minv=1e300;
     for (std::size_t i=0;i<eta.size();++i) {
-        if (eta[i]>0) pos += eta[i]; else neg += eta[i];
+        const double wi = (i < w.size()) ? w[i] : 0.0;
+        if (eta[i]>0) pos += eta[i]*wi; else neg += eta[i]*wi;
         maxv=std::max(maxv,eta[i]); minv=std::min(minv,eta[i]);
     }
     const double qMaxArea = lane.q>=0 ? pos : neg;
@@ -1370,11 +1426,152 @@ inline std::vector<StageLiveEnvelope3D> compute3DStageLiveEnvelope(
         double maxAll=-1e300,minAll=1e300;
         for(const auto& lane:m.lanes){
             auto eta=compute3DInfluence(mc,spec,lane);
-            auto env=envelope3DFromInfluence(lane,eta);
+            auto env=envelope3DFromInfluence(mc,lane,eta);
             maxAll=std::max(maxAll,env.first); minAll=std::min(minAll,env.second);
         }
         out.push_back({st.id,maxAll,minAll});
     }
+    return out;
+}
+
+// 成桥态活载**内力**包络：位移包络拿不到承载力组合要用的 M、V。
+//
+// 只算最后一个阶段。前几个施工阶段的模型是残缺的（未激活跨的节点没有
+// 单元、被 constrainDisconnected3D 约束掉），在其上布载得到的内力没有
+// 物理意义——实测阶段 1 的跨中弯矩恒为 0，读起来像"活载不产生内力"。
+// 运营期组合本来也只用成桥态。
+//
+// 为什么批量扫而不是调 compute3DBeamMomentInfluence：那个函数每次都对整条
+// 车道扫一遍，逐个单元调用等于把同样的 180 次求解重复 222 遍。
+// 这里一次扫描、所有单元同时填影响线，总成本与"一个单元"相同。
+//
+// 为什么两端分开算：梁端弯矩通常异号，若按位置挑"绝对值大的那端"，不同位置
+// 会来自不同端，拼出一条非物理的影响线，再套 q·同号面积 + P·最大竖标
+// 会把包络显著放大。这里对两端各求一条包络，最后取外包。
+// 成桥态（最后一个施工阶段）的梁端内力：运营期荷载组合的基准。
+//
+// 为什么不能拿 compute3DBeamEnvelope 的阶段包络来组合：逐跨施工的包络里
+// 含"第 2 跨还没浇、第 1 跨悬臂端"这种临时构型的内力，它与运营期的活载
+// 效应属于两个不同构型，极值相加没有物理意义。施工阶段验算用包络，
+// 运营期组合用成桥态——两个问题不能共用一个数。
+struct BeamEndForces3D {
+    int elem = 0, end = 1;
+    double N = 0.0, Vy = 0.0, Vz = 0.0, T = 0.0, My = 0.0, Mz = 0.0;
+};
+
+inline std::vector<BeamEndForces3D> compute3DFinalStageBeamForces(
+    const Model3D& m, const std::vector<StageResult3D>& stages) {
+    std::vector<BeamEndForces3D> out;
+    if (stages.empty()) return out;
+    const StageResult3D& sr = stages.back();
+    const DofMap3D& dm = sr.dm;
+    for (const auto& e : m.elements) {
+        if (e.type != "BEAM" && e.type != "BEAM7") continue;
+        if (dm.safeDof(e.n1, 5) < 0 || dm.safeDof(e.n2, 5) < 0) continue;
+        const bool is7 = (e.type == "BEAM7");
+        const int dpe = is7 ? 14 : 12;
+        const Eigen::VectorXd fl = is7 ? beam7LocalEndForces(m, dm, e, sr.U)
+                                       : beam3DLocalEndForces(m, dm, e, sr.U);
+        for (int end = 1; end <= 2; ++end) {
+            const BeamEndForces f = beamEndForcesAt(fl, dpe, end);
+            BeamEndForces3D r;
+            r.elem = e.id; r.end = end;
+            r.N = f.N; r.Vy = f.Vy; r.Vz = f.Vz;
+            r.T = f.T; r.My = f.My; r.Mz = f.Mz;
+            out.push_back(r);
+        }
+    }
+    return out;
+}
+
+// 为什么按端输出而不是先外包成"单元包络"：同一单元两端弯矩通常异号，
+// 若先把两端包成一对 (min,max) 再与恒载相加，会出现"i 端的恒载 + j 端的
+// 活载"——两个不同截面的极值相加，既不是 i 端也不是 j 端。按端给，
+// 组合才能落在同一个截面上。
+struct LiveBeamEnvelope3D {
+    int elem = 0;
+    int end = 1;                 // 1 = i 端，2 = j 端
+    double MyMin = 0.0, MyMax = 0.0, VzMin = 0.0, VzMax = 0.0;
+};
+
+inline std::vector<LiveBeamEnvelope3D> compute3DLiveBeamEnvelope(const Model3D& m) {
+    std::vector<LiveBeamEnvelope3D> out;
+    if (m.lanes.empty() || m.stages.empty()) return out;
+
+    // 取最后阶段激活的单元构成
+    std::vector<char> active(m.elements.size(), 0);
+    for (const auto& st : m.stages) {
+        for (int id : st.activate)
+            for (std::size_t i = 0; i < m.elements.size(); ++i)
+                if (m.elements[i].id == id) active[i] = 1;
+        for (int id : st.deactivate)
+            for (std::size_t i = 0; i < m.elements.size(); ++i)
+                if (m.elements[i].id == id) active[i] = 0;
+    }
+    Model3D mc;
+    mc.nodes = m.nodes; mc.constraints = m.constraints;
+    mc.creepPhi = m.creepPhi; mc.creepChi = m.creepChi;
+    mc.shrinkageEcs = m.shrinkageEcs;
+    for (std::size_t i = 0; i < m.elements.size(); ++i)
+        if (active[i]) mc.elements.push_back(m.elements[i]);
+    constrainDisconnected3D(mc);
+
+    std::vector<const Element3D*> tgt;
+    for (const auto& e : mc.elements)
+        if (e.type == "BEAM" || e.type == "BEAM7") tgt.push_back(&e);
+    if (tgt.empty()) return out;
+    const DofMap3D dm = buildDofMap3D(mc);
+
+    std::map<std::pair<int,int>, LiveBeamEnvelope3D> acc;   // (elem, end)
+    for (const Element3D* e : tgt)
+        for (int end = 1; end <= 2; ++end) {
+            auto& slot = acc[{e->id, end}];
+            slot.elem = e->id; slot.end = end;
+        }
+
+    for (const auto& lane : m.lanes) {
+        const std::size_t npos = lane.nodes.size();
+        if (npos == 0) continue;
+        // 每单元 × 2 端 × 2 分量
+        std::vector<std::vector<double>> eta(tgt.size() * 4,
+                                             std::vector<double>(npos, 0.0));
+        scanLane3D(mc, lane,
+            [&](std::size_t k, const std::vector<double>& U,
+                const std::vector<double>& Ub) {
+                if (k >= npos) return;
+                for (std::size_t t = 0; t < tgt.size(); ++t) {
+                    const Element3D& e = *tgt[t];
+                    const bool is7 = (e.type == "BEAM7");
+                    const int dpe = is7 ? 14 : 12;
+                    const Eigen::VectorXd fl =
+                        is7 ? beam7LocalEndForces(mc, dm, e, U)
+                            : beam3DLocalEndForces(mc, dm, e, U);
+                    const Eigen::VectorXd fr =
+                        is7 ? beam7LocalEndForces(mc, dm, e, Ub)
+                            : beam3DLocalEndForces(mc, dm, e, Ub);
+                    for (int end = 1; end <= 2; ++end) {
+                        const BeamEndForces fi = beamEndForcesAt(fl, dpe, end);
+                        const BeamEndForces fb = beamEndForcesAt(fr, dpe, end);
+                        eta[t * 4 + (end - 1) * 2 + 0][k] = fi.My - fb.My;
+                        eta[t * 4 + (end - 1) * 2 + 1][k] = fi.Vz - fb.Vz;
+                    }
+                }
+            });
+
+        for (std::size_t t = 0; t < tgt.size(); ++t) {
+            for (int end = 1; end <= 2; ++end) {
+                const auto eMy = envelope3DFromInfluence(mc, lane, eta[t * 4 + (end - 1) * 2 + 0]);
+                const auto eVz = envelope3DFromInfluence(mc, lane, eta[t * 4 + (end - 1) * 2 + 1]);
+                auto& slot = acc[{tgt[t]->id, end}];
+                slot.MyMin = std::min(slot.MyMin, eMy.second);
+                slot.MyMax = std::max(slot.MyMax, eMy.first);
+                slot.VzMin = std::min(slot.VzMin, eVz.second);
+                slot.VzMax = std::max(slot.VzMax, eVz.first);
+            }
+        }
+    }
+    out.reserve(acc.size());
+    for (auto& [key, v] : acc) out.push_back(v);
     return out;
 }
 
