@@ -1015,19 +1015,26 @@ inline std::vector<BeamEnvelope3D> compute3DBeamEnvelope(
 // 这里只留一条指向，避免把工具函数提前声明得七零八落。
 
 // 成桥态位移：阶段包络里同样混着半成品构型，运营期挠度组合要用单一状态。
+// 成桥态位移：同样是**各阶段累加**（理由见 compute3DFinalStageBeamForces）。
+// 每个阶段按自己的自由度映射取值——同一节点在只连桁架的阶段有 3 个自由度、
+// 接上梁后变 6 个，两个阶段的全局编号根本不同，拿最后阶段的映射去索引前一
+// 阶段的 U 会读错自由度。
 inline std::vector<DisplacementEnvelope3D> compute3DFinalStageDisplacement(
     const Model3D& m, const std::vector<StageResult3D>& stages) {
     std::vector<DisplacementEnvelope3D> out;
     if (stages.empty()) return out;
-    const StageResult3D& sr = stages.back();
-    const DofMap3D& dm = sr.dm;
+    const DofMap3D& dmLast = stages.back().dm;
     for (const auto& [id, x] : m.nodes) {
-        const int nd = dm.count(id);
+        const int nd = dmLast.count(id);
         for (int k = 0; k < nd; ++k) {
-            const int d = dm.safeDof(id, k);
-            const double v = (d >= 0 && d < static_cast<int>(sr.U.size())) ? sr.U[d] : 0.0;
+            double sum = 0.0;
+            for (const auto& s : stages) {
+                const int d = s.dm.safeDof(id, k);
+                if (d < 0 || d >= static_cast<int>(s.U.size())) continue;
+                sum += s.U[d];
+            }
             DisplacementEnvelope3D e;
-            e.node = id; e.dof = k + 1; e.minVal = v; e.maxVal = v;
+            e.node = id; e.dof = k + 1; e.minVal = sum; e.maxVal = sum;
             out.push_back(e);
         }
     }
@@ -1448,12 +1455,20 @@ inline std::vector<StageLiveEnvelope3D> compute3DStageLiveEnvelope(
 // 为什么两端分开算：梁端弯矩通常异号，若按位置挑"绝对值大的那端"，不同位置
 // 会来自不同端，拼出一条非物理的影响线，再套 q·同号面积 + P·最大竖标
 // 会把包络显著放大。这里对两端各求一条包络，最后取外包。
-// 成桥态（最后一个施工阶段）的梁端内力：运营期荷载组合的基准。
+// 成桥态（各施工阶段累加）的梁端内力：运营期荷载组合的基准。
 //
 // 为什么不能拿 compute3DBeamEnvelope 的阶段包络来组合：逐跨施工的包络里
 // 含"第 2 跨还没浇、第 1 跨悬臂端"这种临时构型的内力，它与运营期的活载
 // 效应属于两个不同构型，极值相加没有物理意义。施工阶段验算用包络，
 // 运营期组合用成桥态——两个问题不能共用一个数。
+//
+// **为什么必须逐阶段累加**（这条曾经错过）：每个阶段是独立求解的
+// （solveModel3DStages 里 mc.loads = st.loads），所以 stages.back().U 只是
+// "最后一个阶段那批荷载"在当前构型上的解，不含前面阶段的内力。只取最后一
+// 阶段等于把先浇好的几跨恒载丢掉。判决性反例：两阶段模型把全部荷载加在
+// 第 1 阶段、第 2 阶段不加载，只取最后一阶段会输出**全零**成桥态。
+// 累加的正确性来自施工阶段分析的基本假定：已硬化构件的内力冻结、不因后续
+// 构件接入而重分配，故成桥态 = Σ_k（第 k 阶段荷载在第 k 阶段构型上的增量）。
 struct BeamEndForces3D {
     int elem = 0, end = 1;
     double N = 0.0, Vy = 0.0, Vz = 0.0, T = 0.0, My = 0.0, Mz = 0.0;
@@ -1463,24 +1478,28 @@ inline std::vector<BeamEndForces3D> compute3DFinalStageBeamForces(
     const Model3D& m, const std::vector<StageResult3D>& stages) {
     std::vector<BeamEndForces3D> out;
     if (stages.empty()) return out;
-    const StageResult3D& sr = stages.back();
-    const DofMap3D& dm = sr.dm;
-    for (const auto& e : m.elements) {
-        if (e.type != "BEAM" && e.type != "BEAM7") continue;
-        if (dm.safeDof(e.n1, 5) < 0 || dm.safeDof(e.n2, 5) < 0) continue;
-        const bool is7 = (e.type == "BEAM7");
-        const int dpe = is7 ? 14 : 12;
-        const Eigen::VectorXd fl = is7 ? beam7LocalEndForces(m, dm, e, sr.U)
-                                       : beam3DLocalEndForces(m, dm, e, sr.U);
-        for (int end = 1; end <= 2; ++end) {
-            const BeamEndForces f = beamEndForcesAt(fl, dpe, end);
-            BeamEndForces3D r;
-            r.elem = e.id; r.end = end;
-            r.N = f.N; r.Vy = f.Vy; r.Vz = f.Vz;
-            r.T = f.T; r.My = f.My; r.Mz = f.Mz;
-            out.push_back(r);
+    std::map<std::pair<int, int>, BeamEndForces3D> acc;   // (单元, 端) → 累加值
+    for (const auto& sr : stages) {
+        const DofMap3D& dm = sr.dm;                       // 每阶段必用自己的映射
+        for (const auto& e : m.elements) {
+            if (e.type != "BEAM" && e.type != "BEAM7") continue;
+            // 该阶段此单元尚未接入（节点自由度不存在）→ 本阶段无贡献
+            if (dm.safeDof(e.n1, 5) < 0 || dm.safeDof(e.n2, 5) < 0) continue;
+            const bool is7 = (e.type == "BEAM7");
+            const int dpe = is7 ? 14 : 12;
+            const Eigen::VectorXd fl = is7 ? beam7LocalEndForces(m, dm, e, sr.U)
+                                           : beam3DLocalEndForces(m, dm, e, sr.U);
+            for (int end = 1; end <= 2; ++end) {
+                const BeamEndForces f = beamEndForcesAt(fl, dpe, end);
+                auto& a = acc[{e.id, end}];
+                a.elem = e.id; a.end = end;
+                a.N += f.N; a.Vy += f.Vy; a.Vz += f.Vz;
+                a.T += f.T; a.My += f.My; a.Mz += f.Mz;
+            }
         }
     }
+    out.reserve(acc.size());
+    for (const auto& [key, v] : acc) out.push_back(v);    // std::map 已按 (单元, 端) 有序
     return out;
 }
 

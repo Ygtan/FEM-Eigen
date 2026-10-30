@@ -2,6 +2,16 @@
 
 本文件记录 FEM-Eigen 项目的新增功能和主要修改内容。
 
+## 2026-10-30
+
+### 修复：成桥态内力/位移改为逐施工阶段累加
+
+- `compute3DFinalStageBeamForces` / `compute3DFinalStageDisplacement` 原先只取
+  `stages.back()`，等于丢掉前面各阶段的荷载贡献；荷载全在前一阶段时成桥态直接为 0。
+- 改为 `Σ_k（第 k 阶段荷载在第 k 阶段构型上的增量）`，每阶段用各自的 `DofMap3D`。
+- 单阶段模型输出不变（`dat_byte_regression` 逐字节回归通过）；多阶段模型结果修正。
+- 详见 `MODIFICATION_LOG.md` 的「判决性反例」两算例。
+
 ## 2026-09-18
 
 ### 新增：CABLE（只受拉索）与 STRUT（只受压杆）
