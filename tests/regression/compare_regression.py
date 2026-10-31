@@ -23,6 +23,17 @@ import sys
 import tempfile
 from pathlib import Path
 
+# 控制台编码兜底：Windows 默认 cp936 里既没有 ✅ 也没有 mm² 的 ²，
+# 一旦输出被重定向到管道/文件就抛 UnicodeEncodeError、半路崩掉（退出码 1，
+# 看起来像用例失败）。统一成 UTF-8，不可编码的字符替换为 ?，绝不崩。
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+del _s
+
+
 RTOL = 1e-6
 ATOL = 1e-8
 ZERO = 1e-6
@@ -122,9 +133,9 @@ def run_case(exe, dat, args, scratch, bin_dir, src_dir):
     exe_path = bin_dir / exe
     dat_path = src_dir / dat
     if not exe_path.exists():
-        return {"case": f"{exe} {dat}", "exit": "EXE缺失", "outputs": []}
+        return {"case": f"{exe} {dat}", "exit": "EXE缺失"}
     if not dat_path.exists():
-        return {"case": f"{exe} {dat}", "exit": "DAT缺失", "outputs": []}
+        return {"case": f"{exe} {dat}", "exit": "DAT缺失"}
     shutil.copy2(dat_path, scratch / dat)
     env = dict(os.environ)
     for msys in (r"C:\msys64\mingw64\bin", r"C:\msys64\usr\bin"):
@@ -134,7 +145,7 @@ def run_case(exe, dat, args, scratch, bin_dir, src_dir):
                           cwd=str(scratch), env=env, capture_output=True,
                           text=True, encoding="utf-8", errors="replace", timeout=600)
     return {"case": f"{exe} {dat}", "exit": proc.returncode,
-            "stderr": (proc.stderr or "").strip()[-400:], "outputs": []}
+            "stderr": (proc.stderr or "").strip()[-400:]}
 
 
 def main():

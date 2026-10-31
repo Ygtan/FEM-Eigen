@@ -106,6 +106,18 @@
 2 NODE=2 DOF=2 VALUE=-1000.0
 ```
 
+`*STAGE` 行内除 `ACTIVE=`（本阶段激活的单元号，逗号分隔）外还有
+`DEACTIVE=`（本阶段退出工作的单元号），两者可同时出现在一行：
+
+```text
+*STAGE
+1 ACTIVE=1,2,3
+2 ACTIVE=4,5 DEACTIVE=1
+```
+
+`DEACTIVE` 对应支架拆除、合龙段置换、挂篮前移这类"构件退出"，
+不是"加反向荷载"——被置为不激活的单元不参与刚度组装。
+
 ## 三维影响线
 
 ```text
@@ -136,3 +148,122 @@ X_NODES=1,2,3 Y_NODES=1,2 Q=-10.0 P=-100.0 DOF=2 LANE_COUNT=2 IMPACT=1.15
 ```
 
 `*LANE_SURFACE_3D` 同样支持 `CODE=JTG_D60`，并按 `LANE_COUNT` 自动横向折减。
+
+## 三维单元影响线
+
+按**单元**取影响系数（求某根杆的内力影响面时用），与按节点自由度的
+`*INFLUENCE_3D` 并列：
+
+```text
+*ELEMENT_INFLUENCE_3D
+37
+41
+```
+
+每行一个单元号；也可一行写多个。
+
+## 索承体系成桥态（斜拉桥 / 悬索桥）
+
+以下五段**只由 `cable_solver.exe` 读取**。`example_3d_grillage.exe` 不认识
+这些段——它只做线弹性的梁格求解。两种桥型共用同一个 exe，靠"有没有
+`*SUSP_BRIDGE` 段"区分：有就是悬索桥，没有而给了 `*CABLE_BRIDGE`/`*CABLE`
+就是斜拉桥。
+
+### 斜拉桥：`*CABLE_BRIDGE` + `*CABLE`
+
+```text
+*CABLE_BRIDGE
+MODE=COMPLETION NLSTEPS=3 NEWTON=30 MAXITER=20 TOL=1e-8 TOLT=1e-7 METHOD=MINENERGY MINT=0.02 VERBOSE=0
+
+*CABLE
+101 7           4000000.0
+102 7           4000000.0
+```
+
+`*CABLE` 每行一根索：`<索单元号> <梁侧锚点节点号> [目标索力 N]`。
+索力缺省或为 0 表示"自动定"（按 `METHOD` 定）。整段省略则自动取模型里
+全部 `CABLE` 单元，锚点取 z 较低的那一端。
+
+| 键 | 默认 | 含义 |
+|---|---|---|
+| `MODE` | `COMPLETION` | `COMPLETION` 成桥态闭环 / `TENSION` 定索力找形 / `STATIC` 纯静力 |
+| `NLSTEPS` | `3` | 非线性荷载步数 |
+| `NEWTON` | `30` | 每个荷载步的 Newton 迭代上限 |
+| `MAXITER` | `20` | 外层迭代（索长 / 几何闭合）上限 |
+| `MAXLENITER` | `15` | 索长迭代上限（悬索桥路径用） |
+| `TOL` | `1e-8` | 几何闭合容差（m） |
+| `TOLT` | `1e-7` | 索力相对容差 |
+| `METHOD` | `MINENERGY` | 自动定索力方法；给 `RIGID` 则用刚性支承连续梁法 |
+| `MINT` | `0.02` | 保力下限 = 该比例 × 最大索力 |
+| `MINABS` | `0.0` | 保力下限的绝对值（N），给定后优先于 `MINT` |
+| `DECKLOAD` | `0.0` | 桥面恒载合计（N），仅用于校核报告；0 = 未知 |
+| `VERBOSE` | `0` | 非 0 打印迭代细节 |
+
+### 悬索桥：`*SUSP_BRIDGE` + `*MAINCABLE` + `*HANGER`
+
+```text
+*SUSP_BRIDGE
+SYSTEM=EARTH TOWER1=3007 TOWER2=4007 SAG=30.0 DECKE0=1001 DECKE1=1060
+
+*MAINCABLE
+3001 3002 3003 ... 3040
+
+*HANGER
+2001 2002 2003 ... 2028
+```
+
+| 键 | 含义 |
+|---|---|
+| `SYSTEM` | `EARTH` 地锚式 / `SELF` 自锚式（其余取值按地锚式处理） |
+| `TOWER1` `TOWER2` | 主缆链上的**塔顶节点号**，必须按桥纵向先后给出 |
+| `SAG` | 主跨矢高（m），>0 时优先于 `SAGRATIO` |
+| `SAGRATIO` | 矢跨比（`0.1` 表示 1/10）；两者都不给则报错 |
+| `DECKE0` `DECKE1` | 加劲梁单元号区间，只影响 `[GIRDER]` 段的输出范围 |
+
+`*MAINCABLE` 的单元必须**严格按"锚 → 塔1 → 塔2 → 锚"的链序**排列，内核
+按这个顺序积分索多边形；顺序错了，找形出来的 H 与线形都是错的。
+`*HANGER` 每根吊索必须一端接主缆、一端接加劲梁。
+
+**两条硬校验**（违反直接报错退出，不静默计算）：
+
+1. `TOWER1` / `TOWER2` 指到的节点上必须有梁单元。主缆若在塔顶旁边另建
+   一个坐标重合的节点，主缆就成了"锚到锚的自由索"，塔不参与受力；这种
+   错误求解照样收敛、位移倾角都正常，只有索力掉到设计值的百分之一。
+2. 主缆两个端节点必须"要么被约束（锚碇）、要么接加劲梁（自锚式）"，
+   否则是悬空索。
+
+**两种体系的差别全在边界条件里**，内核不做特殊处理：
+
+- 地锚式：主缆端锚在锚碇（节点全约束），H 传给地基；加劲梁端纵向固定；
+  梁内轴力 ≈ 0。
+- 自锚式：主缆端锚在加劲梁端节点上，H 压进加劲梁（梁内轴力 ≈ −H）；
+  梁端纵向必须自由，纵向约束放跨中。
+
+自锚式还有一条几何约束：锚点处主缆竖向分力 `V = H·Δz/L − qL/2`，令
+`V = 0` 得平衡边跨 `L = √(2HΔz/q)`。边跨短于这个值，主缆在锚点就仍有
+向上的分力，梁端会被拔起来（梁端支座不能承拉）。这不是偏好，是几何要求。
+
+### 输出
+
+与 `.dat` 同目录写 `<stem>_cable.txt`，分段纯文本，按段名顺序解析：
+
+```text
+mode=... nodes=... elements=... cables=... dofs=...
+converged=... iterations=... elapsed_ms=...
+closure_err=... tension_err=...
+support_v_sum_kN=... applied_v_kN=... balance_pct=...
+[CABLE]    elem anchor T L0 chord Ltarget dL dz
+[MAINCABLE] elem T L0 z chordEnd
+[HANGER]   elem deckNode T L0 chord
+[GIRDER]   elem N My Vz
+[REACTION] node dof R
+[CAMBER]   node dx dy dz
+[ERECTED]  node x y z
+[U]        node dof value
+[END]
+```
+
+悬索桥额外多几行：`susp_system=` / `H_kN=` / `sag_m=` / `sag_target_m=` /
+`span_m=` / `sag_ratio=` / `hanger_count` / `girder_N_max_kN` 等。
+悬索桥的 `closure_err` 是**预变形量** `max|u|`（把设计构形放成成桥构形
+需要预加的偏移），不是斜拉桥那个"几何闭合误差"。

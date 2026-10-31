@@ -20,6 +20,17 @@ import sys
 import tempfile
 from pathlib import Path
 
+# 控制台编码兜底：Windows 默认 cp936 里既没有 ✅ 也没有 mm² 的 ²，
+# 一旦输出被重定向到管道/文件就抛 UnicodeEncodeError、半路崩掉（退出码 1，
+# 看起来像用例失败）。统一成 UTF-8，不可编码的字符替换为 ?，绝不崩。
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+del _s
+
+
 
 def parse_result(text):
     disp = {}    # node -> [u, v, theta]
