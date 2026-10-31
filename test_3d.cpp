@@ -1046,6 +1046,146 @@ void test3DStageCableTension() {
     }
 }
 
+// 简支梁（沿 +x，竖向弯曲绕 y）的最小模型：两端铰支，只留竖向弯曲 + 轴向滑移。
+Model3D prestressBeam(bool cantilever, double e) {
+    Model3D m;
+    m.nodes[1] = Vec3(0.0, 0.0, 0.0);
+    m.nodes[2] = Vec3(10.0, 0.0, 0.0);
+    Element3D b;
+    b.id = 1; b.type = "BEAM";
+    b.E = 2.0e11; b.A = 0.01; b.Iy = b.Iz = 0.01; b.J = 1e-4; b.G = 8.0e10;
+    b.n1 = 1; b.n2 = 2;
+    m.elements.push_back(b);
+    if (cantilever) {
+        for (int d = 1; d <= 6; ++d) m.constraints.push_back({1, d, 0.0});
+    } else {
+        m.constraints.push_back({1, 1, 0.0});   // 轴向固定
+        m.constraints.push_back({1, 2, 0.0}); m.constraints.push_back({1, 3, 0.0});
+        m.constraints.push_back({1, 4, 0.0}); m.constraints.push_back({1, 6, 0.0});
+        m.constraints.push_back({2, 2, 0.0}); m.constraints.push_back({2, 3, 0.0});
+        m.constraints.push_back({2, 4, 0.0}); m.constraints.push_back({2, 6, 0.0});
+    }
+    return m;
+}
+
+void test3DStagePrestress() {
+    std::printf("\n[25] 施工阶段预应力（等效荷载法：轴压 + 偏心弯矩）\n");
+    const double Pe = 1.0e6, e = -0.5;     // 筋在下缘（e<0）
+
+    // ---- 判据 1：轴压效应（简支梁，直线筋）----
+    {
+        Model3D m = prestressBeam(false, e);
+        Model3D::Stage3D s; s.id = 1; s.activate = {1};
+        Model3D::Prestress3D ps; ps.id = 1; ps.elems = {1};
+        ps.P = Pe; ps.e = e; ps.loss = 1.0;
+        s.prestresses.push_back(ps);
+        m.stages = {s};
+        const auto rs = solveModel3DStages(m);
+        check("阶段数", static_cast<double>(rs.size()), 1.0);
+        // 轴向：节点 1 固定，节点 2 向 −x 移动，N = −Pe。
+        const int ux = rs[0].dm.safeDof(2, 0);
+        check("梁轴压位移 = −Pe·L/(EA)", rs[0].U[ux], -Pe * 10.0 / (2e11 * 0.01), 1e-9);
+    }
+
+    // ---- 判据 2：PRESTRESS 与手工 CLOAD 等价（零外部假设的翻译正确性）----
+    {
+        Model3D m = prestressBeam(false, e);
+        Model3D::Stage3D s; s.id = 1; s.activate = {1};
+        Model3D::Prestress3D ps; ps.id = 1; ps.elems = {1};
+        ps.P = Pe; ps.e = e; ps.loss = 0.85;   // 带损失
+        s.prestresses.push_back(ps);
+        m.stages = {s};
+        const auto ra = solveModel3DStages(m);
+
+        Model3D hand = prestressBeam(false, e);
+        Model3D::Stage3D hs; hs.id = 1; hs.activate = {1};
+        const double Pf = Pe * 0.85;
+        hs.loads.push_back({1, 1,  Pf}); hs.loads.push_back({2, 1, -Pf});
+        hs.loads.push_back({1, 5,  Pf * e}); hs.loads.push_back({2, 5, -Pf * e});
+        hand.stages = {hs};
+        const auto rb = solveModel3DStages(hand);
+
+        double dmax = 0.0;
+        for (std::size_t k = 0; k < ra[0].U.size() && k < rb[0].U.size(); ++k)
+            dmax = std::max(dmax, std::abs(ra[0].U[k] - rb[0].U[k]));
+        check("PRESTRESS == 手工等效 CLOAD（含 loss=0.85）", dmax, 0.0, 1e-12);
+    }
+
+    // ---- 判据 3：偏心弯矩的方向与大小（悬臂梁，筋在下缘）----
+    // 这里锁的是"偏心弯矩算对了"，不是"上拱"。直线筋（常偏心）**不产生上拱**：
+    // 它在锚固端只给一对偏心弯矩，筋在下缘（e<0）时，自由端锚固力作用在
+    // 形心下方、方向指向固结端，产生的绕 y 弯矩使悬臂自由端**下挠**。
+    // 上拱来自曲线筋的跨内反向均布力（w=8Pe·s/L²，s 为矢高），本版不做，
+    // 文档里要写清楚这一点——把"直线筋"当"上拱"用是错的。
+    {
+        Model3D m = prestressBeam(true, e);
+        Model3D::Stage3D s; s.id = 1; s.activate = {1};
+        Model3D::Prestress3D ps; ps.id = 1; ps.elems = {1};
+        ps.P = Pe; ps.e = e; ps.loss = 1.0;
+        s.prestresses.push_back(ps);
+        m.stages = {s};
+        const auto rs = solveModel3DStages(m);
+        const int uz = rs[0].dm.safeDof(2, 2);
+        // 自由端弯矩 = Pe·(−e) 绕 +y（+y 正转使 +z 转向 +x，即自由端向下），
+        // 故自由端挠度 uz = −Pe·L²/(4EI)，闭式解。
+        check("自由端挠度 uz = −Pe·L²/(4EI)（直线筋下缘）",
+              rs[0].U[uz], -Pe * 100.0 / (4.0 * 2e11 * 0.01), 1e-9);
+        check("方向：筋在下缘 → 自由端下挠（非上拱）", rs[0].U[uz] < 0 ? 1.0 : 0.0, 1.0);
+    }
+
+    // ---- 负例：编错了必须当场报错 ----
+    auto expectThrow = [](const std::string& name, const Model3D& mm) {
+        bool threw = false;
+        try { solveModel3DStages(mm); } catch (const std::exception&) { threw = true; }
+        check(name, threw ? 1.0 : 0.0, 1.0);
+    };
+    {   // 指向非梁单元
+        Model3D bad = prestressBeam(false, e);
+        bad.elements[0].type = "TRUSS";
+        Model3D::Stage3D s; s.id = 1; s.activate = {1};
+        Model3D::Prestress3D ps; ps.id = 1; ps.elems = {1}; ps.P = Pe; ps.e = e;
+        s.prestresses.push_back(ps); bad.stages = {s};
+        expectThrow("PRESTRESS 指向非梁单元 → 报错", bad);
+    }
+    {   // P ≤ 0
+        Model3D bad = prestressBeam(false, e);
+        Model3D::Stage3D s; s.id = 1; s.activate = {1};
+        Model3D::Prestress3D ps; ps.id = 1; ps.elems = {1}; ps.P = 0.0; ps.e = e;
+        s.prestresses.push_back(ps); bad.stages = {s};
+        expectThrow("PRESTRESS 张拉力 ≤ 0 → 报错", bad);
+    }
+    {   // 未激活单元
+        Model3D bad = prestressBeam(false, e);
+        Model3D::Stage3D s; s.id = 1;                       // 没 ACTIVE
+        Model3D::Prestress3D ps; ps.id = 1; ps.elems = {1}; ps.P = Pe; ps.e = e;
+        s.prestresses.push_back(ps); bad.stages = {s};
+        expectThrow("PRESTRESS 指向本阶段未激活单元 → 报错", bad);
+    }
+    {   // loss 越界
+        Model3D bad = prestressBeam(false, e);
+        Model3D::Stage3D s; s.id = 1; s.activate = {1};
+        Model3D::Prestress3D ps; ps.id = 1; ps.elems = {1}; ps.P = Pe; ps.e = e;
+        ps.loss = 1.5;
+        s.prestresses.push_back(ps); bad.stages = {s};
+        expectThrow("PRESTRESS 的 LOSS > 1 → 报错", bad);
+    }
+    {   // 不连续单元链（两条不接的梁）
+        Model3D bad;
+        bad.nodes[1] = Vec3(0, 0, 0); bad.nodes[2] = Vec3(10, 0, 0);
+        bad.nodes[3] = Vec3(20, 0, 0); bad.nodes[4] = Vec3(30, 0, 0);
+        Element3D b1; b1.id = 1; b1.type = "BEAM"; b1.E = 2e11; b1.A = 0.01;
+        b1.Iy = b1.Iz = 0.01; b1.J = 1e-4; b1.G = 8e10; b1.n1 = 1; b1.n2 = 2;
+        Element3D b2 = b1; b2.id = 2; b2.n1 = 3; b2.n2 = 4;   // 与 b1 不相接
+        bad.elements = {b1, b2};
+        for (int d = 1; d <= 6; ++d) bad.constraints.push_back({1, d, 0.0});
+        bad.constraints.push_back({4, 2, 0.0}); bad.constraints.push_back({4, 3, 0.0});
+        Model3D::Stage3D s; s.id = 1; s.activate = {1, 2};
+        Model3D::Prestress3D ps; ps.id = 1; ps.elems = {1, 2}; ps.P = Pe; ps.e = e;
+        s.prestresses.push_back(ps); bad.stages = {s};
+        expectThrow("PRESTRESS 单元链不连续 → 报错", bad);
+    }
+}
+
 int main() {
     setupConsoleUTF8();
     std::setvbuf(stdout, nullptr, _IONBF, 0);   // 崩溃时也能看到已输出的内容
@@ -1070,6 +1210,7 @@ int main() {
         testJtgD60AutoLaneLoad();
         testCompactInput();
         test3DStageCableTension();
+        test3DStagePrestress();
     } catch (const std::exception& e) {
         std::printf("\n[ERROR] 异常: %s\n", e.what());
         ++g_fail;

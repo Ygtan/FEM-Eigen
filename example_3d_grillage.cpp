@@ -75,6 +75,20 @@ int main(int argc, char** argv) {
         }
     }
 
+    // 施工阶段预应力：每阶段每束的有效预加力（束号 → P·loss）。
+    // 前端靠它校核"有效预应力 vs 张拉控制应力"，以及分阶段看哪批束何时张拉。
+    {
+        bool any = false;
+        for (const auto& sr : stages)
+            if (!sr.prestressForces.empty()) { any = true; break; }
+        if (any) {
+            out << "stage prestress force\n";
+            for (const auto& sr : stages)
+                for (const auto& [id, Pe] : sr.prestressForces)
+                    out << "STAGE" << sr.stage << " P" << id << " Pe=" << Pe << "\n";
+        }
+    }
+
     if (!m.influences.empty()) {
         auto live = compute3DStageLiveEnvelope(m, m.influences.front());
         out << "stage live envelope\n";

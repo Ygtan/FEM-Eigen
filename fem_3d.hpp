@@ -276,6 +276,26 @@ struct Model3D {
     std::vector<Constraint3D> constraints;
     std::vector<std::tuple<int, int, double>> loads; // node, dof, value
 
+    // ---- 一条直线预应力筋（等效荷载法）----
+    //
+    // 与 2D 的 `*PRESTRESS` 不同：这里**不生成力筋单元**，只把它翻译成三组
+    // 等效节点荷载（见 solveModel3DStages 里的 applyPrestress）：
+    //   1. 轴向压力 Pe，沿梁轴（两端一对，压短梁）；
+    //   2. 锚固端偏心弯矩 Pe·e，绕横轴（竖向偏心 e 产生的附加弯矩）；
+    //   3. （曲线筋的竖向等效均布荷载本版**不做**——那需要矢高与线形。）
+    // 直线筋 + 常偏心是混凝土连续梁"纵向直束"的常见情形；折线筋/曲线筋的
+    // 跨内反向力不是这一版的能力边界内。
+    //
+    // 约定：P = 张拉控制力（N，正）；e = 竖向偏心（m，**形心上方为正**，
+    // 即 +z 方向）；loss = 有效/张拉比（0<loss≤1，直接乘，不做分项损失）。
+    struct Prestress3D {
+        int id = 0;
+        std::vector<int> elems;      // 连续梁单元（按节点顺序，首尾即锚固端）
+        double P = 0.0;
+        double e = 0.0;
+        double loss = 1.0;
+    };
+
     struct Stage3D {
         int id = 0;
         std::vector<int> activate;
@@ -291,6 +311,10 @@ struct Model3D {
         // "索长已给定、力是结果"是相反的语义，不能取其一了事。
         std::vector<std::pair<int, double>> tensions;
         std::vector<std::pair<int, double>> unstrained;
+        // 本阶段张拉的预应力束。预应力的效应是**状态量**（张拉一次、永久存在），
+        // 但阶段是增量法：等效荷载只在本阶段施加一次，产生的变形与内力通过
+        // 累计位移跨阶段延续——这与索力"状态量、不累加"是同一套逻辑。
+        std::vector<Prestress3D> prestresses;
     };
     std::vector<Stage3D> stages;
     double creepPhi = 0.0;
@@ -922,6 +946,9 @@ struct StageResult3D {
     // 原来就是这么崩的）。所以每个阶段必须自带自己的映射。
     DofMap3D dm;
     std::vector<CableStageState3D> cables;   // 空 = 本阶段没有索参与受力
+    // 本阶段张拉的预应力束的有效预加力（束号 → 有效力 N）。用于前端校核
+    // "有效预应力 vs 张拉控制应力"，以及分阶段看"哪批束在哪阶段张拉"。
+    std::vector<std::pair<int, double>> prestressForces;
 };
 
 // 给未参与任何激活单元的节点补齐约束（否则这些节点自由度零刚度）。
@@ -1076,6 +1103,62 @@ inline std::vector<StageResult3D> solveModel3DStages(const Model3D& m,
             Tdes[eid] = val;      // 设计目标跨阶段继承，末阶段的漂移要能看出来
         }
 
+        // ---- 预应力等效荷载：校验一次、预计算，循环内只做叠加 ----
+        //
+        // 为什么等效荷载而不是力筋单元：本内核没有 RIGID_PIN 刚臂，直线束的
+        // 全部效应就是"两端一对轴压 + 两端一对偏心弯矩"。曲线束的跨内反向
+        // 均布力（w = 8Pe·s/L²，s 为矢高）需要线形，本版不做，也不假装做了。
+        //
+        // 轴向方向取**首尾节点连线**的单位向量（链必须是直线；给折线束会按
+        // 首尾连线近似轴向，偏心弯矩的竖向分量仍按 e 施加——这是本版的近似，
+        // 文档里写明）。弯矩向量 = Pe·e·(ẑ × c)，ẑ=(0,0,1) 为竖向。
+        struct PsEquiv {
+            int ni = 0, nj = 0;
+            double fx = 0, fy = 0, fz = 0;   // Pe·c（i 端 +，j 端 −）
+            double mx = 0, my = 0, mz = 0;   // 偏心弯矩（i 端 +，j 端 −）
+        };
+        std::vector<PsEquiv> psLoads;
+        for (const auto& ps : st.prestresses) {
+            const std::string ptag = stag + " 的 PRESTRESS= 束 " + std::to_string(ps.id);
+            if (ps.elems.empty())
+                throw std::runtime_error(ptag + " 没有 ELEM 列表");
+            if (ps.P <= 0.0)
+                throw std::runtime_error(ptag + " 的张拉力必须为正");
+            if (ps.loss <= 0.0 || ps.loss > 1.0)
+                throw std::runtime_error(ptag + " 的 LOSS 必须在 (0,1]");
+            // 链校验：都是 BEAM、都在本阶段激活、首尾相接成一条开链。
+            std::map<int, int> deg;
+            for (int eid : ps.elems) {
+                const Element3D* e = elemIn(eid);
+                if (!e)
+                    throw std::runtime_error(ptag + " 引用了本阶段未激活的单元 "
+                                             + std::to_string(eid));
+                if (e->type != "BEAM" && e->type != "BEAM7")
+                    throw std::runtime_error(ptag + " 只能施加到梁单元（单元 "
+                                             + std::to_string(eid) + " 不是梁）");
+                deg[e->n1]++; deg[e->n2]++;
+            }
+            int head = 0, tail = 0;
+            for (const auto& [nd, c] : deg)
+                if (c == 1) { if (head == 0) head = nd; else tail = nd; }
+            if (head == 0 || tail == 0 || deg.size() != ps.elems.size() + 1)
+                throw std::runtime_error(ptag + " 的单元不构成一条首尾相接的开链");
+            const Vec3 dv = m.nodes.at(tail) - m.nodes.at(head);
+            const double L = dv.norm();
+            if (L <= 1e-12)
+                throw std::runtime_error(ptag + " 的锚固端节点重合");
+            const double ax = dv.x() / L, ay = dv.y() / L, az = dv.z() / L;
+            const double Pe = ps.P * ps.loss;
+            PsEquiv q;
+            q.ni = head; q.nj = tail;
+            q.fx = Pe * ax; q.fy = Pe * ay; q.fz = Pe * az;
+            // ẑ × c = (0,0,1)×(ax,ay,az) = (−ay, ax, 0)；M = Pe·e·(ẑ × c)
+            q.mx = Pe * ps.e * (-ay);
+            q.my = Pe * ps.e * ( ax);
+            q.mz = 0.0;
+            psLoads.push_back(q);
+        }
+
         // ---- 求解；有目标索力时在阶段内迭代 ----
         //
         // 张拉量必须按**索力状态**算，不能按"参考几何上的初张力"算：
@@ -1090,6 +1173,23 @@ inline std::vector<StageResult3D> solveModel3DStages(const Model3D& m,
         for (int round = 0; round <= tensionRounds; ++round) {
             Model3D mcs = mc;
             mcs.loads = st.loads;
+            // 预应力等效荷载：每个 round 都要叠加（mcs 每次都重建，不叠的话
+            // 第二次迭代起预应力就"消失"了）。作用在端节点的转动自由度上，
+            // 端节点是梁端、必有 6 自由度，不会落到无效 dof 上。
+            for (const auto& q : psLoads) {
+                mcs.loads.push_back({q.ni, 1,  q.fx});
+                mcs.loads.push_back({q.ni, 2,  q.fy});
+                mcs.loads.push_back({q.ni, 3,  q.fz});
+                mcs.loads.push_back({q.ni, 4,  q.mx});
+                mcs.loads.push_back({q.ni, 5,  q.my});
+                mcs.loads.push_back({q.ni, 6,  q.mz});
+                mcs.loads.push_back({q.nj, 1, -q.fx});
+                mcs.loads.push_back({q.nj, 2, -q.fy});
+                mcs.loads.push_back({q.nj, 3, -q.fz});
+                mcs.loads.push_back({q.nj, 4, -q.mx});
+                mcs.loads.push_back({q.nj, 5, -q.my});
+                mcs.loads.push_back({q.nj, 6, -q.mz});
+            }
             for (auto& e : mcs.elements) {
                 if (e.type != "CABLE") continue;
                 const auto it = Ngoal.find(e.id);
@@ -1174,6 +1274,8 @@ inline std::vector<StageResult3D> solveModel3DStages(const Model3D& m,
             }
             sr.cables.push_back(cs);
         }
+        for (const auto& ps : st.prestresses)
+            sr.prestressForces.push_back({ps.id, ps.P * ps.loss});
         out.push_back(sr);
     }
     return out;
@@ -2310,6 +2412,46 @@ inline Model3D readModel3D(const std::string& path) {
                             if (isL0) st.unstrained.push_back({eid, v});
                             else      st.tensions.push_back({eid, v});
                         }
+                    } else if (kv.rfind("PRESTRESS=",0)==0) {
+                        // PRESTRESS=<elems>:<P>:<e>[:<loss>]
+                        //   elems：a-b 范围或逗号列表（连续梁单元，首尾即锚固端）
+                        //   P：张拉控制力 N（正）；e：竖向偏心 m（形心上方为正）
+                        //   loss：有效/张拉比，可选，缺省 1.0
+                        // 一束一个 PRESTRESS=，束号按本阶段内出现顺序自动编。
+                        const std::string body = kv.substr(10);
+                        const std::size_t c1 = body.find(':');
+                        if (c1 == std::string::npos)
+                            throw std::runtime_error(
+                                "三维 *STAGE 的 PRESTRESS= 需要写成 "
+                                "<单元列表>:<P>:<e>[:<loss>]，收到「" + body + "」");
+                        const std::string elemsStr = body.substr(0, c1);
+                        std::vector<std::string> parts;
+                        {
+                            std::stringstream ps(body.substr(c1 + 1)); std::string t;
+                            while (std::getline(ps, t, ':')) parts.push_back(t);
+                        }
+                        if (parts.size() < 2 || parts.size() > 3)
+                            throw std::runtime_error(
+                                "三维 *STAGE 的 PRESTRESS= 需要 2~3 个数值 "
+                                "(<P>:<e>[:<loss>])，收到「" + body.substr(c1 + 1) + "」");
+                        Model3D::Prestress3D ps;
+                        ps.id = static_cast<int>(st.prestresses.size()) + 1;
+                        ps.P = std::stod(parts[0]);
+                        ps.e = std::stod(parts[1]);
+                        ps.loss = (parts.size() == 3) ? std::stod(parts[2]) : 1.0;
+                        std::stringstream es(elemsStr); std::string tok;
+                        while (std::getline(es, tok, ',')) {
+                            if (tok.empty()) continue;
+                            const std::size_t d = tok.find('-');
+                            if (d != std::string::npos) {
+                                const int a = std::stoi(tok.substr(0, d));
+                                const int b = std::stoi(tok.substr(d + 1));
+                                for (int v = a; v <= b; ++v) ps.elems.push_back(v);
+                            } else {
+                                ps.elems.push_back(std::stoi(tok));
+                            }
+                        }
+                        st.prestresses.push_back(ps);
                     }
                 }
                 m.stages.push_back(st);
