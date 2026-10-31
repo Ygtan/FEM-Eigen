@@ -912,6 +912,140 @@ void testCompactInput() {
     }
 }
 
+// 施工阶段索张拉（*STAGE 的 TENSION= / L0=）。
+//
+// 为什么这个模型值得做成回归：调索的整条链路（目标索力 → 反算无应力索长 →
+// 折成初应变 → 增量求解 → 用累积变形后的弦长回算索力 → 再修索长）里，
+// 只要有一环方向错（索长反了、等效荷载加错端、弦长漏了累积位移），
+// 结果都会"看起来像个索力"，不会崩、不会报错。所以必须用能闭式求解的模型。
+//
+// 模型：竖向索（L=10 m、EA=1e8 N）上端固结；下端节点只约束 x/y，竖向挂一根
+// k=2e7 N/m 的弹簧，并作用 W=100 kN 向下荷载。
+//   阶段 1：激活索 + W。此时索力不是 100 kN——弹簧按刚度比分担：
+//           u₁ = −W/(EA/L + k) = −3.333 mm，T₁ = EA·(L−u₁)/L = 33.33 kN
+//   阶段 2：不给荷载，TENSION=1:500 kN。
+//
+// 收敛后必须**同时**满足三条，缺一不能算对：
+//   (a) 索力 = 500 kN                     ← 迭代真的命中目标
+//   (b) 节点 2 总位移 = (500−100)/k = 20 mm ← 总量满足静力平衡（独立于迭代）
+//   (c) L0 = (10−0.02)/(1+500k/1e8) = 9.9303 m ← 索长反算的闭式解
+// 只凑 (a) 很容易：把 L0 直接算成"弦长/(1+T/EA)"也能让回算索力等于目标，
+// 但那样位移是错的——(b) 就是用来抓这个的。
+void test3DStageCableTension() {
+    std::printf("\n[24] 施工阶段索张拉（目标索力 → 无应力索长）\n");
+    const double EA = 1.0e8, Lc = 10.0, kSpring = 2.0e7;
+    const double W = 100e3, Ttar = 500e3;
+
+    Model3D m;
+    m.nodes[1] = Vec3(0.0, 0.0, Lc);
+    m.nodes[2] = Vec3(0.0, 0.0, 0.0);
+    Element3D c;
+    c.id = 1; c.type = "CABLE";
+    c.E = 2.0e11; c.A = EA / 2.0e11;      // EA = 1e8 N
+    c.n1 = 1; c.n2 = 2;
+    m.elements.push_back(c);
+    for (int d = 1; d <= 3; ++d) m.constraints.push_back({1, d, 0.0});
+    m.constraints.push_back({2, 1, 0.0});
+    m.constraints.push_back({2, 2, 0.0});
+    m.constraints.push_back({2, 3, 0.0, kSpring});   // 竖向弹性支承
+
+    Model3D::Stage3D s1; s1.id = 1; s1.activate = {1};
+    s1.loads.push_back({2, 3, -W});
+    Model3D::Stage3D s2; s2.id = 2;
+    s2.tensions.push_back({1, Ttar});
+    m.stages = {s1, s2};
+
+    const auto rs = solveModel3DStages(m);
+    check("阶段数", static_cast<double>(rs.size()), 2.0);
+    if (rs.size() != 2) return;
+
+    // ---- 阶段 1：没有目标索力时，索力由刚度比分配 ----
+    const double u1 = -W / (EA / Lc + kSpring);
+    const double T1 = EA * (-u1) / Lc;          // 节点下移 u1<0，弦长 = L−u1，L0 = L
+    check("阶段1 索力 = EA(L−u₁)/L", rs[0].cables.at(0).T, T1, 1e-9);
+    check("阶段1 无目标索力（target=0）", rs[0].cables.at(0).target, 0.0);
+
+    // ---- 阶段 2：张拉到 500 kN ----
+    const CableStageState3D& c2 = rs[1].cables.at(0);
+    check("阶段2 索力 = 目标 500 kN", c2.T, Ttar, 0.02);
+    check("阶段2 报告的偏差 < 1e-3", c2.dev, 0.0, 1.0);      // dev 本身，非负
+    check("阶段2 报告的偏差确实很小", c2.dev < 1e-3 ? 1.0 : 0.0, 1.0);
+
+    // ---- 总位移与索长：独立于迭代的两条物理约束 ----
+    const DofMap3D& dm2 = rs[1].dm;
+    const int dz = dm2.safeDof(2, 2);
+    const int dz1 = rs[0].dm.safeDof(2, 2);
+    const double uTot = (dz1 >= 0 ? rs[0].U[dz1] : 0.0) + (dz >= 0 ? rs[1].U[dz] : 0.0);
+    // 容差 1e-4：线性阶段求解的切线是 EA/L（L 为几何长度），索力关系按
+    // EA/L0，两者相差弹性应变 T/EA ≈ 0.5%，表现在位移上实测 1.5e-5。
+    // 这条判据之所以能压这么紧，是因为张拉增量按**索力状态**算
+    // （ΔP = N目标 − N当前）；早期按"参考几何上的初张力"算时，同样的模型
+    // 偏差是 2.5e-1，两者差四个数量级。
+    check("总位移 ≈ (T−W)/k = 20 mm", uTot, (Ttar - W) / kSpring, 1e-4);
+
+    const double chordEnd = Lc - uTot;
+    const double L0exact = chordEnd / (1.0 + Ttar / EA);
+    check("无应力索长 L0 闭式解", c2.L0, L0exact, 0.01);
+    check("L0 比几何长度短（张拉=缩短下料）", c2.L0 < Lc ? 1.0 : 0.0, 1.0);
+
+    // ---- 负例：编错了必须立刻报错，不能静默算出一个像样的数 ----
+    auto expectThrow = [](const std::string& name, const Model3D& mm) {
+        bool threw = false;
+        try { solveModel3DStages(mm); } catch (const std::exception&) { threw = true; }
+        check(name, threw ? 1.0 : 0.0, 1.0);
+    };
+
+    {   // 目标索力指向梁单元
+        Model3D bad = m;
+        bad.stages = {s2};
+        bad.stages[0].tensions = {{1, Ttar}};
+        bad.elements[0].type = "BEAM";
+        bad.elements[0].Iy = bad.elements[0].Iz = 1e-3;
+        bad.elements[0].J = 1e-3; bad.elements[0].G = 1e11;
+        expectThrow("TENSION 指向非索单元 → 报错", bad);
+    }
+    {   // 目标索力 ≤ 0
+        Model3D bad = m;
+        bad.stages = {s2};
+        bad.stages[0].tensions = {{1, 0.0}};
+        expectThrow("TENSION ≤ 0 → 报错（放张须用 L0=）", bad);
+    }
+    {   // 本阶段未激活的索
+        Model3D bad = m;
+        Model3D::Stage3D s; s.id = 1; s.tensions = {{1, Ttar}};   // 没 ACTIVE
+        bad.stages = {s};
+        expectThrow("TENSION 指向本阶段未激活单元 → 报错", bad);
+    }
+    {   // 同一根索既给目标索力又给索长
+        Model3D bad = m;
+        Model3D::Stage3D s; s.id = 1; s.activate = {1};
+        s.tensions = {{1, Ttar}};
+        s.unstrained = {{1, 9.93}};
+        bad.stages = {s};
+        expectThrow("TENSION 与 L0 同时给同一根索 → 报错", bad);
+    }
+
+    // ---- 无张拉规格时行为不变：应与单独 solveModel3D 完全一致 ----
+    {
+        Model3D plain = m;
+        plain.stages = {s1};
+        const auto rp = solveModel3DStages(plain);
+        Model3D once;
+        once.nodes = m.nodes;
+        once.constraints = m.constraints;
+        once.loads = s1.loads;
+        once.elements = m.elements;
+        const std::vector<double> Uref = solveModel3D(once);
+        const double dmax = [&] {
+            double d = 0.0;
+            for (std::size_t k = 0; k < Uref.size() && k < rp[0].U.size(); ++k)
+                d = std::max(d, std::abs(Uref[k] - rp[0].U[k]));
+            return d;
+        }();
+        check("无 TENSION 时阶段解与单次求解一致", dmax, 0.0, 1e-12);
+    }
+}
+
 int main() {
     setupConsoleUTF8();
     std::setvbuf(stdout, nullptr, _IONBF, 0);   // 崩溃时也能看到已输出的内容
@@ -935,6 +1069,7 @@ int main() {
         testElasticSupport();
         testJtgD60AutoLaneLoad();
         testCompactInput();
+        test3DStageCableTension();
     } catch (const std::exception& e) {
         std::printf("\n[ERROR] 异常: %s\n", e.what());
         ++g_fail;

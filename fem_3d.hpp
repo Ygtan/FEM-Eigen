@@ -9,6 +9,7 @@
 #include <Eigen/Sparse>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
@@ -153,6 +154,71 @@ inline Eigen::Matrix<double, 6, 6> truss3DStiffness(double E, double A, const Ve
     return Ke;
 }
 
+// ==================== 缆索垂度：索力 ↔ 弦长 ====================
+//
+// 这一段放在线性内核里，而不是非线性内核里，是为了让**两条路径共用同一
+// 个式子**：施工阶段调索（线性、增量法）要把"目标索力"翻译成"无应力索长"，
+// 成桥态找形（几何非线性）要用同一个关系反算 L0。两边各写一份的话，迟早
+// 会漂移成两个不同的物理模型——而阶段索力与成桥态索力是要互相校核的。
+//
+// 缆索不是直杆：自重让它垂成悬链线，弦的伸长因此"看起来"更软。浅垂度
+// （f/L < 1/8，斜拉桥拉索与悬索桥主缆均满足）下的力-伸长关系：
+//
+//      Ln = L0·(1 + T/(EA)) - w²·Lh³/(24·T²)
+//
+// 其中 Ln = 弦长，L0 = 无应力（弧）长度，Lh = 弦的水平投影，w = 单位长重度。
+// 第二项即垂度缩短量 s(T) = w²Lh³/(24T²)（抛物线悬链线结果）：索绷得越紧，
+// 垂度越小、弦越长；索放松则垂度增大、弦缩短。
+//
+// 对该关系求导即得**切线刚度**（注意分母里的 L0 不能省）：
+//
+//      dT/dLn = 1 / (L0/(EA) + w²Lh³/(12T³))
+//             = (EA/L0) / (1 + w²·Lh³·EA/(12·T³·L0)) = Eeq·A/L0
+//      Eeq    = E / (1 + w²·Lh³·E·A/(12·T³·L0))   ← 这正是 Ernst 等效弹模
+//
+// 标准 Ernst 式写作 E/(1 + (wL)²EA/(12T³))，那里默认 L ≈ L0 ≈ Lh；
+// 本内核保留分母中的 L0，使"内力—切线"严格共轭（二者只差 O(弹性应变)）。
+//
+// 注意：上式是**固定水平投影 Lh** 下的偏导，正是 Ernst 式的定义（Ernst 推导
+// 时把水平跨径 L 当常量）。单元实际切线由差分对节点位置求得，会额外带上
+// ∂/∂Lh 项（端点沿弦向移动时 Lh 同时变），量级仅 O(垂度²)；它与内力严格
+// 共轭，才是 Newton 二次收敛的保证。Ernst 模量在这里的定位是"工程上可读
+// 的等效弹模"，而不是切线的替代品。
+
+// 由弦长反解索力（浅垂度弹性悬链线）。T>0 唯一解（g 单调）。
+inline double cableTensionFromChord(double Ln, double L0, double EA, double w, double Lh) {
+    if (w <= 0.0 || Lh <= 1e-12) {
+        return EA * (Ln - L0) / L0;          // 竖直索或未给重度：退化为直杆
+    }
+    const double cSag = w * w * Lh * Lh * Lh / 24.0;    // s(T) = cSag / T²
+    // 初值：张紧时用直杆估计；松弛时用抛物线垂度下的水平力估计
+    double T = EA * (Ln - L0) / L0;
+    if (T < 1e-6) {
+        const double slack = std::max(L0 - Ln, 1e-9);
+        T = std::max(w * Lh * Lh / (8.0 * std::sqrt(3.0 * Lh * slack / 8.0)), 1e-3);
+    }
+    // g(T) = L0 + L0·T/EA - cSag/T² - Ln；g'(T) = L0/EA + 2cSag/T³ > 0
+    for (int it = 0; it < 60; ++it) {
+        const double g = L0 + L0 * T / EA - cSag / (T * T) - Ln;
+        const double gp = L0 / EA + 2.0 * cSag / (T * T * T);
+        const double step = g / gp;
+        T -= step;
+        if (T < 1e-6) T = 1e-6;             // 防止 Newton 步长跨越奇点
+        if (std::abs(step) <= 1e-12 * std::max(1.0, T)) break;
+    }
+    return T;
+}
+
+// ① 由设计弦长与目标索力闭式反算无应力（下料）索长。
+//    即 Ln = L0(1 + T/EA) - s(T) 对 L0 求解，s(T) = w²Lh³/(24T²)。
+inline double cableUnstrainedLengthForTension(double chordTarget, double T,
+                                              double EA, double w, double Lh) {
+    if (T <= 0.0) throw std::runtime_error("反算下料索长：目标索力必须为正");
+    double sag = 0.0;
+    if (w > 0.0 && Lh > 1e-12) sag = w * w * Lh * Lh * Lh / (24.0 * T * T);
+    return (chordTarget + sag) / (1.0 + T / EA);
+}
+
 // 变截面梁单元：截面属性沿梁轴在控制点间线性插值，取 [s1,s2] 中点处截面
 // 作为该单元的等效常截面（与 2D 变截面“单元中点截面”近似一致）。
 inline BeamElement beamElementFromSection(const VariableSection& vs,
@@ -215,6 +281,16 @@ struct Model3D {
         std::vector<int> activate;
         std::vector<int> deactivate;
         std::vector<std::tuple<int, int, double>> loads;
+        // ---- 本阶段的索张拉（施工阶段"调索"的唯一入口）----
+        //
+        // tensions:   单元号 → 目标索力 N（正为张拉）。求解时迭代无应力索长
+        //             L0，使本阶段末索力命中目标。
+        // unstrained: 单元号 → 无应力索长 m。直接给定下料长度，不做迭代——
+        //             L0 本身就是最终答案，再迭代只会把它改掉。
+        // 两者对同一单元**互斥**：同时给出直接报错，因为"迭代命中目标"与
+        // "索长已给定、力是结果"是相反的语义，不能取其一了事。
+        std::vector<std::pair<int, double>> tensions;
+        std::vector<std::pair<int, double>> unstrained;
     };
     std::vector<Stage3D> stages;
     double creepPhi = 0.0;
@@ -813,6 +889,26 @@ inline std::vector<double> computeBucklingFactors3D(const Model3D& m, int nModes
 
 // ==================== 施工阶段 ====================
 
+// 某阶段末的索状态。
+//
+// 与梁内力相反：**索力是状态量，不是增量**。梁内力在各阶段间累加
+// （见 compute3DFinalStageBeamForces），索力不能累加——把各阶段的索力相加
+// 得到的是"张拉动作的总和"，不是"桥上有多少索力"。所以这里记的是阶段末的
+// 总量，接口上也就没有对应的"索力包络"函数。
+struct CableStageState3D {
+    int elem = 0;
+    double L0 = 0.0;        // 本阶段末的无应力索长（跨阶段继承）
+    double chord = 0.0;     // 本阶段末的弦长（含累积变形）
+    double T = 0.0;         // 本阶段末的索力（含垂度，与非线性内核同口径）
+    double target = 0.0;    // 本阶段的目标索力；0 = 本阶段未调这根索
+    double dev = 0.0;       // |T - target| / target
+    // 该索**最近一次**被明确给定的目标索力（跨阶段继承），以及当前偏离。
+    // 施工阶段真正要回答的问题是"张好之后被后来的索带跑多少"，所以末阶段的
+    // 每一根索都要能看到自己相对设计目标的漂移，而不只是本阶段调过的那几根。
+    double Tdes = 0.0;
+    double devDes = 0.0;
+};
+
 struct StageResult3D {
     int stage = 0;
     std::vector<double> U;
@@ -825,6 +921,7 @@ struct StageResult3D {
     // 重则下标越界（std::vector 断言失败直接 abort —— example_3d_beam_envelope
     // 原来就是这么崩的）。所以每个阶段必须自带自己的映射。
     DofMap3D dm;
+    std::vector<CableStageState3D> cables;   // 空 = 本阶段没有索参与受力
 };
 
 // 给未参与任何激活单元的节点补齐约束（否则这些节点自由度零刚度）。
@@ -839,9 +936,35 @@ inline void constrainDisconnected3D(Model3D& mc) {
     }
 }
 
-inline std::vector<StageResult3D> solveModel3DStages(const Model3D& m) {
+// 逐阶段求解（增量法）。
+//
+// 语义（这条决定了下面所有事）：**每个阶段解的是"本阶段荷载在当前构型上的
+// 增量"**，不是"累计荷载"——`mc.loads = st.loads` 而不是累计。这是本文件
+// 一贯的约定，compute3DFinalStageBeamForces 正是按"成桥态 = Σ 各阶段增量"
+// 来累加的。谁把 mc.loads 改成累计，那边的求和就立刻双重计数。
+//
+// 索张拉在这里实现，原因是线性求解器把 CABLE 当桁架（assembleStiffness3D →
+// truss3DStiffness），**根本不读 e.L0**：只改 L0 对结果毫无影响。所以"目标
+// 索力"必须翻译成一对**初应变等效节点荷载**（把两端沿索向拉近 P），才能真正
+// 进入方程。而 P 的增量才是本阶段该加的量：前面阶段已经张拉过的索，若每阶段
+// 都把全量 P 再加一遍，就等于反复张拉。
+inline std::vector<StageResult3D> solveModel3DStages(const Model3D& m,
+                                                     int tensionRounds = 6,
+                                                     double tensionTol = 1e-4) {
     std::vector<char> active(m.elements.size(), 0);
     std::vector<StageResult3D> out;
+
+    // 累积位移按**节点**存：各阶段的自由度编号不同（见 StageResult3D::dm），
+    // 但"节点 n 沿 x 的位移"这个物理量跨阶段连续。索的弦长必须用累积变形后
+    // 的位置——否则逐阶段调索会把前几阶段的伸长量当成本阶段新产生的，越调越大。
+    std::map<int, std::array<double, 6>> uTotal;
+    // 各索的状态，跨阶段继承：
+    //   Tcur     当前（上阶段末）索力。张拉增量 ΔP = N目标 − Tcur 必须建立在
+    //            这个状态上，不能每次从"参考几何 + L0"重算（理由见下面张拉段）。
+    //   L0state  当前无应力索长。
+    //   Tdes     最近一次明确给定的目标索力（写输出算漂移用）。
+    std::map<int, double> Tcur, L0state, Tdes;
+
     for (const auto& st : m.stages) {
         for (int id : st.activate) {
             bool found = false;
@@ -863,11 +986,194 @@ inline std::vector<StageResult3D> solveModel3DStages(const Model3D& m) {
         for (std::size_t i = 0; i < m.elements.size(); ++i)
             if (active[i]) mc.elements.push_back(m.elements[i]);
         constrainDisconnected3D(mc);
+        const DofMap3D dm = buildDofMap3D(mc);
+
+        // ---- 索的几何工具 ----
+        auto elemIn = [&mc](int id) -> const Element3D* {
+            for (const auto& e : mc.elements) if (e.id == id) return &e;
+            return nullptr;
+        };
+        auto horiz = [&m](const Element3D& e) {
+            const Vec3 d = m.nodes.at(e.n2) - m.nodes.at(e.n1);
+            return std::sqrt(d.x() * d.x() + d.y() * d.y());
+        };
+        // 弦长 = 参考几何 + 已累积位移（+ 本阶段增量，若给了）。
+        auto chordOf = [&m](const Element3D& e,
+                            const std::map<int, std::array<double, 6>>& u0,
+                            const std::vector<double>* dU,
+                            const DofMap3D* dmap) {
+            Vec3 a = m.nodes.at(e.n1), b = m.nodes.at(e.n2);
+            const auto it1 = u0.find(e.n1), it2 = u0.find(e.n2);
+            for (int k = 0; k < 3; ++k) {
+                if (it1 != u0.end()) a[k] += it1->second[k];
+                if (it2 != u0.end()) b[k] += it2->second[k];
+                if (dU && dmap) {
+                    const int d1 = dmap->safeDof(e.n1, k);
+                    const int d2 = dmap->safeDof(e.n2, k);
+                    if (d1 >= 0 && d1 < static_cast<int>(dU->size())) a[k] += (*dU)[d1];
+                    if (d2 >= 0 && d2 < static_cast<int>(dU->size())) b[k] += (*dU)[d2];
+                }
+            }
+            return (b - a).norm();
+        };
+
+        const std::string stag = "*STAGE " + std::to_string(st.id);
+        // 本阶段各索要动的力：单元 → 本阶段末的**目标索力增量基准**。
+        // tune 标记"需要迭代命中目标"的索（TENSION=）；L0= 是直接给索长，
+        // 索力是结果而不是目标，故不进 tune。
+        std::map<int, double> Ngoal;
+        std::map<int, bool> tune;
+        std::map<int, double> tgt;      // 本阶段显式给定的目标索力（写输出用）
+
+        for (const auto& e : mc.elements) {
+            if (e.type != "CABLE") continue;
+            if (!Tcur.count(e.id)) Tcur[e.id] = 0.0;
+            if (!L0state.count(e.id))
+                L0state[e.id] = (e.L0 > 0.0
+                                     ? e.L0
+                                     : (m.nodes.at(e.n2) - m.nodes.at(e.n1)).norm());
+        }
+
+        // 显式下料长度：直接换 L0，索力按新索长在"当前弦长"上取值。
+        for (const auto& [eid, val] : st.unstrained) {
+            const Element3D* e = elemIn(eid);
+            if (!e)
+                throw std::runtime_error(stag + " 的 L0= 指向单元 " + std::to_string(eid)
+                                         + "，该单元在本阶段未激活");
+            if (e->type != "CABLE")
+                throw std::runtime_error(stag + " 的 L0= 指向单元 " + std::to_string(eid)
+                                         + "，它不是 CABLE");
+            if (val <= 0.0)
+                throw std::runtime_error(stag + " 的 L0= 必须为正（单元 "
+                                         + std::to_string(eid) + "）");
+            L0state[eid] = val;
+            Ngoal[eid] = cableTensionFromChord(chordOf(*e, uTotal, nullptr, nullptr),
+                                               val, e->E * e->A, e->w, horiz(*e));
+        }
+
+        // 目标索力：本阶段末必须正好是这个力，阶段内迭代。
+        for (const auto& [eid, val] : st.tensions) {
+            const Element3D* e = elemIn(eid);
+            if (!e)
+                throw std::runtime_error(stag + " 的 TENSION= 指向单元 " + std::to_string(eid)
+                                         + "，该单元在本阶段未激活");
+            if (e->type != "CABLE")
+                throw std::runtime_error(stag + " 的 TENSION= 指向单元 " + std::to_string(eid)
+                                         + "，它不是 CABLE（索力只对索单元有意义）");
+            if (val <= 0.0)
+                throw std::runtime_error(stag + " 的 TENSION= 必须为正（单元 "
+                                         + std::to_string(eid)
+                                         + "）；要放张请改用 L0= 给无应力索长");
+            if (st.unstrained.end() != std::find_if(
+                    st.unstrained.begin(), st.unstrained.end(),
+                    [eid](const std::pair<int, double>& p) { return p.first == eid; }))
+                throw std::runtime_error(stag + " 对单元 " + std::to_string(eid)
+                                         + " 同时给了 TENSION= 与 L0=："
+                                           "前者要迭代索长、后者直接给索长，语义冲突");
+            Ngoal[eid] = val;
+            tune[eid] = true;
+            tgt[eid] = val;
+            Tdes[eid] = val;      // 设计目标跨阶段继承，末阶段的漂移要能看出来
+        }
+
+        // ---- 求解；有目标索力时在阶段内迭代 ----
+        //
+        // 张拉量必须按**索力状态**算，不能按"参考几何上的初张力"算：
+        //     ΔP = N目标 − N当前(本阶段开始时)
+        // 早期版本用的是 f(L_geom, L0新) − f(L_geom, L0旧)，在斜拉桥分批张拉
+        // 里直接翻车——结构变形 0.5 m 时 f(L_geom, ·) 与真实索力能差近一倍，
+        // 实测后期张拉的索把前期张好的索带到 +89%。
+        // 迭代修的是"刚度响应"这一项：解出来 Δu 使弦长变化 ext，索力还会
+        // 跟着变 EA/L·ext，所以要把这点残差从 ΔP 里扣回去。
+        std::map<int, double> corr;
+        std::vector<double> U;
+        for (int round = 0; round <= tensionRounds; ++round) {
+            Model3D mcs = mc;
+            mcs.loads = st.loads;
+            for (auto& e : mcs.elements) {
+                if (e.type != "CABLE") continue;
+                const auto it = Ngoal.find(e.id);
+                if (it == Ngoal.end()) continue;       // 本阶段不动这根索
+                const double dP = it->second + corr[e.id] - Tcur[e.id];
+                if (std::abs(dP) <= 1e-9) continue;
+                // 组装时用的是徐变折减后的模量：写成 istrn = ΔP/(Eeff·A) 才能
+                // 保证等效节点力正好等于 ΔP，不受 creepPhi 影响。
+                const double Eeff = e.E / (1.0 + m.creepChi * m.creepPhi);
+                e.istrn += dP / (Eeff * e.A);
+            }
+            U = solveModel3D(mcs);
+            if (tgt.empty()) break;              // 未调索：一次求解即结果
+            bool needMore = false;
+            // 注意：这里必须从 tgt（单元→目标索力）取目标值。曾经写成从
+            // tune（单元→是否需要迭代，map<int,bool>）里结构化绑定，Ttar
+            // 就成了 bool 的 true=1.0——迭代会把索力精确地拉到 1 N，
+            // 而且编译器一声不响。
+            for (const auto& [eid, Ttar] : tgt) {
+                const Element3D* e = elemIn(eid);
+                const double c0 = chordOf(*e, uTotal, nullptr, nullptr);
+                const double c1 = chordOf(*e, uTotal, &U, &dm);
+                const double Tnow = Tcur[eid] + (Ngoal[eid] + corr[eid] - Tcur[eid])
+                                    + e->E * e->A / c0 * (c1 - c0);
+                const double err = Tnow - Ttar;
+                if (std::abs(err) > tensionTol * Ttar) {
+                    corr[eid] -= err;
+                    needMore = true;
+                }
+            }
+            if (!needMore || round == tensionRounds) break;
+        }
+
+        // ---- 记录本阶段末各索的力（在提交位移之前算，弦长要用 c0/c1）----
+        std::map<int, double> Tnew, chordEnd;
+        for (const auto& e : mc.elements) {
+            if (e.type != "CABLE") continue;
+            const double c0 = chordOf(e, uTotal, nullptr, nullptr);
+            const double c1 = chordOf(e, uTotal, &U, &dm);
+            const double dP = Ngoal.count(e.id) ? (Ngoal[e.id] + corr[e.id] - Tcur[e.id]) : 0.0;
+            chordEnd[e.id] = c1;
+            Tnew[e.id] = Tcur[e.id] + dP + e.E * e.A / c0 * (c1 - c0);
+            // 调过索的，把 L0 落成"与该状态一致"的下料长度：f(chord, L0) = T。
+            // 这样下一阶段接手时，两种口径（跟踪力 / 弦长-索长关系）不会打架。
+            const auto it = tune.find(e.id);
+            if (it != tune.end())
+                L0state[e.id] = cableUnstrainedLengthForTension(
+                    c1, Tnew[e.id], e.E * e.A, e.w, horiz(e));
+        }
+
+        // ---- 提交状态（只在本阶段收敛后写，迭代过程中的中间值不落地）----
+        for (const auto& [id, x] : m.nodes) {
+            (void)x;
+            const int cnt = dm.count(id);
+            for (int k = 0; k < cnt; ++k) {
+                const int d = dm.safeDof(id, k);
+                if (d >= 0 && d < static_cast<int>(U.size())) uTotal[id][k] += U[d];
+            }
+        }
+        for (const auto& [eid, v] : Tnew) Tcur[eid] = v;
 
         StageResult3D sr;
         sr.stage = st.id;
-        sr.dm = buildDofMap3D(mc);   // 约束补齐后再取，与 solveModel3D 内部一致
-        sr.U = solveModel3D(mc);
+        sr.dm = dm;
+        sr.U = U;
+        for (const auto& e : mc.elements) {
+            if (e.type != "CABLE") continue;
+            CableStageState3D cs;
+            cs.elem = e.id;
+            cs.L0 = L0state[e.id];
+            cs.chord = chordEnd[e.id];
+            cs.T = Tnew[e.id];
+            const auto it = tgt.find(e.id);
+            if (it != tgt.end() && it->second > 0.0) {
+                cs.target = it->second;
+                cs.dev = std::abs(cs.T - cs.target) / cs.target;
+            }
+            const auto id2 = Tdes.find(e.id);
+            if (id2 != Tdes.end() && id2->second > 0.0) {
+                cs.Tdes = id2->second;
+                cs.devDes = std::abs(cs.T - cs.Tdes) / cs.Tdes;
+            }
+            sr.cables.push_back(cs);
+        }
         out.push_back(sr);
     }
     return out;
@@ -1983,6 +2289,27 @@ inline Model3D readModel3D(const std::string& path) {
                         std::string list=kv.substr(9);
                         std::stringstream ls(list); std::string tok;
                         while(std::getline(ls,tok,',')) st.deactivate.push_back(std::stoi(tok));
+                    } else if (kv.rfind("TENSION=",0)==0 || kv.rfind("L0=",0)==0) {
+                        // TENSION=12:3.2e6,13:3.1e6
+                        // L0=12:10.234,13:10.301
+                        // 逐对"单元号:数值"。写成逗号分隔是为了让一行能表达
+                        // "本阶段同时张拉这一对索"——斜拉桥对称悬臂施工的标准
+                        // 动作，也是这个键存在的理由。
+                        const bool isL0 = (kv.rfind("L0=",0)==0);
+                        const std::string body = kv.substr(isL0 ? 3 : 8);
+                        std::stringstream ls(body); std::string pair;
+                        while (std::getline(ls, pair, ',')) {
+                            if (pair.empty()) continue;
+                            const std::size_t c = pair.find(':');
+                            if (c == std::string::npos)
+                                throw std::runtime_error(
+                                    "三维 *STAGE 的 " + std::string(isL0 ? "L0=" : "TENSION=")
+                                    + " 需要写成 <单元号>:<数值>，收到「" + pair + "」");
+                            const int eid = std::stoi(pair.substr(0, c));
+                            const double v = std::stod(pair.substr(c + 1));
+                            if (isL0) st.unstrained.push_back({eid, v});
+                            else      st.tensions.push_back({eid, v});
+                        }
                     }
                 }
                 m.stages.push_back(st);

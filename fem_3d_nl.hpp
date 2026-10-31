@@ -475,59 +475,11 @@ inline bool crBeamTangent12(const CRBeamState& st, const Eigen::Matrix3d& T1,
 
 // ==================== 缆索垂度（sag）====================
 //
-// 缆索不是直杆：自重让它垂成悬链线，弦的伸长因此"看起来"更软。
-// 浅垂度（f/L < 1/8，斜拉桥拉索与悬索桥主缆均满足）下的力-伸长关系：
-//
-//      Ln = L0·(1 + T/(EA)) - w²·Lh³/(24·T²)
-//
-// 其中 Ln = 弦长，L0 = 无应力（弧）长度，Lh = 弦的水平投影，w = 单位长重度。
-// 第二项即垂度缩短量 s(T) = w²Lh³/(24T²)（抛物线悬链线结果）：索绷得越紧，
-// 垂度越小、弦越长；索放松则垂度增大、弦缩短。
-//
-// 对该关系求导即得**切线刚度**（注意分母里的 L0 不能省）：
-//
-//      dT/dLn = 1 / (L0/(EA) + w²Lh³/(12T³))
-//             = (EA/L0) / (1 + w²·Lh³·EA/(12·T³·L0)) = Eeq·A/L0
-//      Eeq    = E / (1 + w²·Lh³·E·A/(12·T³·L0))   ← 这正是 Ernst 等效弹模
-//
-// 标准 Ernst 式写作 E/(1 + (wL)²EA/(12T³))，那里默认 L ≈ L0 ≈ Lh；
-// 本内核保留分母中的 L0，使"内力—切线"严格共轭（二者只差 O(弹性应变)）。
-//
-// 注意：上式是**固定水平投影 Lh** 下的偏导，正是 Ernst 式的定义（Ernst 推导
-// 时把水平跨径 L 当常量）。单元实际切线由差分对节点位置求得，会额外带上
-// ∂/∂Lh 项（端点沿弦向移动时 Lh 同时变），量级仅 O(垂度²)；它与内力严格
-// 共轭，才是 Newton 二次收敛的保证。Ernst 模量在这里的定位是"工程上可读
-// 的等效弹模"，而不是切线的替代品。
-//
-// 因此这里不是"拿 Ernst 模量去硬套直杆"（那样内力与刚度不共轭，Newton
-// 会退化成线性收敛），而是：
-//      · 内力用上述非线性关系的精确反解（Newton 3~4 次，单调必收敛）；
-//      · 切线用 Ernst 模量——它恰好等于该关系的导数，二者严格共轭。
-// 这是本内核相对常规"直杆 + Ernst 模量"做法的精度差异所在。
-
-// 由弦长反解索力（浅垂度弹性悬链线）。T>0 唯一解（g 单调）。
-inline double cableTensionFromChord(double Ln, double L0, double EA, double w, double Lh) {
-    if (w <= 0.0 || Lh <= 1e-12) {
-        return EA * (Ln - L0) / L0;          // 竖直索或未给重度：退化为直杆
-    }
-    const double cSag = w * w * Lh * Lh * Lh / 24.0;    // s(T) = cSag / T²
-    // 初值：张紧时用直杆估计；松弛时用抛物线垂度下的水平力估计
-    double T = EA * (Ln - L0) / L0;
-    if (T < 1e-6) {
-        const double slack = std::max(L0 - Ln, 1e-9);
-        T = std::max(w * Lh * Lh / (8.0 * std::sqrt(3.0 * Lh * slack / 8.0)), 1e-3);
-    }
-    // g(T) = L0 + L0·T/EA - cSag/T² - Ln；g'(T) = L0/EA + 2cSag/T³ > 0
-    for (int it = 0; it < 60; ++it) {
-        const double g = L0 + L0 * T / EA - cSag / (T * T) - Ln;
-        const double gp = L0 / EA + 2.0 * cSag / (T * T * T);
-        const double step = g / gp;
-        T -= step;
-        if (T < 1e-6) T = 1e-6;             // 防止 Newton 步长跨越奇点
-        if (std::abs(step) <= 1e-12 * std::max(1.0, T)) break;
-    }
-    return T;
-}
+// 力-伸长关系与它的反解（cableTensionFromChord）现在放在 fem_3d.hpp 里，
+// 因为**线性施工阶段调索也要用它**：施工阶段把"目标索力"翻译成"无应力
+// 索长"，成桥态找形再把这个 L0 交给非线性求解——两边必须是同一个式子，
+// 否则阶段索力与成桥态索力没法互相对账。本文件通过 #include "fem_3d.hpp"
+// 直接使用，不再重复定义。
 
 // Ernst 等效弹性模量（= 上述力-伸长关系的切线 dT/dLn·L0/A，与内力严格共轭）
 inline double cableErnstModulus(double E, double A, double w, double Lh, double T,
@@ -1397,15 +1349,8 @@ inline CableLengthResult3D iterateCableUnstrainedLengths(
 // 支承连续梁法（把每个锚点的竖向位移各自压成 0），它在锚点紧邻支座时不会给出
 // 畸变反力，索力沿跨径平滑分布。
 
-// ① 由设计弦长与目标索力闭式反算无应力（下料）索长。
-//    即 Ln = L0(1 + T/EA) - s(T) 对 L0 求解，s(T) = w²Lh³/(24T²)。
-inline double cableUnstrainedLengthForTension(double chordTarget, double T,
-                                              double EA, double w, double Lh) {
-    if (T <= 0.0) throw std::runtime_error("反算下料索长：目标索力必须为正");
-    double sag = 0.0;
-    if (w > 0.0 && Lh > 1e-12) sag = w * w * Lh * Lh * Lh / (24.0 * T * T);
-    return (chordTarget + sag) / (1.0 + T / EA);
-}
+// ① 由设计弦长与目标索力闭式反算无应力（下料）索长。（定义见 fem_3d.hpp：
+//    施工阶段调索也要用同一个式子，故放在公共头文件里。）
 
 // ② 刚性支承连续梁法：索 → 锚点处刚性竖向支承，反力沿索向分解即得目标索力。
 struct CableAnchor3D {

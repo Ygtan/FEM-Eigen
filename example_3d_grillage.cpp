@@ -47,6 +47,34 @@ int main(int argc, char** argv) {
     for (auto& e : finalDisp)
         out << "N" << e.node << " dof" << e.dof << " u=" << nz(e.minVal) << "\n";
 
+    // 各阶段末的索状态。
+    //
+    // 这一段是"施工阶段能不能调索"的唯一证据，也是与前几段性质不同的地方：
+    // 上面的位移/内力都是**增量**，可以逐阶段累加；索力是**状态量**，
+    // 累加没有意义（加出来是"张拉动作的总和"）。所以这里逐阶段列，
+    // 不提供包络。
+    //
+    // 两个偏差各有用处：
+    //   dev    本阶段末索力 vs 本阶段目标（0 = 本阶段没调这根索）
+    //   devDes 本阶段末索力 vs 该索**设计目标**（跨阶段继承）
+    // 后者才是施工控制关心的问题："先张好的索被后来的索带跑了多少"。
+    // 逐对张拉时它一般不为零——这正是需要二次调索的原因，藏起来就等于
+    // 假装一次张拉到位。
+    {
+        bool any = false;
+        for (const auto& sr : stages) if (!sr.cables.empty()) { any = true; break; }
+        if (any) {
+            out << "stage cable tension\n";
+            for (const auto& sr : stages)
+                for (const auto& cs : sr.cables)
+                    out << "STAGE" << sr.stage << " E" << cs.elem
+                        << " T=" << cs.T << " L0=" << cs.L0
+                        << " chord=" << cs.chord
+                        << " target=" << cs.target << " dev=" << cs.dev
+                        << " Tdes=" << cs.Tdes << " devDes=" << cs.devDes << "\n";
+        }
+    }
+
     if (!m.influences.empty()) {
         auto live = compute3DStageLiveEnvelope(m, m.influences.front());
         out << "stage live envelope\n";
