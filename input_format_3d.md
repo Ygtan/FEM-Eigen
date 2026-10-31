@@ -302,12 +302,25 @@ support_v_sum_kN=... applied_v_kN=... balance_pct=...
 [MAINCABLE] elem T L0 z chordEnd
 [HANGER]   elem deckNode T L0 chord
 [GIRDER]   elem N My Vz
+[GIRDEREND] elem end N My Vz
 [REACTION] node dof R
 [CAMBER]   node dx dy dz
 [ERECTED]  node x y z
 [U]        node dof value
 [END]
 ```
+
+`[GIRDER]` **只有悬索桥有**，每根加劲梁一行，`N`/`My`/`Vz` **各自**取两端中
+绝对值较大者。它是给曲线和摘要看的——`max|N|` 可能来自 i 端、`max|My|` 来自
+j 端，这一行描述的是梁上并不存在的截面，**不能拿它算应力**。
+
+`[GIRDEREND]` 两种桥型都有，**每一端一行**（`end=1` 为 i 端、`2` 为 j 端），
+所有 `BEAM`/`BEAM7` 单元都列。应力 `σ = N/A ± My/W` 必须用这一段：只有同一
+端才是同一截面。主梁与塔柱都在里面——内核不替使用者判断"哪根是主梁"，
+那个判断由前处理按 (材料, 实常数) 分组做。
+
+内力是对着**制造线形**（`[ERECTED]`）算的：位移 `u` 是相对制造线形的量，
+若拿设计构形当参考，算出来的梁内力会把预拱度当成变形。
 
 悬索桥额外多几行：`susp_system=` / `H_kN=` / `sag_m=` / `sag_target_m=` /
 `span_m=` / `sag_ratio=` / `hanger_count` / `girder_N_max_kN` 等。

@@ -74,6 +74,14 @@
 //     [MAINCABLE] elem T L0 z chordEnd
 //     [HANGER]   elem deckNode T L0 chord
 //     [GIRDER]   elem N My Vz
+//         （仅悬索桥；每根加劲梁一行，N/My/Vz **各自**取两端中绝对值较大者。
+//           它是给曲线与摘要看的，跨端混搭，**不能**拿来做应力验算——
+//           max|N| 在 i 端、max|My| 在 j 端时，这一行描述的是不存在的截面。）
+//     [GIRDEREND] elem end N My Vz
+//         （两种桥型都有；**每一端**一行，end=1 为 i 端、2 为 j 端。
+//           应力验算（σ = N/A ± My/W）必须用这一段：同一端才是同一截面。
+//           不在 DECKE 范围内的梁也会出现——主梁与塔柱的区分由前端按
+//           (材料, 实常数) 分组决定，内核不替使用者判断"哪根是主梁"。）
 //     [REACTION] node dof R             支座反力（向上为正；锚碇为负=抗拔）
 //     [CAMBER] node dx dy dz            制造线形相对设计线形的偏移（m）
 //     [ERECTED] node x y z              制造线形绝对坐标
@@ -910,33 +918,58 @@ int main(int argc, char** argv) {
 
         // ---- 输出 ----
 
-        // ---- 加劲梁内力（成桥态）----
+        // ---- 梁端内力（成桥态）----
         // 自锚式悬索桥的全部特点都在这里：主缆水平力 H 直接压进加劲梁，
         // 梁内轴力 ≈ −H。不做这一项，自锚式就退化成"少了个锚碇的悬索桥"，
         // 而它真正要控制的（梁的轴压稳定、截面压应力）就被漏掉了。
         // 位移 u 是相对**制造线形**的，所以这里要用 erected 重建参考构形，
         // 否则算出来的梁内力会把预拱度当成变形。
-        struct GirderForce { int elem; double N, My, Vz; };
-        std::vector<GirderForce> girder;
-        if (susp && !erected.empty() && !u.empty()) {
+        //
+        // 斜拉桥同样需要：主梁在恒载下是压弯构件，索力把梁压住、桥面荷载把它
+        // 弯下去，两者在截面上互相抵消。没有梁内力，索力再准也答不出"梁扛不
+        // 扛得住"。早期这一整段被 `if (susp)` 挡住，斜拉桥的应力验算因此一直
+        // 只报"做不了"——现在两种桥型都算。
+        struct GirderEnd { int elem; int end; double N, My, Vz; };
+        std::vector<GirderEnd> girderEnds;
+        if (!erected.empty() && !u.empty()) {
             Model3D m2 = m;
             for (const auto& [id, p] : erected)
                 if (m2.nodes.count(id)) m2.nodes[id] = p;
             const DofMap3D dm2 = buildDofMap3D(m2);
             for (const auto& e : m2.elements) {
                 if (e.type != "BEAM" && e.type != "BEAM7") continue;
-                if (e.id < cfg.deckE0 || e.id > cfg.deckE1) continue;
-                const Eigen::VectorXd fl = (e.type == "BEAM7")
+                const bool is7 = (e.type == "BEAM7");
+                const int dpe = is7 ? 14 : 12;
+                const Eigen::VectorXd fl = is7
                     ? beam7LocalEndForces(m2, dm2, e, u)
                     : beam3DLocalEndForces(m2, dm2, e, u);
-                const BeamEndForces fi = beamEndForcesAt(fl, 12, 1);
-                const BeamEndForces fj = beamEndForcesAt(fl, 12, 2);
-                // 取两端中 |N| 较大、|My| 较大的组合，一行报完一根梁
-                const double N = std::abs(fi.N) >= std::abs(fj.N) ? fi.N : fj.N;
-                const double My = std::abs(fi.My) >= std::abs(fj.My) ? fi.My : fj.My;
-                const double Vz = std::abs(fi.Vz) >= std::abs(fj.Vz) ? fi.Vz : fj.Vz;
-                girder.push_back({e.id, N, My, Vz});
+                for (int end = 1; end <= 2; ++end) {
+                    const BeamEndForces f = beamEndForcesAt(fl, dpe, end);
+                    girderEnds.push_back({e.id, end, f.N, f.My, f.Vz});
+                }
             }
+        }
+
+        // [GIRDER]：悬索桥加劲梁的一行式摘要（跨端取各分量绝对值最大者）。
+        // 只用于曲线与 girder_N_max / girder_M_max 这两个摘要量。
+        struct GirderForce { int elem; double N, My, Vz; };
+        std::vector<GirderForce> girder;
+        if (susp) {
+            std::map<int, GirderForce> byElem;
+            std::vector<int> order;
+            for (const auto& g : girderEnds) {
+                if (g.elem < cfg.deckE0 || g.elem > cfg.deckE1) continue;
+                auto it = byElem.find(g.elem);
+                if (it == byElem.end()) {
+                    byElem[g.elem] = {g.elem, g.N, g.My, g.Vz};
+                    order.push_back(g.elem);
+                    continue;
+                }
+                if (std::abs(g.N) > std::abs(it->second.N)) it->second.N = g.N;
+                if (std::abs(g.My) > std::abs(it->second.My)) it->second.My = g.My;
+                if (std::abs(g.Vz) > std::abs(it->second.Vz)) it->second.Vz = g.Vz;
+            }
+            for (int id : order) girder.push_back(byElem[id]);
         }
         double girderNmax = 0.0, girderMmax = 0.0;
         for (const auto& g : girder) {
@@ -1042,6 +1075,16 @@ int main(int argc, char** argv) {
             std::fprintf(f, "[GIRDER]\n");
             for (const auto& g : girder)
                 std::fprintf(f, "%d %.10g %.10g %.10g\n", g.elem, g.N, g.My, g.Vz);
+        }
+
+        // 梁端内力：每端一行，两种桥型都输出。应力验算只能用这一段——同一端
+        // 才是同一截面，[GIRDER] 那种"跨端各取最大"混搭出来的 (N, My) 组合
+        // 在梁上并不存在。
+        if (!girderEnds.empty()) {
+            std::fprintf(f, "[GIRDEREND]\n");
+            for (const auto& g : girderEnds)
+                std::fprintf(f, "%d %d %.10g %.10g %.10g\n",
+                             g.elem, g.end, g.N, g.My, g.Vz);
         }
 
         // 支座反力（平动）。计算书的"支座反力"一览直接取这里；
