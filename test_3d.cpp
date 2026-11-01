@@ -1186,6 +1186,157 @@ void test3DStagePrestress() {
     }
 }
 
+// 3 节点 2 单元简支梁（节点 1—2—3，单元 1—2），用于曲线筋上拱闭式解。
+Model3D curvedBeam() {
+    Model3D m;
+    m.nodes[1] = Vec3(0.0, 0.0, 0.0);
+    m.nodes[2] = Vec3(5.0, 0.0, 0.0);
+    m.nodes[3] = Vec3(10.0, 0.0, 0.0);
+    Element3D b;
+    b.type = "BEAM"; b.E = 2.0e11; b.A = 0.01;
+    b.Iy = b.Iz = 0.01; b.J = 1e-4; b.G = 8.0e10;
+    b.id = 1; b.n1 = 1; b.n2 = 2; m.elements.push_back(b);
+    b.id = 2; b.n1 = 2; b.n2 = 3; m.elements.push_back(b);
+    // 简支：node1 轴向固定 + 竖向约束，node3 竖向约束，跨中 node2 只锁面外。
+    m.constraints.push_back({1,1,0.0}); m.constraints.push_back({1,2,0.0});
+    m.constraints.push_back({1,3,0.0}); m.constraints.push_back({1,4,0.0});
+    m.constraints.push_back({1,6,0.0});
+    m.constraints.push_back({3,2,0.0}); m.constraints.push_back({3,3,0.0});
+    m.constraints.push_back({3,4,0.0}); m.constraints.push_back({3,6,0.0});
+    m.constraints.push_back({2,2,0.0}); m.constraints.push_back({2,4,0.0});
+    m.constraints.push_back({2,6,0.0});
+    return m;
+}
+
+void test3DStageCurvedPrestress() {
+    std::printf("\n[26] 施工阶段曲线筋（抛物线，上拱 = 跨内反向均布力）\n");
+    const double Pe = 1.0e6, s = -0.3, L = 10.0;
+    const double E = 2e11, I = 0.01;
+
+    // ---- 判据 1：跨中上拱闭式解 ----
+    // 端部偏心 e=0、矢高 s<0（跨中筋更低）。等效竖向力：中间节点 −4Pe·s/L（向
+    // 上）；两端锚固竖向力与均布半跨分量落在支座节点，不产生挠度。
+    // 跨中上拱 = F·L³/(48EI) = −Pe·s·L²/(12EI)。
+    {
+        Model3D m = curvedBeam();
+        Model3D::Stage3D st; st.id = 1; st.activate = {1, 2};
+        Model3D::Prestress3D ps; ps.id = 1; ps.elems = {1, 2};
+        ps.P = Pe; ps.e = 0.0; ps.s = s; ps.loss = 1.0;
+        st.prestresses.push_back(ps);
+        m.stages = {st};
+        const auto rs = solveModel3DStages(m);
+        const int uz = rs[0].dm.safeDof(2, 2);
+        const double want = -Pe * s * L * L / (12.0 * E * I);   // > 0，向上
+        check("跨中上拱 = −Pe·s·L²/(12EI)", rs[0].U[uz], want, 1e-9);
+        check("方向：s<0 → 跨中上拱（uz>0）", rs[0].U[uz] > 0 ? 1.0 : 0.0, 1.0);
+    }
+
+    // ---- 判据 2：曲线筋 == 手工 CLOAD 逐位等价（带端偏心 + loss）----
+    {
+        Model3D m = curvedBeam();
+        Model3D::Stage3D st; st.id = 1; st.activate = {1, 2};
+        Model3D::Prestress3D ps; ps.id = 1; ps.elems = {1, 2};
+        ps.P = Pe; ps.e = 0.1; ps.s = s; ps.loss = 0.8;
+        st.prestresses.push_back(ps);
+        m.stages = {st};
+        const auto ra = solveModel3DStages(m);
+
+        Model3D hand = curvedBeam();
+        Model3D::Stage3D hs; hs.id = 1; hs.activate = {1, 2};
+        const double Pf = Pe * 0.8, e = 0.1;
+        const double qz = -8.0 * Pf * s / (L * L);   // 跨内均布
+        const double tz = 4.0 * Pf * s / L;          // 锚固切线竖向力（两端同向）
+        hs.loads.push_back({1, 1,  Pf}); hs.loads.push_back({3, 1, -Pf});
+        hs.loads.push_back({1, 5,  Pf * e}); hs.loads.push_back({3, 5, -Pf * e});
+        hs.loads.push_back({1, 3, tz}); hs.loads.push_back({3, 3, tz});
+        hs.loads.push_back({1, 3, qz * 2.5});        // 均布节点化（首尾各半跨 2.5）
+        hs.loads.push_back({2, 3, qz * 5.0});        // 中间节点全跨 5.0
+        hs.loads.push_back({3, 3, qz * 2.5});
+        hand.stages = {hs};
+        const auto rb = solveModel3DStages(hand);
+
+        double dmax = 0.0;
+        for (std::size_t k = 0; k < ra[0].U.size() && k < rb[0].U.size(); ++k)
+            dmax = std::max(dmax, std::abs(ra[0].U[k] - rb[0].U[k]));
+        check("曲线筋 == 手工等效 CLOAD（含端偏心 + loss）", dmax, 0.0, 1e-12);
+    }
+
+    // ---- 判据 3：s=0 退化为直线筋（轴压 + 端弯矩）----
+    {
+        Model3D m = curvedBeam();
+        Model3D::Stage3D st; st.id = 1; st.activate = {1, 2};
+        Model3D::Prestress3D ps; ps.id = 1; ps.elems = {1, 2};
+        ps.P = Pe; ps.e = -0.5; ps.s = 0.0; ps.loss = 1.0;
+        st.prestresses.push_back(ps);
+        m.stages = {st};
+        const auto ra = solveModel3DStages(m);
+
+        Model3D hand = curvedBeam();
+        Model3D::Stage3D hs; hs.id = 1; hs.activate = {1, 2};
+        hs.loads.push_back({1, 1,  Pe}); hs.loads.push_back({3, 1, -Pe});
+        hs.loads.push_back({1, 5,  Pe * (-0.5)}); hs.loads.push_back({3, 5, -Pe * (-0.5)});
+        hand.stages = {hs};
+        const auto rb = solveModel3DStages(hand);
+        double dmax = 0.0;
+        for (std::size_t k = 0; k < ra[0].U.size() && k < rb[0].U.size(); ++k)
+            dmax = std::max(dmax, std::abs(ra[0].U[k] - rb[0].U[k]));
+        check("s=0 退化为直线筋（轴压 + 端弯矩）", dmax, 0.0, 1e-12);
+    }
+
+    // ---- 负例：曲线筋链不共线 → 报错 ----
+    {
+        Model3D bad = curvedBeam();
+        bad.nodes[2] = Vec3(5.0, 0.0, 1.0);          // 中间节点抬高，成折线
+        Model3D::Stage3D st; st.id = 1; st.activate = {1, 2};
+        Model3D::Prestress3D ps; ps.id = 1; ps.elems = {1, 2};
+        ps.P = Pe; ps.e = 0.0; ps.s = s; ps.loss = 1.0;
+        st.prestresses.push_back(ps);
+        bad.stages = {st};
+        bool threw = false;
+        try { solveModel3DStages(bad); } catch (const std::exception&) { threw = true; }
+        check("曲线筋链不共线 → 报错", threw ? 1.0 : 0.0, 1.0);
+    }
+    // ---- 直线筋（s=0）链不共线不报错（保持旧的首尾连线近似）----
+    {
+        Model3D ok = curvedBeam();
+        ok.nodes[2] = Vec3(5.0, 0.0, 1.0);
+        Model3D::Stage3D st; st.id = 1; st.activate = {1, 2};
+        Model3D::Prestress3D ps; ps.id = 1; ps.elems = {1, 2};
+        ps.P = Pe; ps.e = -0.5; ps.s = 0.0; ps.loss = 1.0;
+        st.prestresses.push_back(ps);
+        ok.stages = {st};
+        bool threw = false;
+        try { solveModel3DStages(ok); } catch (const std::exception&) { threw = true; }
+        check("直线筋链不共线 → 不报错（首尾连线近似）", threw ? 0.0 : 1.0, 1.0);
+    }
+
+    // ---- 关键字 / 位置两种写法的文本解析 ----
+    {
+        const std::string p = "_tmp_curved_ps.dat";
+        {
+            std::ofstream f(p);
+            f << "*STAGE\n"
+              << "1 PRESTRESS=1-2:P=1000000:E=0:S=-0.3\n"
+              << "2 PRESTRESS=1-2:1000000:-0.5:0.85\n"
+              << "*END\n";
+        }
+        Model3D m = readModel3D(p);
+        std::remove(p.c_str());
+        check("阶段数", static_cast<double>(m.stages.size()), 2.0);
+        const auto& a = m.stages[0].prestresses[0];
+        const auto& b = m.stages[1].prestresses[0];
+        check("关键字模式解析 S/P/E",
+              (a.s == -0.3 && a.P == 1000000.0 && a.e == 0.0 && a.loss == 1.0)
+                  ? 1.0 : 0.0, 1.0);
+        check("关键字模式解析 elems 范围",
+              (a.elems.size() == 2 && a.elems[0] == 1 && a.elems[1] == 2)
+                  ? 1.0 : 0.0, 1.0);
+        check("位置模式（旧格式）向后兼容",
+              (b.s == 0.0 && b.P == 1000000.0 && b.e == -0.5 && b.loss == 0.85)
+                  ? 1.0 : 0.0, 1.0);
+    }
+}
+
 int main() {
     setupConsoleUTF8();
     std::setvbuf(stdout, nullptr, _IONBF, 0);   // 崩溃时也能看到已输出的内容
@@ -1211,6 +1362,7 @@ int main() {
         testCompactInput();
         test3DStageCableTension();
         test3DStagePrestress();
+        test3DStageCurvedPrestress();
     } catch (const std::exception& e) {
         std::printf("\n[ERROR] 异常: %s\n", e.what());
         ++g_fail;

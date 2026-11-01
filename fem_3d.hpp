@@ -276,23 +276,31 @@ struct Model3D {
     std::vector<Constraint3D> constraints;
     std::vector<std::tuple<int, int, double>> loads; // node, dof, value
 
-    // ---- 一条直线预应力筋（等效荷载法）----
+    // ---- 一条预应力筋（等效荷载法，直线 + 二次抛物线曲线）----
     //
-    // 与 2D 的 `*PRESTRESS` 不同：这里**不生成力筋单元**，只把它翻译成三组
-    // 等效节点荷载（见 solveModel3DStages 里的 applyPrestress）：
+    // 与 2D 的 `*PRESTRESS` 不同：这里**不生成力筋单元**，只把它翻译成等效
+    // 节点荷载（见 solveModel3DStages 里的 applyPrestress）：
     //   1. 轴向压力 Pe，沿梁轴（两端一对，压短梁）；
     //   2. 锚固端偏心弯矩 Pe·e，绕横轴（竖向偏心 e 产生的附加弯矩）；
-    //   3. （曲线筋的竖向等效均布荷载本版**不做**——那需要矢高与线形。）
-    // 直线筋 + 常偏心是混凝土连续梁"纵向直束"的常见情形；折线筋/曲线筋的
-    // 跨内反向力不是这一版的能力边界内。
+    //   3. 曲线筋（s≠0）的跨内反向均布力：两端锚固切线竖向力 4Pe·s/L（两端
+    //      同向，指"束凹侧"）＋ 竖向均布 q = −8Pe·s/L² 节点化（首尾各半跨、
+    //      中间节点全跨）。这两项合起来静力自平衡（竖向合力=0），是曲线筋
+    //      "上拱"的唯一来源。s=0 时这两项均为 0，退化为直线筋。
     //
-    // 约定：P = 张拉控制力（N，正）；e = 竖向偏心（m，**形心上方为正**，
-    // 即 +z 方向）；loss = 有效/张拉比（0<loss≤1，直接乘，不做分项损失）。
+    // 约定：
+    //   P   = 张拉控制力（N，正）；
+    //   e   = 端部偏心（m，**形心上方为正**，即 +z 方向）；直线筋时即常偏心；
+    //   s   = 矢高 = 跨中偏心 − 端部偏心（m，向上为正）。s<0 → 跨中筋更低 →
+    //         产生向上的均布力 → **上拱**；s=0 → 直线筋。曲线筋的抛物线定义
+    //         在首尾锚固端连线上（矢高在弦中点），故要求链共线；
+    //   loss = 有效/张拉比（0<loss≤1，直接乘，不做分项损失）。
+    // 直线筋（s=0）**不产生上拱**——它只给轴压 + 端弯矩，跨内无反弯力。
     struct Prestress3D {
         int id = 0;
         std::vector<int> elems;      // 连续梁单元（按节点顺序，首尾即锚固端）
         double P = 0.0;
         double e = 0.0;
+        double s = 0.0;              // 矢高（m，向上为正；0 = 直线筋）
         double loss = 1.0;
     };
 
@@ -1106,16 +1114,28 @@ inline std::vector<StageResult3D> solveModel3DStages(const Model3D& m,
         // ---- 预应力等效荷载：校验一次、预计算，循环内只做叠加 ----
         //
         // 为什么等效荷载而不是力筋单元：本内核没有 RIGID_PIN 刚臂，直线束的
-        // 全部效应就是"两端一对轴压 + 两端一对偏心弯矩"。曲线束的跨内反向
-        // 均布力（w = 8Pe·s/L²，s 为矢高）需要线形，本版不做，也不假装做了。
+        // 全部效应就是"两端一对轴压 + 两端一对偏心弯矩"；曲线束（s≠0）再叠加
+        // 跨内反向均布力。轴向方向取**首尾节点连线**的单位向量。
         //
-        // 轴向方向取**首尾节点连线**的单位向量（链必须是直线；给折线束会按
-        // 首尾连线近似轴向，偏心弯矩的竖向分量仍按 e 施加——这是本版的近似，
-        // 文档里写明）。弯矩向量 = Pe·e·(ẑ × c)，ẑ=(0,0,1) 为竖向。
+        // 曲线筋（抛物线，矢高 s 定义在首尾弦中点）的跨内等效荷载分两项，
+        // 缺一不可、且必须同时施加才能静力自平衡（竖向合力 = 0）：
+        //   1. 锚固端切线竖向力 4Pe·s/L：两端**同向**（s>0 即跨中筋更高时向上）；
+        //   2. 竖向均布 q = −8Pe·s/L²：节点化到链上每个节点（首尾各半跨、
+        //      中间节点全跨）。
+        // 单单元特例下首尾两项恰好抵消；多单元时首尾节点净竖向力 ≠ 0，不能
+        // 图省事只给中间节点——那会漏掉锚固竖向力、竖向合力不为 0，凭空多出
+        // 支座反力。均布荷载节点化的精度依赖单元细分：单元内弯矩仍线性，跨内
+        // 越细越接近抛物线的二次弯矩。
+        //
+        // 曲线筋要求链**共线**（抛物线定义在首尾弦上，折线束的线形无定义），
+        // 不共线直接报错；直线筋（s=0）保持旧行为：按首尾连线近似轴向。
+        // 弯矩向量 = Pe·e·(ẑ × c)，ẑ=(0,0,1) 为竖向。
         struct PsEquiv {
             int ni = 0, nj = 0;
             double fx = 0, fy = 0, fz = 0;   // Pe·c（i 端 +，j 端 −）
             double mx = 0, my = 0, mz = 0;   // 偏心弯矩（i 端 +，j 端 −）
+            double tz = 0.0;                 // 锚固切线竖向力（i、j 端都 +tz）
+            std::vector<std::pair<int, double>> distFz;  // 均布竖向荷载节点化
         };
         std::vector<PsEquiv> psLoads;
         for (const auto& ps : st.prestresses) {
@@ -1156,6 +1176,58 @@ inline std::vector<StageResult3D> solveModel3DStages(const Model3D& m,
             q.mx = Pe * ps.e * (-ay);
             q.my = Pe * ps.e * ( ax);
             q.mz = 0.0;
+            if (ps.s != 0.0) {
+                // ---- 曲线筋：先沿链排序节点，再做共线校验 + 均布节点化 ----
+                std::map<int, std::vector<int>> adj;
+                for (int eid : ps.elems) {
+                    const Element3D* e = elemIn(eid);
+                    adj[e->n1].push_back(e->n2);
+                    adj[e->n2].push_back(e->n1);
+                }
+                std::vector<int> chain;
+                chain.push_back(head);
+                int cur = head, prev = -1;
+                while (cur != tail) {
+                    int nxt = -1;
+                    for (int nb : adj[cur]) if (nb != prev) { nxt = nb; break; }
+                    if (nxt < 0)
+                        throw std::runtime_error(ptag + " 的单元链不连通");
+                    chain.push_back(nxt);
+                    prev = cur; cur = nxt;
+                }
+                auto dist = [&](int a, int b) {
+                    return (m.nodes.at(b) - m.nodes.at(a)).norm();
+                };
+                // 共线校验：每个中间节点到首尾弦的垂距 < 1e-6·L。
+                for (int nd : chain) {
+                    if (nd == head || nd == tail) continue;
+                    const Vec3 w = m.nodes.at(nd) - m.nodes.at(head);
+                    const double cx = w.y() * dv.z() - w.z() * dv.y();
+                    const double cy = w.z() * dv.x() - w.x() * dv.z();
+                    const double cz = w.x() * dv.y() - w.y() * dv.x();
+                    const double perp = std::sqrt(cx * cx + cy * cy + cz * cz) / L;
+                    if (perp > 1e-6 * L)
+                        throw std::runtime_error(
+                            ptag + " 是曲线筋（S≠0），单元必须共线；节点 "
+                            + std::to_string(nd) + " 偏离锚固连线 "
+                            + std::to_string(perp) + " m");
+                }
+                // 锚固端切线竖向力（两端同向，s>0 时向上 +z）
+                q.tz = 4.0 * Pe * ps.s / L;
+                // 均布 q = −8Pe·s/L²，节点化：首尾各半跨、中间节点全跨。
+                const double qz = -8.0 * Pe * ps.s / (L * L);
+                for (std::size_t k = 0; k < chain.size(); ++k) {
+                    double half = 0.0;
+                    if (k == 0)
+                        half = dist(chain[0], chain[1]) / 2.0;
+                    else if (k + 1 == chain.size())
+                        half = dist(chain[k - 1], chain[k]) / 2.0;
+                    else
+                        half = (dist(chain[k - 1], chain[k])
+                                + dist(chain[k], chain[k + 1])) / 2.0;
+                    q.distFz.push_back({chain[k], qz * half});
+                }
+            }
             psLoads.push_back(q);
         }
 
@@ -1174,8 +1246,9 @@ inline std::vector<StageResult3D> solveModel3DStages(const Model3D& m,
             Model3D mcs = mc;
             mcs.loads = st.loads;
             // 预应力等效荷载：每个 round 都要叠加（mcs 每次都重建，不叠的话
-            // 第二次迭代起预应力就"消失"了）。作用在端节点的转动自由度上，
-            // 端节点是梁端、必有 6 自由度，不会落到无效 dof 上。
+            // 第二次迭代起预应力就"消失"了）。端节点是梁端、必有 6 自由度，
+            // 不会落到无效 dof 上；曲线筋的均布节点化会作用到链的中间节点，
+            // 那些节点只加竖向力（dof 3），梁节点必有该自由度。
             for (const auto& q : psLoads) {
                 mcs.loads.push_back({q.ni, 1,  q.fx});
                 mcs.loads.push_back({q.ni, 2,  q.fy});
@@ -1189,6 +1262,12 @@ inline std::vector<StageResult3D> solveModel3DStages(const Model3D& m,
                 mcs.loads.push_back({q.nj, 4, -q.mx});
                 mcs.loads.push_back({q.nj, 5, -q.my});
                 mcs.loads.push_back({q.nj, 6, -q.mz});
+                if (q.tz != 0.0) {
+                    mcs.loads.push_back({q.ni, 3, q.tz});
+                    mcs.loads.push_back({q.nj, 3, q.tz});
+                }
+                for (const auto& [nd, f] : q.distFz)
+                    mcs.loads.push_back({nd, 3, f});
             }
             for (auto& e : mcs.elements) {
                 if (e.type != "CABLE") continue;
@@ -2413,9 +2492,14 @@ inline Model3D readModel3D(const std::string& path) {
                             else      st.tensions.push_back({eid, v});
                         }
                     } else if (kv.rfind("PRESTRESS=",0)==0) {
-                        // PRESTRESS=<elems>:<P>:<e>[:<loss>]
+                        // 两种写法（同一束只取其一，由值段是否含 '=' 自动判定）：
+                        //   位置模式（直线筋，向后兼容）：
+                        //     PRESTRESS=<elems>:<P>:<e>[:<loss>]
+                        //   关键字模式（曲线筋用；S 为矢高，S=0 亦退化为直线筋）：
+                        //     PRESTRESS=<elems>:P=<P>:E=<e>[:S=<矢高>][:LOSS=<loss>]
                         //   elems：a-b 范围或逗号列表（连续梁单元，首尾即锚固端）
-                        //   P：张拉控制力 N（正）；e：竖向偏心 m（形心上方为正）
+                        //   P：张拉控制力 N（正）；e：端部偏心 m（形心上方为正）
+                        //   S：矢高 = 跨中偏心 − 端部偏心（向上为正；S<0 → 上拱）
                         //   loss：有效/张拉比，可选，缺省 1.0
                         // 一束一个 PRESTRESS=，束号按本阶段内出现顺序自动编。
                         const std::string body = kv.substr(10);
@@ -2423,22 +2507,50 @@ inline Model3D readModel3D(const std::string& path) {
                         if (c1 == std::string::npos)
                             throw std::runtime_error(
                                 "三维 *STAGE 的 PRESTRESS= 需要写成 "
-                                "<单元列表>:<P>:<e>[:<loss>]，收到「" + body + "」");
+                                "<单元列表>:<P>:<e>[:<loss>] 或 "
+                                "<单元列表>:P=...:E=...[:S=...][:LOSS=...]，收到「"
+                                + body + "」");
                         const std::string elemsStr = body.substr(0, c1);
-                        std::vector<std::string> parts;
-                        {
-                            std::stringstream ps(body.substr(c1 + 1)); std::string t;
-                            while (std::getline(ps, t, ':')) parts.push_back(t);
-                        }
-                        if (parts.size() < 2 || parts.size() > 3)
-                            throw std::runtime_error(
-                                "三维 *STAGE 的 PRESTRESS= 需要 2~3 个数值 "
-                                "(<P>:<e>[:<loss>])，收到「" + body.substr(c1 + 1) + "」");
+                        const std::string valStr = body.substr(c1 + 1);
                         Model3D::Prestress3D ps;
                         ps.id = static_cast<int>(st.prestresses.size()) + 1;
-                        ps.P = std::stod(parts[0]);
-                        ps.e = std::stod(parts[1]);
-                        ps.loss = (parts.size() == 3) ? std::stod(parts[2]) : 1.0;
+                        if (valStr.find('=') == std::string::npos) {
+                            // 位置模式：<P>:<e>[:<loss>]
+                            std::vector<std::string> parts;
+                            std::stringstream ps2(valStr); std::string t;
+                            while (std::getline(ps2, t, ':')) parts.push_back(t);
+                            if (parts.size() < 2 || parts.size() > 3)
+                                throw std::runtime_error(
+                                    "三维 *STAGE 的 PRESTRESS= 位置模式需要 2~3 个数值 "
+                                    "(<P>:<e>[:<loss>])，收到「" + valStr + "」");
+                            ps.P = std::stod(parts[0]);
+                            ps.e = std::stod(parts[1]);
+                            ps.loss = (parts.size() == 3) ? std::stod(parts[2]) : 1.0;
+                        } else {
+                            // 关键字模式：P=...:E=...[:S=...][:LOSS=...]
+                            std::stringstream vs(valStr); std::string tok;
+                            bool hasP = false, hasE = false;
+                            while (std::getline(vs, tok, ':')) {
+                                if (tok.empty()) continue;
+                                const std::size_t eq = tok.find('=');
+                                if (eq == std::string::npos)
+                                    throw std::runtime_error(
+                                        "三维 *STAGE 的 PRESTRESS= 关键字段需写成 "
+                                        "KEY=VALUE，收到「" + tok + "」");
+                                const std::string key = tok.substr(0, eq);
+                                const double v = std::stod(tok.substr(eq + 1));
+                                if (key == "P")      { ps.P = v; hasP = true; }
+                                else if (key == "E") { ps.e = v; hasE = true; }
+                                else if (key == "S") { ps.s = v; }
+                                else if (key == "LOSS") { ps.loss = v; }
+                                else throw std::runtime_error(
+                                    "三维 *STAGE 的 PRESTRESS= 未知关键字「" + key
+                                    + "」（支持 P/E/S/LOSS）");
+                            }
+                            if (!hasP || !hasE)
+                                throw std::runtime_error(
+                                    "三维 *STAGE 的 PRESTRESS= 关键字模式必须含 P= 与 E=");
+                        }
                         std::stringstream es(elemsStr); std::string tok;
                         while (std::getline(es, tok, ',')) {
                             if (tok.empty()) continue;
