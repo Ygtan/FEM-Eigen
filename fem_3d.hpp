@@ -349,6 +349,11 @@ struct Model3D {
         double reduction = 1.0;
         double impact = 1.0;
         bool autoCode = false;   // CODE=JTG_D60：按跨径自动生成车道荷载
+        // 横向布载（横向分布系数法，JTG D60 多车道）：单梁模型下横向影响面
+        // 退化为「横向分布系数」，即车道数 × 多车道横向折减 × 偏载增大。
+        // 默认值 (1, 1.0) 等价于旧的单车道近似，向后兼容。
+        int laneCount = 1;         // 横向设计车道数
+        double eccentricity = 1.0; // 偏载增大系数（横向偏载对纵向内力的放大）
     };
     std::vector<Lane3D> lanes;
 
@@ -1894,8 +1899,14 @@ inline std::pair<double,double> envelope3DFromInfluence(const Model3D& m,
     const double qMinArea = lane.q>=0 ? neg : pos;
     const double pMaxOrd = lane.p>=0 ? maxv : minv;
     const double pMinOrd = lane.p>=0 ? minv : maxv;
-    return {lane.impact*lane.reduction*(lane.q*qMaxArea + lane.p*pMaxOrd),
-            lane.impact*lane.reduction*(lane.q*qMinArea + lane.p*pMinOrd)};
+    // 横向分布系数 = 车道数 × 多车道横向折减 × 偏载增大。单梁模型算不出
+    // 严格横向影响面（横向只有一个节点），规范上用横向分布系数把多车道
+    // 并排布载 + 偏载放大折进纵向影响线包络。单车道默认值 (1,1.0) 退化为
+    // 旧的 impact·reduction 乘子。
+    const double factor = lane.impact * lane.reduction
+                        * static_cast<double>(lane.laneCount) * lane.eccentricity;
+    return {factor*(lane.q*qMaxArea + lane.p*pMaxOrd),
+            factor*(lane.q*qMinArea + lane.p*pMinOrd)};
 }
 
 struct StageLiveEnvelope3D {
@@ -2678,6 +2689,8 @@ inline Model3D readModel3D(const std::string& path) {
                 else if (kv.rfind("REDUCTION=",0)==0) lane.reduction=std::stod(kv.substr(10));
                 else if (kv.rfind("IMPACT=",0)==0) lane.impact=std::stod(kv.substr(7));
                 else if (kv.rfind("CODE=",0)==0) lane.autoCode = (kv.substr(5)=="JTG_D60");
+                else if (kv.rfind("LANE_COUNT=",0)==0) lane.laneCount=std::stoi(kv.substr(11));
+                else if (kv.rfind("ECCENTRICITY=",0)==0) lane.eccentricity=std::stod(kv.substr(13));
             }
             std::stringstream ns(nodes); std::string tok;
             while(std::getline(ns,tok,',')) if(!tok.empty()) lane.nodes.push_back(std::stoi(tok));
