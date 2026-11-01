@@ -916,6 +916,91 @@ int main(int argc, char** argv) {
         const double balSum = useReact ? rea.sumV : sumV;
         const double balTot = useReact ? rea.appliedV : Wtot;
 
+        // ---- 活载梁内力包络（成桥态切线刚度影响线）----
+        //
+        // 斜拉桥/悬索桥的加劲梁是压弯构件，活载包络必须基于成桥态一致切线
+        // 刚度（张紧索的切线刚度远大于弹性刚度），线弹性影响线会严重失真。
+        // 恒载已由非线性求解精确算入；活载增量按一阶在切线刚度上提取——
+        // 梁的几何刚度（P-Δ）是二阶小量，属标准做法，文档如实标注该近似。
+        struct GirderLiveEnd {
+            int elem = 0, end = 0;
+            double Nmin = 0, Nmax = 0, MyMin = 0, MyMax = 0, VzMin = 0, VzMax = 0;
+        };
+        std::vector<GirderLiveEnd> girderLive;
+        if (converged) {
+            // 车道：显式 *LANE_3D 优先；没写则自动识别主梁纵向链。
+            // 识别不出时 girderLive 留空，前端按"未定义车道"提示，不静默。
+            if (m.lanes.empty()) {
+                Model3D::Lane3D lane = autoIdentifyGirderLane(m);
+                if (!lane.nodes.empty()) { lane.autoCode = true; m.lanes.push_back(lane); }
+            }
+            applyJtgD60LaneLoads(m);   // 自动识别的新车道补填 qk/Pk
+
+            if (!m.lanes.empty()) {
+                // 成桥态后 m 的 L0 已是最终下料长度，再解一次收敛到同一平衡态
+                // 并返回一致切线刚度（用于活载线性化）。
+                NLTangent3D tangent;
+                const NonlinearResult3D rLive = solveModel3DNonlinear(m, nl, &tangent);
+                if (rLive.converged) {
+                    const DofMap3D dmLive = buildDofMap3D(m);
+                    std::vector<char> isC(tangent.K.rows(), 0);
+                    for (int d : tangent.cdofs)
+                        if (d >= 0 && d < static_cast<int>(isC.size())) isC[d] = 1;
+                    const Factorization3D fac(tangent.K);
+
+                    // 主梁（水平纵向梁）：活载包络只对桥面纵梁有意义。
+                    std::vector<const Element3D*> tgt;
+                    for (const auto& e : m.elements) {
+                        if (e.type != "BEAM" && e.type != "BEAM7") continue;
+                        const Vec3 d = m.nodes.at(e.n2) - m.nodes.at(e.n1);
+                        const double ax = std::abs(d.x()), ay = std::abs(d.y()),
+                                     az = std::abs(d.z());
+                        if (ax < std::max(ay, az)) continue;
+                        tgt.push_back(&e);
+                    }
+
+                    for (const auto& lane : m.lanes) {
+                        const std::size_t npos = lane.nodes.size();
+                        if (npos == 0) continue;
+                        // 每单元 × 2 端 × 3 分量（N/My/Vz）
+                        std::vector<std::vector<double>> eta(tgt.size() * 6,
+                                                             std::vector<double>(npos, 0.0));
+                        scanTangentLane3D(fac, dmLive, isC, lane.nodes, lane.dof,
+                            [&](std::size_t k, const std::vector<double>& U) {
+                                if (k >= npos) return;
+                                for (std::size_t t = 0; t < tgt.size(); ++t) {
+                                    const Element3D& e = *tgt[t];
+                                    const bool is7 = (e.type == "BEAM7");
+                                    const int dpe = is7 ? 14 : 12;
+                                    const Eigen::VectorXd fl =
+                                        is7 ? beam7LocalEndForces(m, dmLive, e, U)
+                                            : beam3DLocalEndForces(m, dmLive, e, U);
+                                    for (int end = 1; end <= 2; ++end) {
+                                        const BeamEndForces bf = beamEndForcesAt(fl, dpe, end);
+                                        eta[t * 6 + (end - 1) * 3 + 0][k] = bf.N;
+                                        eta[t * 6 + (end - 1) * 3 + 1][k] = bf.My;
+                                        eta[t * 6 + (end - 1) * 3 + 2][k] = bf.Vz;
+                                    }
+                                }
+                            });
+                        for (std::size_t t = 0; t < tgt.size(); ++t)
+                            for (int end = 1; end <= 2; ++end) {
+                                const auto eN  = envelope3DFromInfluence(
+                                    m, lane, eta[t * 6 + (end - 1) * 3 + 0]);
+                                const auto eMy = envelope3DFromInfluence(
+                                    m, lane, eta[t * 6 + (end - 1) * 3 + 1]);
+                                const auto eVz = envelope3DFromInfluence(
+                                    m, lane, eta[t * 6 + (end - 1) * 3 + 2]);
+                                girderLive.push_back({tgt[t]->id, end,
+                                                      eN.second, eN.first,
+                                                      eMy.second, eMy.first,
+                                                      eVz.second, eVz.first});
+                            }
+                    }
+                }
+            }
+        }
+
         // ---- 输出 ----
 
         // ---- 梁端内力（成桥态）----
@@ -1085,6 +1170,17 @@ int main(int argc, char** argv) {
             for (const auto& g : girderEnds)
                 std::fprintf(f, "%d %d %.10g %.10g %.10g\n",
                              g.elem, g.end, g.N, g.My, g.Vz);
+        }
+
+        // 活载梁内力包络（成桥态切线刚度影响线）。每端一行，min/max 成对。
+        // 与 [GIRDEREND] 恒载标准值配对使用：荷载组合里活载项取自这里。
+        if (!girderLive.empty()) {
+            std::fprintf(f, "[GIRDER_LIVE]\n");
+            for (const auto& g : girderLive)
+                std::fprintf(f, "%d %d NMin=%.10g NMax=%.10g MyMin=%.10g "
+                             "MyMax=%.10g VzMin=%.10g VzMax=%.10g\n",
+                             g.elem, g.end, g.Nmin, g.Nmax,
+                             g.MyMin, g.MyMax, g.VzMin, g.VzMax);
         }
 
         // 支座反力（平动）。计算书的"支座反力"一览直接取这里；

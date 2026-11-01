@@ -361,6 +361,7 @@ support_v_sum_kN=... applied_v_kN=... balance_pct=...
 [HANGER]   elem deckNode T L0 chord
 [GIRDER]   elem N My Vz
 [GIRDEREND] elem end N My Vz
+[GIRDER_LIVE] elem end NMin NMax MyMin MyMax VzMin VzMax
 [REACTION] node dof R
 [CAMBER]   node dx dy dz
 [ERECTED]  node x y z
@@ -379,6 +380,26 @@ j 端，这一行描述的是梁上并不存在的截面，**不能拿它算应�
 
 内力是对着**制造线形**（`[ERECTED]`）算的：位移 `u` 是相对制造线形的量，
 若拿设计构形当参考，算出来的梁内力会把预拱度当成变形。
+
+### 活载梁内力包络（`[GIRDER_LIVE]`）
+
+`cable_solver` 也读 `*LANE_3D`（见「三维车道荷载」一节），在成桥态基础上
+算**活载梁内力包络**：对每条车道、每根主梁两端，求 `N`/`My`/`Vz` 的
+`min/max` 包络，输出为 `[GIRDER_LIVE]` 段。`[GIRDEREND]` 是恒载标准值，
+`[GIRDER_LIVE]` 是活载包络，两者配对做荷载组合。
+
+两条必须写死的能力边界：
+
+1. **影响线在成桥态一致切线刚度上线性化**，不是线弹性装配——张紧索的切线
+   刚度远大于其弹性刚度（Ernst 模量），用 `EA/L` 会把索算软、活载内力严重
+   失真。这是几何非线性桥梁活载分析的标准做法。
+2. **梁几何刚度（P-Δ）按一阶略去**：恒载已由非线性求解精确算入，活载增量
+   用切线刚度求位移、再用线性弹性刚度提取梁端内力。梁的 P-Δ 是二阶小量。
+
+缺省车道：模型没写 `*LANE_3D` 时，内核自动识别主梁纵向链（判据
+`|Δx| >= max(|Δy|, |Δz|)` 的水平 BEAM，排除塔柱与横梁）作单车道，并按
+`CODE=JTG_D60` 生成车道荷载。识别不出则 `[GIRDER_LIVE]` 留空，调用方按
+「未定义车道」提示，不静默当作无活载。
 
 悬索桥额外多几行：`susp_system=` / `H_kN=` / `sag_m=` / `sag_target_m=` /
 `span_m=` / `sag_ratio=` / `hanger_count` / `girder_N_max_kN` 等。

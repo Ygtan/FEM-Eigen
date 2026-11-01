@@ -16,6 +16,7 @@
 #include <fstream>
 #include <functional>
 #include <map>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -2079,6 +2080,89 @@ inline std::vector<LiveBeamEnvelope3D> compute3DLiveBeamEnvelope(const Model3D& 
     out.reserve(acc.size());
     for (auto& [key, v] : acc) out.push_back(v);
     return out;
+}
+
+// ==================== 切线刚度影响线扫描（几何非线性活载）====================
+//
+// 几何非线性结构（斜拉桥/悬索桥）的活载影响线必须在**成桥态一致切线刚度**上
+// 线性化，而不是线弹性装配：张紧索的切线刚度远大于其弹性刚度（Ernst 模量），
+// 用 EA/L 会把索的约束算软、活载内力算得严重失真。
+//
+// 与 scanLane3D 唯一的差别是"刚度从哪来"：后者内部调用 assembleModel3D（线性
+// 弹性装配 + 初应变 base 响应），本函数接受外部已分解的切线刚度（NLTangent3D.K
+// 经 Factorization3D 分解）。基态恒为零——切线刚度定义在成桥态平衡位置，单位
+// 荷载是纯增量，无需像线性装配那样减去初应变/收缩引起的 base 响应。
+//
+// fac 必须已分解；isConstrained 与 NLTangent3D.cdofs 对应（约束自由度跳过，
+// 否则对角置 1 的行会把单位荷载回代成 1 的位移，物理上错）。
+template <class F>
+inline void scanTangentLane3D(const Factorization3D& fac,
+                              const DofMap3D& dm,
+                              const std::vector<char>& isConstrained,
+                              const std::vector<int>& laneNodes,
+                              int laneDof, F&& f) {
+    const int nd = dm.nDofs;
+    Eigen::VectorXd Fk = Eigen::VectorXd::Zero(nd);
+    for (std::size_t k = 0; k < laneNodes.size(); ++k) {
+        Fk.setZero();
+        const int d = dm.safeDof(laneNodes[k], laneDof - 1);
+        // 加载点若被约束，单位荷载直接由支座承担，对结构无影响。
+        if (d >= 0 && d < nd && !(d < static_cast<int>(isConstrained.size())
+                                   && isConstrained[d])) Fk(d) += 1.0;
+        f(k, toStdVec(fac.solve(Fk)));
+    }
+}
+
+// 切线刚度下的梁端内力影响线：extract 从 BeamEndForces 取出关注分量（N/My/Vz…）。
+// 梁端内力增量用 beam3DLocalEndForces（线性弹性刚度）提取——梁的几何刚度
+// （P-Δ）是二阶小量，恒载已由非线性求解精确算入，活载增量按一阶提取是标准做法。
+inline std::vector<double> tangentBeamResponseInfluence(
+    const Model3D& m, const Factorization3D& fac, const DofMap3D& dm,
+    const std::vector<char>& isConstrained,
+    int elemId, int end,
+    const std::function<double(const BeamEndForces&, const Element3D&)>& extract,
+    const std::vector<int>& laneNodes, int laneDof) {
+    const Element3D* target = nullptr;
+    for (const auto& e : m.elements) if (e.id == elemId) { target = &e; break; }
+    if (!target || (target->type != "BEAM" && target->type != "BEAM7"))
+        throw std::runtime_error("三维梁单元不存在: " + std::to_string(elemId));
+    const bool is7 = (target->type == "BEAM7");
+    const int dpe = is7 ? 14 : 12;
+    std::vector<double> eta(laneNodes.size(), 0.0);
+    scanTangentLane3D(fac, dm, isConstrained, laneNodes, laneDof,
+        [&](std::size_t k, const std::vector<double>& U) {
+            const Eigen::VectorXd fl = is7 ? beam7LocalEndForces(m, dm, *target, U)
+                                           : beam3DLocalEndForces(m, dm, *target, U);
+            eta[k] = extract(beamEndForcesAt(fl, dpe, end), *target);
+        });
+    return eta;
+}
+
+// 自动识别加劲梁/主梁的纵向链，作为缺省车道。
+//
+// 判据：BEAM/BEAM7 单元且方向以水平纵向为主（|Δx| >= max(|Δy|,|Δz|)），
+// 把桥塔（竖向）与横梁（横向）排除在外。返回按 x 排序的车道节点序列；
+// 空 = 识别不出（调用方应明说"未定义车道"，不静默当作无活载）。
+inline Model3D::Lane3D autoIdentifyGirderLane(const Model3D& m) {
+    Model3D::Lane3D lane;
+    std::set<int> usedNodes;
+    bool any = false;
+    for (const auto& e : m.elements) {
+        if (e.type != "BEAM" && e.type != "BEAM7") continue;
+        const Vec3 d = m.nodes.at(e.n2) - m.nodes.at(e.n1);
+        const double ax = std::abs(d.x()), ay = std::abs(d.y()), az = std::abs(d.z());
+        if (ax < std::max(ay, az)) continue;   // 竖向塔 / 横向梁
+        any = true;
+        usedNodes.insert(e.n1);
+        usedNodes.insert(e.n2);
+    }
+    if (!any) return lane;
+    // 主梁是单梁线：每个 x 位置一个节点，按 x 排序即得连续链。
+    std::map<double, int> byX;
+    for (int nd : usedNodes) byX.emplace(m.nodes.at(nd).x(), nd);
+    for (const auto& [x, nd] : byX) lane.nodes.push_back(nd);
+    lane.dof = 3;   // 竖向加载
+    return lane;
 }
 
 inline std::vector<Camber3D> compute3DCamber(const Model3D& m,

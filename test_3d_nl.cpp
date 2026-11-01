@@ -890,6 +890,72 @@ void testCableInfluenceMatrix() {
 }
 
 // ---------------------------------------------------------------
+// 11. 切线刚度活载影响线（活载梁内力包络的底层）
+//
+// 几何非线性结构的活载影响线必须在成桥态切线刚度上线性化。本测试用
+// **简支梁（纯梁、无索）**——此时无非线性，切线刚度必须退化为线性弹性
+// 刚度，于是：
+//   1. 切线影响线 == 线性 scanLane3D 影响线（验证扫描/提取实现正确）；
+//   2. 跨中弯矩影响线命中手算 x(L-x)/L（节点 x=0,5,10 → 0, 2.5, 0）；
+//   3. 两端支座节点的 z 自由度被约束，单位荷载直接由支座承担 → 竖标为 0
+//      （验证"约束自由度跳过"逻辑，否则对角置 1 会把单位荷载回代成位移 1）。
+// ---------------------------------------------------------------
+void testCableLiveInfluence() {
+    std::printf("\n[活载影响线：切线刚度 vs 线性装配 + 手算]\n");
+    Model3D m;
+    m.nodes[1] = Vec3(0.0, 0.0, 0.0);
+    m.nodes[2] = Vec3(5.0, 0.0, 0.0);
+    m.nodes[3] = Vec3(10.0, 0.0, 0.0);
+    for (int i = 1; i <= 2; ++i) {
+        Element3D g; g.id = i; g.type = "BEAM";
+        g.E = 2.0e11; g.A = 0.01; g.Iy = 8.333e-6; g.Iz = 8.333e-6;
+        g.J = 2.0 * 8.333e-6; g.G = 7.7e10;
+        g.n1 = i; g.n2 = i + 1; m.elements.push_back(g);
+    }
+    // 简支：左端铰支、右端滚支；面外（θz）与扭转（θx）约束保持平面内弯曲
+    m.constraints.push_back({1, 1, 0.0, 0.0});
+    m.constraints.push_back({1, 2, 0.0, 0.0});
+    m.constraints.push_back({1, 3, 0.0, 0.0});
+    m.constraints.push_back({3, 2, 0.0, 0.0});
+    m.constraints.push_back({3, 3, 0.0, 0.0});
+    for (int n = 1; n <= 3; ++n) {
+        m.constraints.push_back({n, 4, 0.0, 0.0});
+        m.constraints.push_back({n, 6, 0.0, 0.0});
+    }
+    Model3D::Lane3D lane;
+    lane.nodes = {1, 2, 3}; lane.dof = 3; lane.q = 0.0; lane.p = 1.0;
+    m.lanes.push_back(lane);
+
+    NonlinearOptions3D nl; nl.loadSteps = 1; nl.maxIter = 5; nl.tolForce = 1e-12;
+    NLTangent3D tan;
+    const NonlinearResult3D r = solveModel3DNonlinear(m, nl, &tan);
+    check("活载影响线：非线性求解收敛", r.converged ? 1.0 : 0.0, 1.0, 0.0);
+
+    const DofMap3D dm = buildDofMap3D(m);
+    std::vector<char> isC(dm.nDofs, 0);
+    for (const auto& c : m.constraints) {
+        if (c.k > 0.0) continue;
+        const int d = dm.safeDof(c.node, c.dof - 1);
+        if (d >= 0) isC[d] = 1;
+    }
+    const Factorization3D fac(tan.K);
+
+    auto ext = [](const BeamEndForces& f, const Element3D&) { return f.My; };
+    const std::vector<double> etaTan =
+        tangentBeamResponseInfluence(m, fac, dm, isC, 1, 2, ext, lane.nodes, lane.dof);
+    const std::vector<double> etaLin =
+        compute3DBeamMomentInfluence(m, 1, "MY", 2, lane);
+
+    // 手算：简支梁跨中弯矩影响线 η(x)=x(L-x)/L，节点 x=0,5,10 → 0, 2.5, 0
+    const double expect[3] = {0.0, 2.5, 0.0};
+    for (int k = 0; k < 3; ++k) {
+        const std::string tag = "节点 " + std::to_string(k + 1);
+        check("切线影响线命中手算（" + tag + "）", std::abs(etaTan[k]), expect[k], 1e-6);
+        check("切线影响线 == 线性影响线（" + tag + "）", etaTan[k], etaLin[k], 1e-9);
+    }
+}
+
+// ---------------------------------------------------------------
 // 10. 解析切线 vs 差分切线（黄金基线）
 //
 // 解析式（P3 提速）必须与"逐自由度中心差分"逐元素一致，否则 Newton 的
@@ -1042,6 +1108,7 @@ int main() {
         testAnalyticTangentVsFD();
         testAnalyticTangentSpeed();
         testCableInfluenceMatrix();
+        testCableLiveInfluence();
     } catch (const std::exception& e) {
         std::printf("\n[ERROR] 异常: %s\n", e.what());
         ++g_fail;

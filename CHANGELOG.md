@@ -4,6 +4,28 @@
 
 ## 2026-11-01
 
+### 新增：索承体系活载梁内力包络（`[GIRDER_LIVE]`）
+
+- 斜拉桥/悬索桥的 `cable_solver` 此前**彻底不含活载**，梁内力只有成桥态恒载单一
+  状态。本次补齐活载梁内力包络（N/My/Vz），并在 `[GIRDEREND]` 之后新增
+  `[GIRDER_LIVE] elem end NMin NMax MyMin MyMax VzMin VzMax`（注意 N 分量键统一为
+  `NMin`/`NMax` 大写，与 My/Vz 命名一致——早期曾混用小写 `Nmin`，导致前端拼键取不到值）。
+- 活载影响线必须在**成桥态切线刚度**上算，不能用线弹性装配。`solveModel3DNonlinear`
+  返回的 `NLTangent3D.K`（张紧索切线刚度远大于弹性刚度）直接分解回代；三条新函数
+  （`fem_3d.hpp`）：`scanTangentLane3D`（对非约束自由度加单位荷载，约束行必须跳过，
+  否则回代成位移 1）、`tangentBeamResponseInfluence`（切线位移后用
+  `beam3DLocalEndForces` 提取梁端内力增量）、`autoIdentifyGirderLane`（按
+  `|Δx| ≥ max(|Δy|,|Δz|)` 自动识别水平纵向主梁，排除塔柱/横梁，缺省车道时兜底）。
+- 包络公式复用梁格内核：`envelope3DFromInfluence` + `laneWeights3D` 梯形积分权重 +
+  `jtgD60LaneLoadQk/Pk/Reduction`（JTG D60 车道荷载、多车道折减）。前端显式
+  `*LANE_3D` 优先，空则自动识别主梁（`autoCode=true`）。
+- 能力边界（如实标注，写入 `input_format_3d.md`）：①纵向单车道 + 多车道折减近似，
+  不做横向影响面；②梁 P-Δ 一阶略去（恒载由非线性精确算入，活载增量用切线刚度求
+  位移、再用线性弹性刚度提取梁端内力）；③组合应力验算（1.2S_G+1.4S_Q）未接入。
+- `test_3d_nl.cpp` 第 11 节 `testCableLiveInfluence`：简支梁（纯梁无索）切线刚度必退化
+  线性弹性，断言切线影响线命中手算 `x(L−x)/L`、与线性 `compute3DBeamMomentInfluence`
+  逐位一致、两端支座 z 自由度被约束跳过。`test_3d_nl` 79/79。
+
 ### 新增：施工阶段曲线筋（`PRESTRESS=` 关键字模式，二次抛物线）
 
 - 直线筋（`s=0`）只有轴压 + 端弯矩，**不产生上拱**；混凝土梁上拱来自曲线筋的
