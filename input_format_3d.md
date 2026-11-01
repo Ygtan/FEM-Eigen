@@ -259,6 +259,14 @@ NODES=... CODE=JTG_D60 LANE_COUNT=3 REDUCTION=0.78 ECCENTRICITY=1.15
 
 三个量都缺省时退化为单车道近似（旧的 `impact·reduction` 乘子）。
 
+汽车冲击（JTG D60）：`IMPACT` 是**放大倍数**（`1+μ`），不是纯冲击系数 μ。索承
+体系（`*CABLE_BRIDGE`/`*CABLE`）下，若 `IMPACT` 缺省（=1.0），`cable_solver`
+自动在**成桥态切线刚度**上求竖向一阶弯曲基频 f1（识别主梁竖向位移 w 主导的
+最低阶），按 JTG D60 算 μ（f<1.5→0.05，1.5~14→0.1767·ln f−0.0157，>14→0.45）
+并乘 `1+μ`；显式写非 1.0 的 `IMPACT` 则尊重手动值。基频须用成桥态切线刚度
+（张紧索切线刚度远大于弹性刚度），线弹性装配会把基频算低、μ 失真。meta 输出
+`f1_vertical`/`impact_mu`/`impact_factor`。
+
 ## 三维影响面
 
 ```text

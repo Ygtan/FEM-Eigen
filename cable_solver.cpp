@@ -91,6 +91,7 @@
 // 编译：随 CMake 一起（目标 cable_solver）。
 
 #include "fem_3d_nl.hpp"
+#include "fem_2d.hpp"   // impactCoefficientFromFrequency（JTG D60 冲击系数）
 
 #include <algorithm>
 #include <cctype>
@@ -114,6 +115,94 @@ double nowMs() {
 std::string upper(std::string s) {
     for (auto& c : s) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
     return s;
+}
+
+// 在成桥态一致切线刚度 K（已施加 Dirichlet，约束自由度由 isC 标记）上求前
+// nev 阶自振频率与模态。K、M 同规模（nDofs × nDofs）。索承体系的基频必须
+// 用成桥态切线刚度——张紧索的切线刚度远大于弹性刚度，线弹性装配刚度会把
+// 索算软、基频算低。返回频率（Hz，升序）与对应全局位移模态。
+static ModalResult3D modalFromTangent(const SparseMat3D& K, const SparseMat3D& M,
+                                      const std::vector<char>& isC,
+                                      int nDofs, int nev) {
+    std::vector<int> free;
+    for (int d = 0; d < nDofs; ++d) {
+        if (isC[d]) continue;
+        if (K.coeff(d, d) == 0.0) continue;
+        if (M.coeff(d, d) == 0.0) continue;
+        free.push_back(d);
+    }
+    ModalResult3D out;
+    const int nf = static_cast<int>(free.size());
+    if (nf == 0) return out;
+    const int n = std::min(nev, nf);
+    constexpr double pi = 3.14159265358979323846;
+#ifdef FEM_HAS_SPECTRA
+    const SparseModalResult sm = solveSparseModal(K, M, free, nDofs, n);
+    if (!sm.eigenvalues.empty()) {
+        for (std::size_t i = 0; i < sm.eigenvalues.size(); ++i) {
+            const double lam = sm.eigenvalues[i];
+            const double f = (lam > 0.0) ? std::sqrt(lam) / (2.0 * pi) : 0.0;
+            out.frequencies.push_back(f);
+            out.modes.push_back(sm.modes[i]);
+        }
+        return out;
+    }
+#endif
+    // 稠密回退（Spectra 未收敛或自由度太少）
+    Eigen::MatrixXd Kd(nf, nf), Md(nf, nf);
+    for (int a = 0; a < nf; ++a)
+        for (int b = 0; b < nf; ++b) {
+            Kd(a, b) = K.coeff(free[a], free[b]);
+            Md(a, b) = M.coeff(free[a], free[b]);
+        }
+    Eigen::GeneralizedSelfAdjointEigenSolver<Eigen::MatrixXd> ges(Kd, Md);
+    for (int i = 0; i < n; ++i) {
+        const double lam = ges.eigenvalues()(i);
+        const double f = (lam > 0.0) ? std::sqrt(lam) / (2.0 * pi) : 0.0;
+        out.frequencies.push_back(f);
+        std::vector<double> mode(nDofs, 0.0);
+        for (int a = 0; a < nf; ++a) mode[free[a]] = ges.eigenvectors()(a, i);
+        out.modes.push_back(std::move(mode));
+    }
+    return out;
+}
+
+// 识别竖向一阶弯曲基频：在（频率升序的）模态里，取主梁节点竖向位移 w 主导
+//（w² 占主梁平动 u²+v²+w² 比例 > 0.5）的最低阶。JTG D60 汽车冲击系数针对
+// 竖向汽车荷载，须用竖向弯曲基频而非任意低阶（横向/纵向）频率。识别不出
+// 返回 -1，调用方回退第一阶自振频率。
+static double verticalFlexuralFrequency(const Model3D& m, const DofMap3D& dm,
+                                        const ModalResult3D& modal) {
+    std::set<int> deckNodes;
+    for (const auto& e : m.elements) {
+        if (e.type != "BEAM" && e.type != "BEAM7") continue;
+        const Vec3 d = m.nodes.at(e.n2) - m.nodes.at(e.n1);
+        if (std::abs(d.x()) < std::max(std::abs(d.y()), std::abs(d.z()))) continue;
+        deckNodes.insert(e.n1);
+        deckNodes.insert(e.n2);
+    }
+    if (deckNodes.empty()) return -1.0;
+
+    for (std::size_t i = 0; i < modal.frequencies.size(); ++i) {
+        const double f = modal.frequencies[i];
+        if (f <= 0.0) continue;
+        const auto& mode = modal.modes[i];
+        double w2 = 0.0, uv2 = 0.0;
+        for (int nid : deckNodes) {
+            const int dw = dm.safeDof(nid, 2);   // w（竖向平动，0-based）
+            const int du = dm.safeDof(nid, 0);   // u
+            const int dv = dm.safeDof(nid, 1);   // v
+            const double w = (dw >= 0 && dw < static_cast<int>(mode.size())) ? mode[dw] : 0.0;
+            const double u = (du >= 0 && du < static_cast<int>(mode.size())) ? mode[du] : 0.0;
+            const double v = (dv >= 0 && dv < static_cast<int>(mode.size())) ? mode[dv] : 0.0;
+            w2 += w * w;
+            uv2 += u * u + v * v;
+        }
+        const double tot = w2 + uv2;
+        if (tot <= 0.0) continue;
+        if (w2 / tot > 0.5) return f;   // 竖向主导的最低阶
+    }
+    return -1.0;
 }
 
 struct CableReq {
@@ -887,6 +976,11 @@ int main(int argc, char** argv) {
         std::set<int> hangerSet(cfg.hangers.begin(), cfg.hangers.end());
         double sumT = 0.0, sumV = 0.0, tmin = 1e300, tmax = -1e300;
         double hangerTmin = 1e300, hangerTmax = -1e300, hangerTsum = 0.0, hangerVsum = 0.0;
+        // 汽车冲击系数（JTG D60）：基于成桥态切线刚度的竖向一阶弯曲基频。
+        // 仅在活载包络段内填充；未收敛/无车道时保持 0/0/1.0。
+        double f1Vertical = 0.0;    // 竖向一阶弯曲基频 Hz（0 = 未计算）
+        double impactMu = 0.0;      // 冲击系数 μ
+        double impactFactor = 1.0;  // 活载冲击放大 (1+μ)
         for (std::size_t k = 0; k < nc; ++k) {
             const Element3D* e = findElem(m, cfg.cables[k].elem);
             const int A = cfg.cables[k].anchor;
@@ -948,6 +1042,25 @@ int main(int argc, char** argv) {
                         if (d >= 0 && d < static_cast<int>(isC.size())) isC[d] = 1;
                     const Factorization3D fac(tangent.K);
 
+                    // ---- 汽车冲击系数 μ（JTG D60，竖向一阶弯曲基频）----
+                    // 索承体系基频必须用成桥态一致切线刚度（张紧索切线刚度
+                    // >> 弹性刚度），线弹性装配刚度会把索算软、基频算低、μ
+                    // 失真。质量矩阵用材料 DENS + ADDMASS 的一致质量；竖向
+                    // 一阶弯曲频率 = 主梁节点竖向位移 w 主导的最低阶。
+                    {
+                        const SparseMat3D Mlive = assembleMassMatrix3D(m, dmLive);
+                        if (Mlive.nonZeros() > 0) {
+                            const ModalResult3D modal = modalFromTangent(
+                                tangent.K, Mlive, isC, dmLive.nDofs, 12);
+                            if (!modal.frequencies.empty()) {
+                                f1Vertical = verticalFlexuralFrequency(m, dmLive, modal);
+                                if (f1Vertical < 0.0) f1Vertical = modal.frequencies[0];
+                                impactMu = impactCoefficientFromFrequency(f1Vertical);
+                                impactFactor = 1.0 + impactMu;
+                            }
+                        }
+                    }
+
                     // 主梁（水平纵向梁）：活载包络只对桥面纵梁有意义。
                     std::vector<const Element3D*> tgt;
                     for (const auto& e : m.elements) {
@@ -962,6 +1075,10 @@ int main(int argc, char** argv) {
                     for (const auto& lane : m.lanes) {
                         const std::size_t npos = lane.nodes.size();
                         if (npos == 0) continue;
+                        // 汽车冲击：默认 IMPACT=1.0 时用自动 (1+μ)；用户显式
+                        // 写了非 1.0 的 IMPACT 则尊重手动值（视为额外放大）。
+                        Model3D::Lane3D laneEff = lane;
+                        laneEff.impact = (lane.impact != 1.0) ? lane.impact : impactFactor;
                         // 每单元 × 2 端 × 3 分量（N/My/Vz）
                         std::vector<std::vector<double>> eta(tgt.size() * 6,
                                                              std::vector<double>(npos, 0.0));
@@ -986,11 +1103,11 @@ int main(int argc, char** argv) {
                         for (std::size_t t = 0; t < tgt.size(); ++t)
                             for (int end = 1; end <= 2; ++end) {
                                 const auto eN  = envelope3DFromInfluence(
-                                    m, lane, eta[t * 6 + (end - 1) * 3 + 0]);
+                                    m, laneEff, eta[t * 6 + (end - 1) * 3 + 0]);
                                 const auto eMy = envelope3DFromInfluence(
-                                    m, lane, eta[t * 6 + (end - 1) * 3 + 1]);
+                                    m, laneEff, eta[t * 6 + (end - 1) * 3 + 1]);
                                 const auto eVz = envelope3DFromInfluence(
-                                    m, lane, eta[t * 6 + (end - 1) * 3 + 2]);
+                                    m, laneEff, eta[t * 6 + (end - 1) * 3 + 2]);
                                 girderLive.push_back({tgt[t]->id, end,
                                                       eN.second, eN.first,
                                                       eMy.second, eMy.first,
@@ -1087,6 +1204,8 @@ int main(int argc, char** argv) {
         std::fprintf(f, "vertical_sum_kN=%.6g total_load_kN=%.6g balance_pct=%.4f\n",
                      balSum / 1e3, balTot / 1e3,
                      balTot != 0.0 ? 100.0 * (balSum - balTot) / std::abs(balTot) : 0.0);
+        std::fprintf(f, "f1_vertical=%.6g impact_mu=%.6g impact_factor=%.6g\n",
+                     f1Vertical, impactMu, impactFactor);
         if (rea.ok)
             std::fprintf(f, "support_v_sum_kN=%.6g support_v_max_kN=%.6g applied_v_kN=%.6g\n",
                          rea.sumV / 1e3, rea.maxV / 1e3, rea.appliedV / 1e3);
