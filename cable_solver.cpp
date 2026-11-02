@@ -233,6 +233,11 @@ struct Cfg {
     std::vector<int> mainCable;     // 主缆单元（按链序：锚→塔1→塔2→锚）
     std::vector<int> hangers;       // 吊索单元
     double deckE0 = 0.0, deckE1 = 1e300;  // 加劲梁单元号区间（输出轴力用）
+    // ---- 悬索桥施工阶段（*ERECTION）----
+    bool erection = false;          // 是否做施工阶段模拟
+    double erectionQ1 = 0.0;        // 一期恒载 N/m（钢箱梁自重，吊装阶段施加）
+    double erectionQ2 = 0.0;        // 二期恒载 N/m（铺装+护栏，合拢后施加）
+    int erectionPanels = 1;         // 每次对称吊装的吊点对数（每次对称吊 2 段）
 };
 
 // 只扫 *CABLE_BRIDGE / *CABLE 两个扩展段；其余交给 readModel3D。
@@ -305,6 +310,20 @@ Cfg readCfg(const std::string& path) {
             std::istringstream ss(line);
             int id = 0;
             while (ss >> id) dst.push_back(id);   // 一行多个也可
+        } else if (sec == "ERECTION") {
+            std::istringstream ss(line);
+            std::string kv;
+            while (ss >> kv) {
+                const std::size_t p = kv.find('=');
+                if (p == std::string::npos) continue;
+                const std::string key = upper(kv.substr(0, p));
+                const std::string val = kv.substr(p + 1);
+                if (key == "Q1") c.erectionQ1 = std::stod(val);
+                else if (key == "Q2") c.erectionQ2 = std::stod(val);
+                else if (key == "PANELS") c.erectionPanels = std::max(1, std::stoi(val));
+                else std::fprintf(stderr, "[警告] *ERECTION 未知关键字: %s\n", kv.c_str());
+            }
+            c.erection = true;
         }
     }
     return c;
@@ -710,6 +729,143 @@ SuspFit formFindSuspension(Model3D& m, const Cfg& cfg) {
     out.hangerDeck = hangerDeck;
     out.ok = true;
     return out;
+}
+
+// ============================================================
+// 悬索桥施工阶段：给定主缆下料长度 L0 的逐阶段找形
+// ============================================================
+//
+// 为什么不能复用 formFindSuspension
+// ---------------------------------
+// formFindSuspension 是"给定设计矢高、反算 H"——那是**设计态**。施工阶段主缆
+// 矢高是**结果不是输入**：主缆下料长度 L0 一旦固定，从空缆（只受自重）到成桥
+// （全恒载），主缆逐级下沉，矢高从 f0 增大到成桥矢高 f。所以这里二分的不再是
+// "矢高命中"，而是"整根主缆的无应力长度 L0 命中"——给定 L0，反算当前荷载下的
+// H，矢高与线形随之出来。这正是"从中间吊装主梁"的施工控制要的量。
+
+struct ErectionState {
+    double H = 0.0;                 // 主缆水平分力 N
+    double sag = 0.0;               // 主跨矢高 m（结果，不是输入）
+    double midZ = 0.0;              // 主跨跨中主缆高程 m
+    std::map<int, double> zNew;     // 主缆节点高程（找形后，链序）
+    std::map<int, double> segT;     // 主缆段轴力（单元 id → T）
+    std::map<int, double> hangerT;  // 吊索力（单元 id → T）
+    std::vector<double> mainX, mainZ;   // 主跨主缆节点（塔1→塔2）的 x / 高程
+};
+
+ErectionState findErectionState(const Model3D& m, const Cfg& cfg, double L0target) {
+    ErectionState st;
+    const std::vector<int> chain = buildCableChain(m, cfg.mainCable);
+    auto posOf = [&](int nid) {
+        for (std::size_t i = 0; i < chain.size(); ++i)
+            if (chain[i] == nid) return static_cast<int>(i);
+        return -1;
+    };
+    const int t1 = posOf(cfg.tower1), t2 = posOf(cfg.tower2);
+    if (t1 < 0 || t2 < 0) throw std::runtime_error("TOWER1/TOWER2 不在主缆链上");
+    if (t1 >= t2) throw std::runtime_error("TOWER1 必须位于 TOWER2 左侧");
+
+    // 吊索荷载搬运（与 formFindSuspension 同一口径）
+    std::map<int, double> qAtCable;
+    for (int hid : cfg.hangers) {
+        const Element3D* e = findElem(m, hid);
+        if (!e) throw std::runtime_error("吊索单元不存在: " + std::to_string(hid));
+        const bool n1Cable = posOf(e->n1) >= 0, n2Cable = posOf(e->n2) >= 0;
+        if (n1Cable == n2Cable)
+            throw std::runtime_error("吊索 " + std::to_string(hid)
+                                     + " 必须一端接主缆、一端接加劲梁");
+        const int cableNode = n1Cable ? e->n1 : e->n2;
+        const int deckNode = n1Cable ? e->n2 : e->n1;
+        const double Q = std::max(nodalDown(m, deckNode), 0.0);
+        qAtCable[cableNode] += Q;
+        st.hangerT[hid] = Q;
+    }
+
+    // 三跨 span（同 formFindSuspension 的 makeSpan）
+    auto makeSpan = [&](int i0, int i1, bool symmetric) {
+        SuspSpan s;
+        s.symmetric = symmetric;
+        for (int i = i0; i <= i1; ++i) {
+            const int nid = chain[i];
+            s.nodeIds.push_back(nid);
+            s.x.push_back(m.nodes.at(nid).x());
+            auto it = qAtCable.find(nid);
+            s.q.push_back(it == qAtCable.end() ? 0.0 : it->second);
+        }
+        for (int i = i0; i < i1; ++i) {
+            const Element3D* e = findElem(m, cfg.mainCable[i]);
+            s.w.push_back(e ? e->w : 0.0);
+        }
+        s.z0 = m.nodes.at(s.nodeIds.front()).z();
+        s.zEnd = m.nodes.at(s.nodeIds.back()).z();
+        return s;
+    };
+    const SuspSpan spMain = makeSpan(t1, t2,
+        std::abs(m.nodes.at(cfg.tower1).z() - m.nodes.at(cfg.tower2).z()) < 1e-9);
+    const SuspSpan spS1 = makeSpan(0, t1, false);
+    const SuspSpan spS2 = makeSpan(t2, static_cast<int>(chain.size()) - 1, false);
+
+    // 主缆轴向刚度（全桥主缆同材质，取第一段）
+    double EA = 0.0;
+    if (!cfg.mainCable.empty()) {
+        const Element3D* e = findElem(m, cfg.mainCable[0]);
+        if (e) EA = e->E * e->A;
+    }
+    if (EA <= 0.0) throw std::runtime_error("主缆单元缺少 E/A，无法反算下料长度");
+
+    // 总无应力长度：三跨索多边形弧长 − 弹性伸长。各段用与 COMPLETION 相同的
+    // 闭式口径 cableUnstrainedLengthForTension（弦长 + 垂度，再除 1+T/EA）。
+    auto totalL0 = [&](double H) {
+        double l0 = 0.0;
+        auto acc = [&](const SuspSpan& s) {
+            const SuspSpanFit f = integrateSpan(s, H);
+            for (std::size_t k = 0; k + 1 < s.nodeIds.size(); ++k) {
+                const double dx = s.x[k + 1] - s.x[k];
+                const double dz = f.z[k + 1] - f.z[k];
+                const double chord = std::sqrt(dx * dx + dz * dz);
+                const double w = (k < s.w.size()) ? s.w[k] : 0.0;
+                l0 += cableUnstrainedLengthForTension(chord, f.segT[k], EA, w, dx);
+            }
+        };
+        acc(spS1);
+        acc(spMain);
+        acc(spS2);
+        return l0;
+    };
+
+    // 二分 H：L0(H) 随 H 单调递减（H 越大主缆越平、弧长越短）
+    double lo = 1e2, hi = 1e12;
+    for (int it = 0; it < 200; ++it) {
+        const double mid = std::sqrt(lo * hi);
+        if (totalL0(mid) > L0target) lo = mid; else hi = mid;
+    }
+    st.H = std::sqrt(lo * hi);
+
+    // 落盘最终状态
+    const SuspSpanFit fMain = integrateSpan(spMain, st.H);
+    const SuspSpanFit fS1 = integrateSpan(spS1, st.H);
+    const SuspSpanFit fS2 = integrateSpan(spS2, st.H);
+    st.sag = fMain.sag;
+    auto apply = [&](const SuspSpan& s, const SuspSpanFit& f, int i0) {
+        for (std::size_t k = 0; k < s.nodeIds.size(); ++k)
+            st.zNew[s.nodeIds[k]] = f.z[k];
+        for (std::size_t k = 0; k + 1 < s.nodeIds.size(); ++k)
+            st.segT[cfg.mainCable[i0 + static_cast<int>(k)]] = f.segT[k];
+    };
+    apply(spS1, fS1, 0);
+    apply(spMain, fMain, t1);
+    apply(spS2, fS2, t2);
+
+    // 主跨跨中主缆高程（离跨中最近的节点）
+    const double xmid = 0.5 * (spMain.x.front() + spMain.x.back());
+    double bd = 1e300;
+    for (std::size_t k = 0; k < spMain.nodeIds.size(); ++k) {
+        const double d = std::abs(spMain.x[k] - xmid);
+        if (d < bd) { bd = d; st.midZ = fMain.z[k]; }
+    }
+    st.mainX = spMain.x;
+    st.mainZ = fMain.z;
+    return st;
 }
 
 }  // namespace
@@ -1118,6 +1274,119 @@ int main(int argc, char** argv) {
             }
         }
 
+        // ---- 悬索桥施工阶段（分级找形：空缆 → 对称吊装 → 合拢 → 铺装）----
+        //
+        // 主缆下料长度 L0 固定（成桥态反算得到），从空缆态起逐级加载：主缆
+        // 随吊装逐级下沉，矢高从 f0 增大到成桥矢高 f。加劲梁自重（一期 Q1）在
+        // 吊装阶段铰接上梁、不产生加劲梁弯矩；二期铺装 Q2 在合拢后施加。
+        struct ErectionRow {
+            int stage = 0;
+            std::string name;
+            double H = 0.0, sag = 0.0, midZ = 0.0;
+            double hangerTmin = 0.0, hangerTmax = 0.0;
+            std::vector<double> mainX, mainZ;
+        };
+        std::vector<ErectionRow> erectionRows;
+        if (susp && cfg.erection && converged) {
+            // 反算成桥主缆下料长度 L0（**纯找形口径**，不用 COMPLETION 里那套
+            // solveModel3DNonlinear 迭代出的 L0）。原因：施工阶段模拟用的是
+            // 同一套"索多边形找形 + 闭式弹性伸长"口径，若拿非线性解出的 L0 来
+            // 二分，铺装态（= 全恒载）不能精确重现成桥矢高——会系统性偏大
+            // 2~3%（弹性伸长在 1000 m 主缆上就是数米的量级）。
+            double L0total = 0.0;
+            for (std::size_t k = 0; k + 1 < fit.chainNodes.size(); ++k) {
+                const int n1 = fit.chainNodes[k], n2 = fit.chainNodes[k + 1];
+                const double x1 = m.nodes.at(n1).x(), x2 = m.nodes.at(n2).x();
+                auto z1 = fit.zNew.find(n1), z2 = fit.zNew.find(n2);
+                if (z1 == fit.zNew.end() || z2 == fit.zNew.end()) continue;
+                const double dx = x2 - x1, dz = z2->second - z1->second;
+                const double chord = std::sqrt(dx * dx + dz * dz);
+                if (k >= cfg.mainCable.size()) continue;
+                const int id = cfg.mainCable[k];
+                auto tit = fit.T.find(id);
+                const Element3D* e = findElem(m, id);
+                if (tit == fit.T.end() || !e) continue;
+                const double T = tit->second, EAe = e->E * e->A;
+                L0total += cableUnstrainedLengthForTension(chord, T, EAe, e->w, dx);
+            }
+            if (L0total <= 0.0) {
+                std::fprintf(stderr, "[警告] 施工阶段模拟跳过：成桥态未给出主缆下料长度\n");
+            } else {
+                struct DeckPt { int deck; int hanger; double x; };
+                std::vector<DeckPt> pts;
+                const double xt1 = m.nodes.at(cfg.tower1).x();
+                const double xt2 = m.nodes.at(cfg.tower2).x();
+                for (int hid : cfg.hangers) {
+                    auto it = fit.hangerDeck.find(hid);
+                    if (it == fit.hangerDeck.end()) continue;
+                    const double x = m.nodes.at(it->second).x();
+                    if (x > xt1 + 1e-6 && x < xt2 - 1e-6)
+                        pts.push_back({it->second, hid, x});
+                }
+                const double xmid = 0.5 * (xt1 + xt2);
+                std::sort(pts.begin(), pts.end(), [&](const DeckPt& a, const DeckPt& b) {
+                    return std::abs(a.x - xmid) < std::abs(b.x - xmid);
+                });
+
+                const double qsum = cfg.erectionQ1 + cfg.erectionQ2;
+                const double q1frac = qsum > 0.0 ? cfg.erectionQ1 / qsum : 0.0;
+
+                std::set<int> deckSet;
+                for (int hid : cfg.hangers)
+                    if (fit.hangerDeck.count(hid)) deckSet.insert(fit.hangerDeck.at(hid));
+
+                auto solveStage = [&](const std::set<int>& active, double frac,
+                                      const std::string& name) {
+                    Model3D ms = m;
+                    ms.loads.clear();
+                    for (const auto& [node, dof, val] : m.loads) {
+                        if (dof == 3 && deckSet.count(node))
+                            ms.loads.push_back({node, dof,
+                                                active.count(node) ? val * frac : 0.0});
+                        else
+                            ms.loads.push_back({node, dof, val});
+                    }
+                    const ErectionState es = findErectionState(ms, cfg, L0total);
+                    ErectionRow row;
+                    row.stage = static_cast<int>(erectionRows.size());
+                    row.name = name;
+                    row.H = es.H;
+                    row.sag = es.sag;
+                    row.midZ = es.midZ;
+                    row.hangerTmin = 1e300;
+                    row.hangerTmax = -1e300;
+                    for (const auto& [hid, T] : es.hangerT) {
+                        row.hangerTmin = std::min(row.hangerTmin, T);
+                        row.hangerTmax = std::max(row.hangerTmax, T);
+                    }
+                    if (row.hangerTmin > row.hangerTmax) {
+                        row.hangerTmin = row.hangerTmax = 0.0;
+                    }
+                    row.mainX = es.mainX;
+                    row.mainZ = es.mainZ;
+                    erectionRows.push_back(row);
+                };
+
+                // 空缆态
+                solveStage({}, 0.0, "空缆");
+                // 对称吊装：从跨中向两侧，每步 cfg.erectionPanels 对（2 段）
+                const int step = 2 * cfg.erectionPanels;
+                for (std::size_t done = 1; done <= pts.size(); done += step) {
+                    std::set<int> act;
+                    for (std::size_t i = 0; i < done && i < pts.size(); ++i)
+                        act.insert(pts[i].deck);
+                    solveStage(act, q1frac, "吊装");
+                }
+                // 合拢：一期恒载全上（主跨加劲梁合拢；边跨加劲梁同步就位，全桥 Q1）
+                // 注意：必须用 deckSet（全部吊索梁端节点，含边跨），不能用 pts（仅主跨）。
+                // 否则边跨加劲梁的恒载被清零，铺装态少算边跨恒载、H 偏低、主跨矢高偏大，
+                // 铺装态无法精确重现成桥态。
+                solveStage(deckSet, q1frac, "合拢");
+                // 铺装：二期恒载全上（成桥态，全桥 Q1+Q2）
+                solveStage(deckSet, 1.0, "铺装");
+            }
+        }
+
         // ---- 输出 ----
 
         // ---- 梁端内力（成桥态）----
@@ -1279,6 +1548,24 @@ int main(int argc, char** argv) {
             std::fprintf(f, "[GIRDER]\n");
             for (const auto& g : girder)
                 std::fprintf(f, "%d %.10g %.10g %.10g\n", g.elem, g.N, g.My, g.Vz);
+
+            // 施工阶段（分级找形）：每阶段一行 H/矢高/跨中高程/吊索力。
+            if (!erectionRows.empty()) {
+                std::fprintf(f, "[ERECTION]\n");
+                for (const auto& r : erectionRows)
+                    std::fprintf(f, "%d %s H=%.10g sag=%.10g midz=%.10g "
+                                 "hmin=%.10g hmax=%.10g\n",
+                                 r.stage, r.name.c_str(), r.H, r.sag, r.midZ,
+                                 r.hangerTmin, r.hangerTmax);
+                // 每阶段主跨主缆线形（塔1→塔2 的高程序列），画"主缆随吊装下沉"用。
+                std::fprintf(f, "[ERECTION_SHAPE]\n");
+                for (const auto& r : erectionRows) {
+                    std::fprintf(f, "%d", r.stage);
+                    for (std::size_t k = 0; k < r.mainZ.size(); ++k)
+                        std::fprintf(f, " %.10g", r.mainZ[k]);
+                    std::fprintf(f, "\n");
+                }
+            }
         }
 
         // 梁端内力：每端一行，两种桥型都输出。应力验算只能用这一段——同一端
