@@ -529,7 +529,9 @@ inline CRElemData crMakeElemData(const Model3D& m, const Element3D& e, const Dof
     const double Lg = std::max((d.p2 - d.p1).norm(), 1e-12);
     d.L0 = (e.L0 > 0.0) ? e.L0 : Lg;
     d.w = e.w;
-    d.istrnEff = e.istrn - m.shrinkageEcs;
+    // 正的收缩应变与正的初应变相反：初应变伸长，收缩缩短。
+    // 阶段循环把模型收缩写进 e.ecs，且 mc.shrinkageEcs 保持 0，避免两个字段各算一遍。
+    d.istrnEff = e.istrn - m.shrinkageEcs - e.ecs;
     if (d.n == 12 || d.n == 14) {
         d.Kl12 = beam3DLocalStiffness(d.Eeff, e.A, e.Iy, e.Iz, e.J, e.G, Lg);
     }
@@ -1990,6 +1992,442 @@ inline CompletionStateResult3D solveCompletionState3D(Model3D m,
                                      std::abs(eg.tension[k] - Tst[k]) / Tst[k]);
     }
     return out;
+}
+
+// 预应力等效荷载，公式与线性阶段 solveModel3DStages 相同：
+// 直线束 = 两端轴力 Pe·c 与偏心弯矩 Pe·e·(ẑ×c)；
+// 曲线束再加两端同向竖向力 4Pe·s/L 和均布 q=−8Pe·s/L² 的节点化。
+// 非线性阶段每次都重算全量平衡，这些荷载必须在张拉之后一直保留。
+inline std::vector<std::tuple<int, int, double>> prestressEquivalentLoads(
+        const Model3D& m, const std::vector<Element3D>& active,
+        const Model3D::Prestress3D& ps, const std::string& ptag) {
+    auto elemIn = [&](int id) -> const Element3D* {
+        for (const auto& e : active) if (e.id == id) return &e;
+        return nullptr;
+    };
+    if (ps.elems.empty())
+        throw std::runtime_error(ptag + " 没有 ELEM 列表");
+    if (ps.P <= 0.0)
+        throw std::runtime_error(ptag + " 的张拉力必须为正");
+    if (ps.loss <= 0.0 || ps.loss > 1.0)
+        throw std::runtime_error(ptag + " 的 LOSS 必须在 (0,1]");
+    std::map<int, int> deg;
+    for (int eid : ps.elems) {
+        const Element3D* e = elemIn(eid);
+        if (!e)
+            throw std::runtime_error(ptag + " 引用了本阶段未激活的单元 "
+                                     + std::to_string(eid));
+        if (e->type != "BEAM" && e->type != "BEAM7")
+            throw std::runtime_error(ptag + " 只能施加到梁单元");
+        deg[e->n1]++; deg[e->n2]++;
+    }
+    int head = 0, tail = 0;
+    for (const auto& [nd, c] : deg)
+        if (c == 1) { if (head == 0) head = nd; else tail = nd; }
+    if (head == 0 || tail == 0 || deg.size() != ps.elems.size() + 1)
+        throw std::runtime_error(ptag + " 的单元不构成一条首尾相接的开链");
+    const Vec3 dv = m.nodes.at(tail) - m.nodes.at(head);
+    const double L = dv.norm();
+    if (L <= 1e-12)
+        throw std::runtime_error(ptag + " 的锚固端节点重合");
+    const double ax = dv.x() / L, ay = dv.y() / L, az = dv.z() / L;
+    const double Pe = ps.P * ps.loss;
+    std::vector<std::tuple<int, int, double>> loads;
+    const double mx = Pe * ps.e * (-ay);
+    const double my = Pe * ps.e * ax;
+    loads.push_back({head, 1, Pe * ax});
+    loads.push_back({head, 2, Pe * ay});
+    loads.push_back({head, 3, Pe * az});
+    loads.push_back({head, 4, mx});
+    loads.push_back({head, 5, my});
+    loads.push_back({tail, 1, -Pe * ax});
+    loads.push_back({tail, 2, -Pe * ay});
+    loads.push_back({tail, 3, -Pe * az});
+    loads.push_back({tail, 4, -mx});
+    loads.push_back({tail, 5, -my});
+    if (ps.s == 0.0) return loads;
+
+    std::map<int, std::vector<int>> adj;
+    for (int eid : ps.elems) {
+        const Element3D* e = elemIn(eid);
+        adj[e->n1].push_back(e->n2);
+        adj[e->n2].push_back(e->n1);
+    }
+    std::vector<int> chain{head};
+    int cur = head, prev = -1;
+    while (cur != tail) {
+        int nxt = -1;
+        for (int nb : adj[cur]) if (nb != prev) { nxt = nb; break; }
+        if (nxt < 0) throw std::runtime_error(ptag + " 的单元链不连通");
+        chain.push_back(nxt);
+        prev = cur;
+        cur = nxt;
+    }
+    auto dist = [&](int a, int b) {
+        return (m.nodes.at(b) - m.nodes.at(a)).norm();
+    };
+    for (int nd : chain) {
+        if (nd == head || nd == tail) continue;
+        const Vec3 w = m.nodes.at(nd) - m.nodes.at(head);
+        const double cx = w.y() * dv.z() - w.z() * dv.y();
+        const double cy = w.z() * dv.x() - w.x() * dv.z();
+        const double cz = w.x() * dv.y() - w.y() * dv.x();
+        const double perp = std::sqrt(cx * cx + cy * cy + cz * cz) / L;
+        if (perp > 1e-6 * L)
+            throw std::runtime_error(ptag + " 是曲线筋，单元必须共线");
+    }
+    const double tz = 4.0 * Pe * ps.s / L;
+    const double qz = -8.0 * Pe * ps.s / (L * L);
+    loads.push_back({head, 3, tz});
+    loads.push_back({tail, 3, tz});
+    for (std::size_t k = 0; k < chain.size(); ++k) {
+        double half = 0.0;
+        if (k == 0) half = dist(chain[0], chain[1]) / 2.0;
+        else if (k + 1 == chain.size()) half = dist(chain[k - 1], chain[k]) / 2.0;
+        else half = (dist(chain[k - 1], chain[k]) + dist(chain[k], chain[k + 1])) / 2.0;
+        loads.push_back({chain[k], 3, qz * half});
+    }
+    return loads;
+}
+
+// 非线性施工阶段。每个阶段是当前已激活结构上的**全量平衡**，不是线性内核的
+// 荷载增量。位移不能再按阶段相加。TENSION= 用无应力索长迭代命中目标力；
+// 没有 TENSION= 的阶段只做一次共转求解，已有索的 L0 保持不变。
+// 预应力等效荷载从张拉阶段起一直保留在外荷载里。
+// 与线性内核 compute3DBeamEnvelope 同一套截面内力约定：N 拉为正，My 下侧受拉为正。
+struct BeamEnd3D {
+    double N = 0, Vy = 0, Vz = 0, T = 0, My = 0, Mz = 0;
+};
+
+struct NLStageResult3D {
+    int id = 0;
+    bool converged = false;
+    DofMap3D dm;
+    std::vector<double> u;
+    std::map<int, double> cableForce;
+    std::map<int, double> cableL0;
+    // 键是单元号，值是 i 端、j 端。只含本阶段激活的梁。
+    std::map<int, std::pair<BeamEnd3D, BeamEnd3D>> beamEnds;
+    // 仅最后一个含索阶段：切线刚度上的活载梁端包络。无索模型不填，避免和线弹性包络重复。
+    std::vector<LiveBeamEnvelope3D> liveBeam;
+    std::vector<StageLiveEnvelope3D> liveDisp;
+    LaneImpact3D liveImpact;
+    bool liveTangent = false;
+};
+
+inline void fillTangentGirderLive(const Model3D& mc, const NLTangent3D& tangent,
+                                  NLStageResult3D& row);
+
+inline std::vector<NLStageResult3D> solveModel3DStagesNonlinear(
+        const Model3D& m, NonlinearOptions3D nl = {}) {
+    std::vector<char> active(m.elements.size(), 0);
+    std::map<int, double> L0state;
+    std::map<std::pair<int, int>, double> loadSum;
+    // 束号 → 等效节点荷载。后一阶段不写这束时荷载仍在，全量平衡才不会把预加力丢掉。
+    std::map<int, std::vector<std::tuple<int, int, double>>> psKeep;
+    // 徐变只记扣除等效荷载后的应力合力。下一次增量乘的是这个力，不是含徐变位移的内力。
+    // 节点力必须是单元实际交到节点上的力。用线性坐标变换去乘局部力，会和共转列式差一截，
+    // 弯矩会逐次变大。等效荷载一旦加上就留在后面的全量平衡里。
+    std::map<int, std::array<double, 12>> creepStress;      // 局部，用于回报内力
+    std::map<int, std::array<double, 12>> creepApplied;     // 已作为外荷载的局部合力
+    std::map<int, std::array<double, 12>> creepForceG;      // 局部应力对应的全局节点力
+    std::map<int, std::array<double, 12>> creepLoadG;       // 已施加的全局徐变节点力
+    double prevCreepTime = 0.0;
+    int psSeq = 0;
+    std::vector<NLStageResult3D> out;
+
+    for (const auto& st : m.stages) {
+        for (int id : st.activate) {
+            bool found = false;
+            for (std::size_t i = 0; i < m.elements.size(); ++i)
+                if (m.elements[i].id == id) { active[i] = 1; found = true; break; }
+            if (!found)
+                throw std::runtime_error("非线性阶段激活了不存在单元 " + std::to_string(id));
+        }
+        for (int id : st.deactivate) {
+            bool found = false;
+            for (std::size_t i = 0; i < m.elements.size(); ++i)
+                if (m.elements[i].id == id) { active[i] = 0; found = true; break; }
+            if (!found)
+                throw std::runtime_error("非线性阶段钝化了不存在单元 " + std::to_string(id));
+        }
+        for (const auto& ld : st.loads)
+            loadSum[{std::get<0>(ld), std::get<1>(ld)}] += std::get<2>(ld);
+
+        Model3D mc;
+        mc.nodes = m.nodes;
+        mc.constraints = m.constraints;
+        // 一次徐变：刚度用 E/(1+χφ)。等效预加力不随 E 变，静定梁位移按 1+χφ 放大。
+        mc.creepPhi = m.creepPhi;
+        mc.creepChi = m.creepChi;
+        for (const auto& [key, val] : loadSum)
+            mc.loads.emplace_back(key.first, key.second, val);
+        for (std::size_t i = 0; i < m.elements.size(); ++i) {
+            if (!active[i]) continue;
+            Element3D e = m.elements[i];
+            // 收缩是初应变，每个全量平衡都在，但不是再加一份荷载。
+            // 正值缩短。后面的徐变阶段仍用同一个 e.ecs，不会再缩短一个 ε·L。
+            if (m.shrinkageEcs != 0.0) e.ecs += m.shrinkageEcs;
+            if (e.type == "CABLE") {
+                if (!L0state.count(e.id))
+                    L0state[e.id] = (e.L0 > 0.0)
+                                        ? e.L0
+                                        : (m.nodes.at(e.n2) - m.nodes.at(e.n1)).norm();
+                e.L0 = L0state[e.id];
+            }
+            mc.elements.push_back(e);
+        }
+        for (const auto& [eid, val] : st.unstrained) {
+            if (val <= 0.0)
+                throw std::runtime_error("非线性阶段 L0= 必须为正");
+            bool found = false;
+            for (auto& e : mc.elements)
+                if (e.id == eid && e.type == "CABLE") {
+                    e.L0 = val;
+                    L0state[eid] = val;
+                    found = true;
+                    break;
+                }
+            if (!found)
+                throw std::runtime_error("非线性阶段 L0= 指向未激活的索 " + std::to_string(eid));
+        }
+        const std::string stag = "*STAGE " + std::to_string(st.id);
+        for (const auto& ps : st.prestresses) {
+            // 束号按阶段内顺序从 1 编，跨阶段会撞号。全量平衡用独立序号，两阶段各张一束才都留得住。
+            psKeep[++psSeq] = prestressEquivalentLoads(
+                m, mc.elements, ps, stag + " 的 PRESTRESS= 束 " + std::to_string(ps.id));
+        }
+        for (const auto& [id, lds] : psKeep) {
+            (void)id;
+            for (const auto& ld : lds) mc.loads.push_back(ld);
+        }
+        // 有龄期时 Δφ=φ(t)−φ(上一阶段)。第一阶段还没有已积累的应力，增量为 0。
+        // 手写 DPHI 只在没写 TIME 时使用，避免同一阶段乘两次。
+        double dphi = st.creepDphi;
+        if (st.time > 0.0 && m.creepPhi0 > 0.0) {
+            const double phiNow = creepCoefficientAt3D(m, st.time);
+            const double phiPrev = prevCreepTime > 0.0
+                                       ? creepCoefficientAt3D(m, prevCreepTime) : 0.0;
+            dphi = prevCreepTime > 0.0 ? (phiNow - phiPrev) : 0.0;
+        }
+        if (dphi != 0.0) {
+            for (const auto& e : mc.elements) {
+                if (e.type != "BEAM") continue;
+                const auto itG = creepForceG.find(e.id);
+                const auto itL = creepStress.find(e.id);
+                if (itG == creepForceG.end() || itL == creepStress.end()) continue;
+                auto& g = creepLoadG[e.id];
+                auto& loc = creepApplied[e.id];
+                for (int i = 0; i < 12; ++i) {
+                    g[static_cast<std::size_t>(i)] +=
+                        dphi * itG->second[static_cast<std::size_t>(i)];
+                    loc[static_cast<std::size_t>(i)] +=
+                        dphi * itL->second[static_cast<std::size_t>(i)];
+                }
+            }
+        }
+        for (const auto& e : mc.elements) {
+            if (e.type != "BEAM") continue;
+            const auto it = creepLoadG.find(e.id);
+            if (it == creepLoadG.end()) continue;
+            bool any = false;
+            for (double v : it->second)
+                if (v != 0.0) any = true;
+            if (!any) continue;
+            for (int k = 0; k < 6; ++k) {
+                mc.loads.push_back({e.n1, k + 1, it->second[static_cast<std::size_t>(k)]});
+                mc.loads.push_back({e.n2, k + 1, it->second[static_cast<std::size_t>(6 + k)]});
+            }
+        }
+        constrainDisconnected3D(mc);
+
+        std::vector<CableTarget3D> targets;
+        for (const auto& [eid, val] : st.tensions) {
+            if (val <= 0.0)
+                throw std::runtime_error("非线性阶段 TENSION= 必须为正");
+            bool found = false;
+            for (const auto& e : mc.elements)
+                if (e.id == eid && e.type == "CABLE") { found = true; break; }
+            if (!found)
+                throw std::runtime_error("非线性阶段 TENSION= 指向未激活的索 " + std::to_string(eid));
+            targets.push_back(CableTarget3D{eid, val});
+        }
+
+        bool tuned = true;
+        if (!targets.empty()) {
+            CableLengthOptions3D co;
+            co.nl = nl;
+            co.maxIter = 12;
+            co.tolTension = 1e-4;
+            const CableLengthResult3D cl = iterateCableUnstrainedLengths(mc, targets, co);
+            tuned = cl.converged;
+            for (std::size_t k = 0; k < cl.elems.size(); ++k) {
+                L0state[cl.elems[k]] = cl.L0[k];
+                for (auto& e : mc.elements)
+                    if (e.id == cl.elems[k]) e.L0 = cl.L0[k];
+            }
+        }
+
+        const bool lastStage = (&st == &m.stages.back());
+        bool hasCable = false;
+        for (const auto& e : mc.elements)
+            if (e.type == "CABLE") hasCable = true;
+        NLTangent3D tangent;
+        const NonlinearResult3D r = solveModel3DNonlinear(
+            mc, nl, (lastStage && hasCable && !m.lanes.empty()) ? &tangent : nullptr);
+        NLStageResult3D row;
+        row.id = st.id;
+        row.converged = tuned && r.converged;
+        row.dm = buildDofMap3D(mc);
+        row.u = r.u;
+        row.cableL0 = L0state;
+        std::map<int, std::string> kind;
+        for (const auto& e : mc.elements) kind[e.id] = e.type;
+        for (std::size_t k = 0; k < r.elemIds.size(); ++k) {
+            const int id = r.elemIds[k];
+            const std::string& tp = kind[id];
+            if (tp == "CABLE") {
+                row.cableForce[id] = r.axial[k];
+                continue;
+            }
+            if (tp != "BEAM" && tp != "BEAM7") continue;
+            const auto& q = r.localForces[k];
+            if (tp == "BEAM7" && q.size() >= 14) {
+                BeamEnd3D i{-q[0], q[1], q[2], -q[3], -q[4], -q[5]};
+                BeamEnd3D j{q[7], -q[8], -q[9], q[10], q[11], q[12]};
+                row.beamEnds[id] = {i, j};
+            } else if (q.size() >= 12) {
+                std::array<double, 12> qs{};
+                for (int i = 0; i < 12; ++i) qs[static_cast<std::size_t>(i)] = q[i];
+                const auto applied = creepApplied.find(id);
+                if (applied != creepApplied.end()) {
+                    for (int i = 0; i < 12; ++i)
+                        qs[static_cast<std::size_t>(i)] -= applied->second[static_cast<std::size_t>(i)];
+                }
+                creepStress[id] = qs;
+                const Element3D* el = nullptr;
+                for (const auto& e : mc.elements)
+                    if (e.id == id) { el = &e; break; }
+                if (el) {
+                    const CRElemData ed = crMakeElemData(mc, *el, row.dm);
+                    Eigen::Matrix<double, 14, 1> ue = Eigen::Matrix<double, 14, 1>::Zero();
+                    Eigen::Matrix<double, 14, 1> fe = Eigen::Matrix<double, 14, 1>::Zero();
+                    for (int i = 0; i < ed.n; ++i) {
+                        const int d = ed.gdofs[static_cast<std::size_t>(i)];
+                        if (d >= 0 && d < static_cast<int>(row.u.size())) ue[i] = row.u[d];
+                    }
+                    crElementInternal(ed, ue, fe, false);
+                    std::array<double, 12> fg{};
+                    const auto held = creepLoadG.find(id);
+                    for (int i = 0; i < 12; ++i) {
+                        fg[static_cast<std::size_t>(i)] = fe[i];
+                        if (held != creepLoadG.end())
+                            fg[static_cast<std::size_t>(i)] -= held->second[static_cast<std::size_t>(i)];
+                    }
+                    creepForceG[id] = fg;
+                }
+                BeamEnd3D i{-qs[0], qs[1], qs[2], -qs[3], -qs[4], -qs[5]};
+                BeamEnd3D j{qs[6], -qs[7], -qs[8], qs[9], qs[10], qs[11]};
+                row.beamEnds[id] = {i, j};
+            }
+        }
+        if (st.time > 0.0) prevCreepTime = st.time;
+        if (lastStage && hasCable && !m.lanes.empty() && r.converged && tangent.K.rows() > 0) {
+            mc.lanes = m.lanes;
+            mc.influences = m.influences;
+            fillTangentGirderLive(mc, tangent, row);
+        }
+        out.push_back(std::move(row));
+    }
+    return out;
+}
+
+inline void fillTangentGirderLive(const Model3D& mc, const NLTangent3D& tangent,
+                                  NLStageResult3D& row) {
+    std::vector<const Element3D*> tgt;
+    for (const auto& e : mc.elements) {
+        if (e.type != "BEAM" && e.type != "BEAM7") continue;
+        const Vec3 d = mc.nodes.at(e.n2) - mc.nodes.at(e.n1);
+        if (std::abs(d.x()) < std::max(std::abs(d.y()), std::abs(d.z()))) continue;
+        tgt.push_back(&e);
+    }
+    std::vector<char> isC(tangent.K.rows(), 0);
+    for (int d : tangent.cdofs)
+        if (d >= 0 && d < static_cast<int>(isC.size())) isC[d] = 1;
+    const Factorization3D fac(tangent.K);
+    const DofMap3D dm = buildDofMap3D(mc);
+    bool wantAuto = false;
+    for (const auto& lane : mc.lanes)
+        if (lane.impact == 1.0) wantAuto = true;
+    // 基频用这套切线，不用线弹性 EA/L。没有梁时仍要算挠度和冲击系数。
+    row.liveImpact = wantAuto ? resolveLaneImpact3D(mc, &tangent.K) : LaneImpact3D{};
+    row.liveTangent = true;
+    if (!tgt.empty()) {
+    for (const auto& lane : mc.lanes) {
+        if (lane.nodes.empty()) continue;
+        Model3D::Lane3D laneUse = lane;
+        if (lane.impact == 1.0 && row.liveImpact.automatic)
+            laneUse.impact = row.liveImpact.factor;
+        std::vector<std::vector<double>> eta(tgt.size() * 4,
+                                             std::vector<double>(lane.nodes.size(), 0.0));
+        scanTangentLane3D(fac, dm, isC, lane.nodes, lane.dof,
+            [&](std::size_t k, const std::vector<double>& U) {
+                if (k >= lane.nodes.size()) return;
+                for (std::size_t t = 0; t < tgt.size(); ++t) {
+                    const Element3D& e = *tgt[t];
+                    const bool is7 = (e.type == "BEAM7");
+                    const int dpe = is7 ? 14 : 12;
+                    const Eigen::VectorXd fl =
+                        is7 ? beam7LocalEndForces(mc, dm, e, U)
+                            : beam3DLocalEndForces(mc, dm, e, U);
+                    for (int end = 1; end <= 2; ++end) {
+                        const BeamEndForces bf = beamEndForcesAt(fl, dpe, end);
+                        eta[t * 4 + (end - 1) * 2 + 0][k] = bf.My;
+                        eta[t * 4 + (end - 1) * 2 + 1][k] = bf.Vz;
+                    }
+                }
+            });
+        for (std::size_t t = 0; t < tgt.size(); ++t) {
+            for (int end = 1; end <= 2; ++end) {
+                const auto eMy = envelope3DFromInfluence(
+                    mc, laneUse, eta[t * 4 + (end - 1) * 2 + 0]);
+                const auto eVz = envelope3DFromInfluence(
+                    mc, laneUse, eta[t * 4 + (end - 1) * 2 + 1]);
+                LiveBeamEnvelope3D slot;
+                slot.elem = tgt[t]->id;
+                slot.end = end;
+                slot.MyMin = eMy.second;
+                slot.MyMax = eMy.first;
+                slot.VzMin = eVz.second;
+                slot.VzMax = eVz.first;
+                row.liveBeam.push_back(slot);
+            }
+        }
+    }
+    }
+    if (mc.influences.empty()) return;
+    const auto& spec = mc.influences.front();
+    const int dResp = dm.safeDof(spec.node, spec.dof - 1);
+    if (dResp < 0) return;
+    double maxAll = -1e300, minAll = 1e300;
+    for (const auto& lane : mc.lanes) {
+        if (lane.nodes.empty()) continue;
+        Model3D::Lane3D laneUse = lane;
+        if (lane.impact == 1.0 && row.liveImpact.automatic)
+            laneUse.impact = row.liveImpact.factor;
+        std::vector<double> eta(lane.nodes.size(), 0.0);
+        scanTangentLane3D(fac, dm, isC, lane.nodes, lane.dof,
+            [&](std::size_t k, const std::vector<double>& U) {
+                if (k >= eta.size()) return;
+                if (dResp >= 0 && dResp < static_cast<int>(U.size()))
+                    eta[k] = U[dResp];
+            });
+        const auto env = envelope3DFromInfluence(mc, laneUse, eta);
+        maxAll = std::max(maxAll, env.first);
+        minAll = std::min(minAll, env.second);
+    }
+    if (maxAll > -1e299)
+        row.liveDisp.push_back({row.id, maxAll, minAll});
 }
 
 }  // namespace fem

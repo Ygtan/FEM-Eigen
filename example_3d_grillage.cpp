@@ -98,7 +98,14 @@ int main(int argc, char** argv) {
     // 活载内力包络：荷载组合（1.2S_G + 1.4S_Q）必须有活载产生的 M、V，
     // 而上面那段只有影响点的位移。位移包络算不出承载力组合。
     if (!m.lanes.empty()) {
-        auto liveBeam = compute3DLiveBeamEnvelope(m);
+        LaneImpact3D imp;
+        auto liveBeam = compute3DLiveBeamEnvelope(m, &imp);
+        if (imp.automatic) {
+            out << "lane impact\n";
+            out << "f1_vertical=" << imp.f1
+                << " impact_mu=" << imp.mu
+                << " impact_factor=" << imp.factor << "\n";
+        }
         out << "live beam envelope\n";
         for (auto& e : liveBeam)
             out << "E" << e.elem << endName(e.end)

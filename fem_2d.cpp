@@ -1,4 +1,5 @@
 #include "fem_2d.hpp"
+#include "code_loads.hpp"
 
 namespace fem {
 
@@ -2443,9 +2444,7 @@ std::vector<double> computeBucklingFactors2D(const Model2D& m, int nModes) {
 }
 
 double impactCoefficientFromFrequency(double fHz) {
-    if (fHz < 1.5) return 0.05;
-    if (fHz <= 14.0) return 0.1767 * std::log(fHz) - 0.0157;
-    return 0.45;
+    return jtgD60ImpactCoefficient(fHz);
 }
 
 ModelResult makeResult2D(const Model2D& m, const Assembled2D& a,

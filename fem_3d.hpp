@@ -258,6 +258,9 @@ struct Element3D {
     double Wy = 0.0;   // 绕 y 轴截面模量（水平弯曲 My 用）
     double Wt = 0.0;   // 扭转截面模量 J/r_max（扭转剪应力 τ=T/Wt 用）
     int n1 = 0, n2 = 0;
+    // 本阶段才计入的收缩应变。增量法里全局 shrinkageEcs 不能每个阶段都加，
+    // 只在单元第一次参与受力时写入这里。
+    double ecs = 0.0;
 };
 
 // 三维约束：节点 + 自由度(1~6) + 指定位移值。
@@ -324,11 +327,25 @@ struct Model3D {
         // 但阶段是增量法：等效荷载只在本阶段施加一次，产生的变形与内力通过
         // 累计位移跨阶段延续——这与索力"状态量、不累加"是同一套逻辑。
         std::vector<Prestress3D> prestresses;
+        // 相对上一阶段已积累内力的徐变增量 Δφ。只作用在已有应力上，
+        // 本阶段新荷载仍用弹性模量。静定结构的附加位移约为 Δφ 倍既有位移。
+        double creepDphi = 0.0;
+        // 阶段末龄期（天）。>0 且模型给了 PHI0 时，Δφ 改由 φ(t)−φ(t_prev) 计算，
+        // 不再使用 creepDphi。本阶段新加的荷载要到下一龄期才开始徐变。
+        double time = 0.0;
     };
     std::vector<Stage3D> stages;
     double creepPhi = 0.0;
     double creepChi = 0.8;
+    // 徐变曲线 φ = φ0·[(t−t0)/(βH+t−t0)]^power。φ0=0 表示不按龄期。
+    double creepPhi0 = 0.0;
+    double creepT0 = 7.0;
+    double creepBetaH = 700.0;
+    double creepPower = 0.3;
     double shrinkageEcs = 0.0;
+
+    // 与二维 creepCoefficientAt 的简化曲线相同。t≤t0 时为 0。
+    // 多龄期用相邻阶段的差值，不把整段 φ 一次乘到全部应力上。
 
     struct Influence3D {
         int node = 0;
@@ -370,6 +387,16 @@ struct Model3D {
     };
     LaneSurface3D laneSurface;
 };
+
+// 与二维 creepCoefficientAt 的简化曲线相同。t≤t0 时 φ=0。
+// 多龄期取相邻阶段的差值，不把从加载日起的整段 φ 一次乘到后来才加上的应力上。
+inline double creepCoefficientAt3D(const Model3D& m, double timeDays) {
+    if (m.creepPhi0 <= 0.0) return 0.0;
+    const double dt = std::max(0.0, timeDays - m.creepT0);
+    const double den = m.creepBetaH + dt;
+    if (den <= 0.0) return 0.0;
+    return m.creepPhi0 * std::pow(dt / den, m.creepPower);
+}
 
 // ==================== 自由度映射 ====================
 //
@@ -641,12 +668,14 @@ inline Assembled3D assembleModel3D(const Model3D& m) {
 
     // 初应变 / 收缩等效节点荷载
     for (const auto& e : m.elements) {
-        if (e.istrn == 0.0 && m.shrinkageEcs == 0.0) continue;
+        const double ecs = m.shrinkageEcs + e.ecs;
+        if (e.istrn == 0.0 && ecs == 0.0) continue;
         const Vec3 d = m.nodes.at(e.n2) - m.nodes.at(e.n1);
         const double L = std::max(d.norm(), 1e-12);
         const Vec3 c = d / L;
         const double Eeff = e.E / (1.0 + m.creepChi * m.creepPhi);
-        const double P = Eeff * e.A * (e.istrn - m.shrinkageEcs);
+        // 正的收缩应变与正的初应变一样，把两端拉向对方（缩短）。
+        const double P = Eeff * e.A * (e.istrn + ecs);
         for (int k = 0; k < 3; ++k) {
             const int d1 = a.dm.safeDof(e.n1, k);
             const int d2 = a.dm.safeDof(e.n2, k);
@@ -759,6 +788,12 @@ inline SparseMat3D assembleStiffness3D(const Model3D& m, DofMap3D& dm) {
                         trips.emplace_back(g[r], g[c], Ke(r, c));
         }
     }
+    // 弹性支承留在刚度里。硬约束不进这张矩阵，由自由自由度筛选去掉。
+    for (const auto& c : m.constraints) {
+        if (c.k <= 0.0) continue;
+        const int d = dm.safeDof(c.node, c.dof - 1);
+        if (d >= 0) trips.emplace_back(d, d, c.k);
+    }
     SparseMat3D K(nd, nd);
     K.setFromTriplets(trips.begin(), trips.end());
     K.makeCompressed();
@@ -802,6 +837,7 @@ inline std::vector<int> freeDofs3D(const Model3D& m, const DofMap3D& dm,
     const int nd = dm.nDofs;
     std::vector<char> isC(nd, 0);
     for (const auto& c : m.constraints) {
+        if (c.k > 0.0) continue;   // 弹性支承不是固结，刚度已在 K 里
         const int d = dm.safeDof(c.node, c.dof - 1);
         if (d >= 0) isC[d] = 1;
     }
@@ -815,9 +851,20 @@ inline std::vector<int> freeDofs3D(const Model3D& m, const DofMap3D& dm,
     return free;
 }
 
-inline ModalResult3D computeNaturalFrequencies3D(const Model3D& m, int nModes = 6) {
+// Kt 非空时用这套刚度（成桥态切线，含 Ernst 与几何刚度），不再线弹性装配。
+// 切线的索块可能因 ∂T/∂Lh 略不对称，稠密特征问题取对称部分。
+inline ModalResult3D computeNaturalFrequencies3D(const Model3D& m, int nModes = 6,
+                                                 const SparseMat3D* Kt = nullptr) {
     DofMap3D dm;
-    const SparseMat3D K = assembleStiffness3D(m, dm);
+    SparseMat3D Kown;
+    const SparseMat3D* Kp = Kt;
+    if (!Kp) {
+        Kown = assembleStiffness3D(m, dm);
+        Kp = &Kown;
+    } else {
+        dm = buildDofMap3D(m);
+    }
+    const SparseMat3D& K = *Kp;
     const SparseMat3D M = assembleMassMatrix3D(m, dm);
     if (M.nonZeros() == 0)
         throw std::runtime_error("模态分析：全部单元质量为零，请在 *MP 给 DENS（或 *R 给 ADDMASS）");
@@ -844,7 +891,7 @@ inline ModalResult3D computeNaturalFrequencies3D(const Model3D& m, int nModes = 
     Eigen::MatrixXd Kd(nf, nf), Md(nf, nf);
     for (int a = 0; a < nf; ++a)
         for (int b = 0; b < nf; ++b) {
-            Kd(a, b) = K.coeff(free[a], free[b]);
+            Kd(a, b) = 0.5 * (K.coeff(free[a], free[b]) + K.coeff(free[b], free[a]));
             Md(a, b) = M.coeff(free[a], free[b]);
         }
     Eigen::GeneralizedSelfAdjointEigenSolver<Eigen::MatrixXd> ges(Kd, Md);
@@ -857,6 +904,38 @@ inline ModalResult3D computeNaturalFrequencies3D(const Model3D& m, int nModes = 
         out.modes.push_back(std::move(mode));
     }
     return out;
+}
+
+// 竖向弯曲基频：在频率升序的模态里，取梁节点竖向位移占平动能量过半的最低阶。
+// 识别不出返回 -1。汽车冲击要用这一阶，不能拿纵向或扭转的最低频率。
+inline double verticalBendingFrequency3D(const Model3D& m, const DofMap3D& dm,
+                                         const ModalResult3D& modal) {
+    std::vector<int> beams;
+    for (const auto& e : m.elements) {
+        if (e.type != "BEAM" && e.type != "BEAM7") continue;
+        beams.push_back(e.n1);
+        beams.push_back(e.n2);
+    }
+    if (beams.empty()) return -1.0;
+    for (std::size_t i = 0; i < modal.frequencies.size(); ++i) {
+        const double f = modal.frequencies[i];
+        if (f <= 0.0) continue;
+        const auto& mode = modal.modes[i];
+        double w2 = 0.0, uv2 = 0.0;
+        for (int nid : beams) {
+            const int dw = dm.safeDof(nid, 2);
+            const int du = dm.safeDof(nid, 0);
+            const int dv = dm.safeDof(nid, 1);
+            const double w = (dw >= 0 && dw < static_cast<int>(mode.size())) ? mode[dw] : 0.0;
+            const double u = (du >= 0 && du < static_cast<int>(mode.size())) ? mode[du] : 0.0;
+            const double v = (dv >= 0 && dv < static_cast<int>(mode.size())) ? mode[dv] : 0.0;
+            w2 += w * w;
+            uv2 += u * u + v * v;
+        }
+        if (w2 + uv2 <= 0.0) continue;
+        if (w2 / (w2 + uv2) > 0.5) return f;
+    }
+    return -1.0;
 }
 
 inline std::vector<double> computeBucklingFactors3D(const Model3D& m, int nModes = 3) {
@@ -963,6 +1042,10 @@ struct StageResult3D {
     // 本阶段张拉的预应力束的有效预加力（束号 → 有效力 N）。用于前端校核
     // "有效预应力 vs 张拉控制应力"，以及分阶段看"哪批束在哪阶段张拉"。
     std::vector<std::pair<int, double>> prestressForces;
+    // 本阶段施加的徐变等效杆端力（局部坐标，12 分量）。
+    // 位移里已经含徐变变形，再按 K·Δu 取内力会把同一批应力算第二遍。
+    // 报告用的截面内力要扣掉这一项：静定、均匀 Δφ 时应力增量应为 0。
+    std::map<int, std::array<double, 12>> creepRelax;
 };
 
 // 给未参与任何激活单元的节点补齐约束（否则这些节点自由度零刚度）。
@@ -989,6 +1072,10 @@ inline void constrainDisconnected3D(Model3D& mc) {
 // 索力"必须翻译成一对**初应变等效节点荷载**（把两端沿索向拉近 P），才能真正
 // 进入方程。而 P 的增量才是本阶段该加的量：前面阶段已经张拉过的索，若每阶段
 // 都把全量 P 再加一遍，就等于反复张拉。
+inline Eigen::VectorXd beam3DLocalEndForces(const Model3D& m, const DofMap3D& dm,
+                                            const Element3D& e,
+                                            const std::vector<double>& U);
+
 inline std::vector<StageResult3D> solveModel3DStages(const Model3D& m,
                                                      int tensionRounds = 6,
                                                      double tensionTol = 1e-4) {
@@ -1005,6 +1092,12 @@ inline std::vector<StageResult3D> solveModel3DStages(const Model3D& m,
     //   L0state  当前无应力索长。
     //   Tdes     最近一次明确给定的目标索力（写输出算漂移用）。
     std::map<int, double> Tcur, L0state, Tdes;
+    // 已积累的截面应力合力（局部 12 分量），不是 K·u。
+    // 用 std::array：Eigen 定长矩阵的默认构造不填零，map::operator[]
+    // 会把未初始化内存加进下一阶段的等效荷载。
+    std::map<int, std::array<double, 12>> creepForce;
+    // 收缩等效荷载只在单元第一次激活时进增量方程，后面的阶段不再加 ε·L。
+    std::set<int> shrinkageDone;
 
     for (const auto& st : m.stages) {
         for (int id : st.activate) {
@@ -1023,9 +1116,16 @@ inline std::vector<StageResult3D> solveModel3DStages(const Model3D& m,
         mc.nodes = m.nodes;
         mc.constraints = m.constraints;
         mc.loads = st.loads;
-        mc.creepPhi = m.creepPhi; mc.creepChi = m.creepChi; mc.shrinkageEcs = m.shrinkageEcs;
-        for (std::size_t i = 0; i < m.elements.size(); ++i)
-            if (active[i]) mc.elements.push_back(m.elements[i]);
+        mc.creepPhi = m.creepPhi; mc.creepChi = m.creepChi; mc.shrinkageEcs = 0.0;
+        for (std::size_t i = 0; i < m.elements.size(); ++i) {
+            if (!active[i]) continue;
+            Element3D e = m.elements[i];
+            if (m.shrinkageEcs != 0.0 && !shrinkageDone.count(e.id)) {
+                e.ecs = m.shrinkageEcs;
+                shrinkageDone.insert(e.id);
+            }
+            mc.elements.push_back(e);
+        }
         constrainDisconnected3D(mc);
         const DofMap3D dm = buildDofMap3D(mc);
 
@@ -1275,6 +1375,24 @@ inline std::vector<StageResult3D> solveModel3DStages(const Model3D& m,
                 for (const auto& [nd, f] : q.distFz)
                     mcs.loads.push_back({nd, 3, f});
             }
+            if (st.creepDphi != 0.0) {
+                for (const auto& e : mc.elements) {
+                    if (e.type != "BEAM") continue;
+                    const auto itc = creepForce.find(e.id);
+                    if (itc == creepForce.end()) continue;
+                    Eigen::Matrix<double, 12, 1> fl;
+                    for (int i = 0; i < 12; ++i)
+                        fl(i) = st.creepDphi * itc->second[static_cast<std::size_t>(i)];
+                    const Vec3 p1 = m.nodes.at(e.n1), p2 = m.nodes.at(e.n2);
+                    const auto Tg = beam3DTransformation(p1, p2);
+                    // fl = Kl·(T·u) 时，T^T·fl = Ke·u，再求解得到 Δu = Δφ·u。
+                    const Eigen::VectorXd fe = Tg.transpose() * fl;
+                    for (int k = 0; k < 6; ++k) {
+                        mcs.loads.push_back({e.n1, k + 1, fe(k)});
+                        mcs.loads.push_back({e.n2, k + 1, fe(6 + k)});
+                    }
+                }
+            }
             for (auto& e : mcs.elements) {
                 if (e.type != "CABLE") continue;
                 const auto it = Ngoal.find(e.id);
@@ -1361,6 +1479,28 @@ inline std::vector<StageResult3D> solveModel3DStages(const Model3D& m,
         }
         for (const auto& ps : st.prestresses)
             sr.prestressForces.push_back({ps.id, ps.P * ps.loss});
+        for (const auto& e : mc.elements) {
+            if (e.type != "BEAM") continue;
+            const Eigen::VectorXd fel = beam3DLocalEndForces(m, dm, e, U);
+            std::array<double, 12> prev{};
+            const auto itc = creepForce.find(e.id);
+            if (itc != creepForce.end()) prev = itc->second;
+            // 收缩是初应变。自由缩短时 K·Δu 与等效荷载抵消，应力里不留这份力。
+            const double Eeff = e.E / (1.0 + m.creepChi * m.creepPhi);
+            const double Psh = (e.ecs == 0.0) ? 0.0 : Eeff * e.A * e.ecs;
+            std::array<double, 12> stress = prev;
+            std::array<double, 12> applied{};
+            for (int i = 0; i < 12 && i < static_cast<int>(fel.size()); ++i) {
+                const std::size_t k = static_cast<std::size_t>(i);
+                applied[k] = st.creepDphi * prev[k];
+                if (i == 0) applied[k] += Psh;
+                if (i == 6) applied[k] -= Psh;
+                // 应力合力增量 = K·Δu − 徐变等效荷载 − 收缩等效荷载。
+                stress[k] = prev[k] + fel(i) - applied[k];
+            }
+            creepForce[e.id] = stress;
+            if (st.creepDphi != 0.0 || Psh != 0.0) sr.creepRelax[e.id] = applied;
+        }
         out.push_back(sr);
     }
     return out;
@@ -1448,6 +1588,19 @@ inline Eigen::VectorXd beam7LocalEndForces(const Model3D& m, const DofMap3D& dm,
     return Kl * (T * ug);
 }
 
+// 徐变阶段的 K·Δu 含徐变变形。截面应力要扣掉本阶段等效荷载。
+inline Eigen::VectorXd withoutCreepRelax(
+    const Eigen::VectorXd& fl,
+    const std::map<int, std::array<double, 12>>& relax, int eid) {
+    const auto it = relax.find(eid);
+    if (it == relax.end()) return fl;
+    Eigen::VectorXd out = fl;
+    const int n = std::min(12, static_cast<int>(out.size()));
+    for (int i = 0; i < n; ++i)
+        out(i) -= it->second[static_cast<std::size_t>(i)];
+    return out;
+}
+
 // 累积一个截面内力样本（首个样本初始化，避免 0 初值吞掉负值极值）。
 static inline void accumBeamEnv(BeamEnvelope3D& r,
                                 double N, double Vy, double Vz, double T,
@@ -1483,11 +1636,13 @@ inline std::vector<BeamEnvelope3D> compute3DBeamEnvelope(
             if (dm.safeDof(e.n1, 5) < 0 || dm.safeDof(e.n2, 5) < 0) continue;
             auto& r = env[e.id]; r.id = e.id;
             if (e.type == "BEAM7") {
-                const Eigen::VectorXd fl = beam7LocalEndForces(m, dm, e, sr.U);
+                const Eigen::VectorXd fl = withoutCreepRelax(
+                    beam7LocalEndForces(m, dm, e, sr.U), sr.creepRelax, e.id);
                 accumBeamEnv(r, -fl(0),  fl(1),  fl(2), -fl(3), -fl(4), -fl(5), -fl(6));   // i 端
                 accumBeamEnv(r,  fl(7), -fl(8), -fl(9),  fl(10), fl(11), fl(12), fl(13)); // j 端
             } else {
-                const Eigen::VectorXd fl = beam3DLocalEndForces(m, dm, e, sr.U);
+                const Eigen::VectorXd fl = withoutCreepRelax(
+                    beam3DLocalEndForces(m, dm, e, sr.U), sr.creepRelax, e.id);
                 // 截面内力（成员端力，两端同一约定）：
                 //   N(受拉正) = -fl(0) / +fl(6)
                 //   Vy,Vz     = +fl(1) / -fl(7), +fl(2) / -fl(8)
@@ -1876,10 +2031,11 @@ inline std::vector<double> laneWeights3D(const Model3D& m,
         const Vec3 d = b - a;
         return std::sqrt(d.x() * d.x() + d.y() * d.y() + d.z() * d.z());
     };
+    // 端点只取梁内的半段。若再向外镜像半段，总长度变成 L 加两个半跨，
+    // 简支跨中弯矩碰巧不受影响（支座处影响线为 0），悬臂固端弯矩会被放大。
     for (std::size_t i = 0; i < n; ++i) {
-        const double left = (i > 0) ? 0.5 * seg(i - 1, i) : 0.5 * seg(0, 1);
-        const double right = (i + 1 < n) ? 0.5 * seg(i, i + 1)
-                                         : 0.5 * seg(n - 2, n - 1);
+        const double left = (i > 0) ? 0.5 * seg(i - 1, i) : 0.0;
+        const double right = (i + 1 < n) ? 0.5 * seg(i, i + 1) : 0.0;
         w[i] = left + right;
     }
     return w;
@@ -1914,6 +2070,34 @@ struct StageLiveEnvelope3D {
     double maxVal = 0.0, minVal = 0.0;
 };
 
+// IMPACT 缺省（=1）时由竖向基频自动填 1+μ。显式写成非 1 的倍数则尊重手动值。
+// 位移包络和梁端内力包络必须用同一套系数，否则计算书里挠度和弯矩对不上。
+struct LaneImpact3D {
+    double f1 = 0.0;
+    double mu = 0.0;
+    double factor = 1.0;
+    bool automatic = false;
+};
+
+inline LaneImpact3D resolveLaneImpact3D(const Model3D& mc, const SparseMat3D* Kt = nullptr) {
+    LaneImpact3D autoImp;
+    try {
+        const ModalResult3D modal = computeNaturalFrequencies3D(mc, 8, Kt);
+        const DofMap3D dmMod = buildDofMap3D(mc);
+        double f1 = verticalBendingFrequency3D(mc, dmMod, modal);
+        if (f1 < 0.0 && !modal.frequencies.empty()) f1 = modal.frequencies[0];
+        if (f1 > 0.0) {
+            autoImp.f1 = f1;
+            autoImp.mu = jtgD60ImpactCoefficient(f1);
+            autoImp.factor = 1.0 + autoImp.mu;
+            autoImp.automatic = true;
+        }
+    } catch (const std::exception&) {
+        autoImp.automatic = false;
+    }
+    return autoImp;
+}
+
 inline std::vector<StageLiveEnvelope3D> compute3DStageLiveEnvelope(
     const Model3D& m, const Model3D::Influence3D& spec) {
     std::vector<StageLiveEnvelope3D> out;
@@ -1930,9 +2114,16 @@ inline std::vector<StageLiveEnvelope3D> compute3DStageLiveEnvelope(
         constrainDisconnected3D(mc);
 
         double maxAll=-1e300,minAll=1e300;
+        bool wantAuto = false;
+        for (const auto& lane : m.lanes)
+            if (lane.impact == 1.0) wantAuto = true;
+        const LaneImpact3D autoImp = wantAuto ? resolveLaneImpact3D(mc) : LaneImpact3D{};
         for(const auto& lane:m.lanes){
+            Model3D::Lane3D laneUse = lane;
+            if (lane.impact == 1.0 && autoImp.automatic)
+                laneUse.impact = autoImp.factor;
             auto eta=compute3DInfluence(mc,spec,lane);
-            auto env=envelope3DFromInfluence(mc,lane,eta);
+            auto env=envelope3DFromInfluence(mc,laneUse,eta);
             maxAll=std::max(maxAll,env.first); minAll=std::min(minAll,env.second);
         }
         out.push_back({st.id,maxAll,minAll});
@@ -1986,8 +2177,10 @@ inline std::vector<BeamEndForces3D> compute3DFinalStageBeamForces(
             if (dm.safeDof(e.n1, 5) < 0 || dm.safeDof(e.n2, 5) < 0) continue;
             const bool is7 = (e.type == "BEAM7");
             const int dpe = is7 ? 14 : 12;
-            const Eigen::VectorXd fl = is7 ? beam7LocalEndForces(m, dm, e, sr.U)
-                                           : beam3DLocalEndForces(m, dm, e, sr.U);
+            const Eigen::VectorXd fl = withoutCreepRelax(
+                is7 ? beam7LocalEndForces(m, dm, e, sr.U)
+                    : beam3DLocalEndForces(m, dm, e, sr.U),
+                sr.creepRelax, e.id);
             for (int end = 1; end <= 2; ++end) {
                 const BeamEndForces f = beamEndForcesAt(fl, dpe, end);
                 auto& a = acc[{e.id, end}];
@@ -2012,7 +2205,8 @@ struct LiveBeamEnvelope3D {
     double MyMin = 0.0, MyMax = 0.0, VzMin = 0.0, VzMax = 0.0;
 };
 
-inline std::vector<LiveBeamEnvelope3D> compute3DLiveBeamEnvelope(const Model3D& m) {
+inline std::vector<LiveBeamEnvelope3D> compute3DLiveBeamEnvelope(
+    const Model3D& m, LaneImpact3D* impactOut = nullptr) {
     std::vector<LiveBeamEnvelope3D> out;
     if (m.lanes.empty() || m.stages.empty()) return out;
 
@@ -2047,9 +2241,18 @@ inline std::vector<LiveBeamEnvelope3D> compute3DLiveBeamEnvelope(const Model3D& 
             slot.elem = e->id; slot.end = end;
         }
 
+    bool wantAuto = false;
+    for (const auto& lane : m.lanes)
+        if (lane.impact == 1.0) wantAuto = true;
+    const LaneImpact3D autoImp = wantAuto ? resolveLaneImpact3D(mc) : LaneImpact3D{};
+    if (impactOut) *impactOut = autoImp;
+
     for (const auto& lane : m.lanes) {
         const std::size_t npos = lane.nodes.size();
         if (npos == 0) continue;
+        Model3D::Lane3D laneUse = lane;
+        if (lane.impact == 1.0 && autoImp.automatic)
+            laneUse.impact = autoImp.factor;
         // 每单元 × 2 端 × 2 分量
         std::vector<std::vector<double>> eta(tgt.size() * 4,
                                              std::vector<double>(npos, 0.0));
@@ -2078,8 +2281,8 @@ inline std::vector<LiveBeamEnvelope3D> compute3DLiveBeamEnvelope(const Model3D& 
 
         for (std::size_t t = 0; t < tgt.size(); ++t) {
             for (int end = 1; end <= 2; ++end) {
-                const auto eMy = envelope3DFromInfluence(mc, lane, eta[t * 4 + (end - 1) * 2 + 0]);
-                const auto eVz = envelope3DFromInfluence(mc, lane, eta[t * 4 + (end - 1) * 2 + 1]);
+                const auto eMy = envelope3DFromInfluence(mc, laneUse, eta[t * 4 + (end - 1) * 2 + 0]);
+                const auto eVz = envelope3DFromInfluence(mc, laneUse, eta[t * 4 + (end - 1) * 2 + 1]);
                 auto& slot = acc[{tgt[t]->id, end}];
                 slot.MyMin = std::min(slot.MyMin, eMy.second);
                 slot.MyMax = std::max(slot.MyMax, eMy.first);
@@ -2474,8 +2677,12 @@ inline Model3D readModel3D(const std::string& path) {
                 std::string kv;
                 while (ss >> kv) {
                     if (kw == "*CREEP") {
-                        if (kv.rfind("PHI=",0)==0) m.creepPhi=std::stod(kv.substr(4));
+                        if (kv.rfind("PHI0=",0)==0) m.creepPhi0=std::stod(kv.substr(5));
+                        else if (kv.rfind("PHI=",0)==0) m.creepPhi=std::stod(kv.substr(4));
                         else if (kv.rfind("CHI=",0)==0) m.creepChi=std::stod(kv.substr(4));
+                        else if (kv.rfind("T0=",0)==0) m.creepT0=std::stod(kv.substr(3));
+                        else if (kv.rfind("BETAH=",0)==0) m.creepBetaH=std::stod(kv.substr(6));
+                        else if (kv.rfind("POWER=",0)==0) m.creepPower=std::stod(kv.substr(6));
                     } else {
                         if (kv.rfind("ECS=",0)==0) m.shrinkageEcs=std::stod(kv.substr(4));
                     }
@@ -2565,6 +2772,10 @@ inline Model3D readModel3D(const std::string& path) {
                         std::string list=kv.substr(9);
                         std::stringstream ls(list); std::string tok;
                         while(std::getline(ls,tok,',')) st.deactivate.push_back(std::stoi(tok));
+                    } else if (kv.rfind("DPHI=",0)==0) {
+                        st.creepDphi = std::stod(kv.substr(5));
+                    } else if (kv.rfind("TIME=",0)==0) {
+                        st.time = std::stod(kv.substr(5));
                     } else if (kv.rfind("TENSION=",0)==0 || kv.rfind("L0=",0)==0) {
                         // TENSION=12:3.2e6,13:3.1e6
                         // L0=12:10.234,13:10.301

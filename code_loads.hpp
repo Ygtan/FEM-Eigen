@@ -1,11 +1,21 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 
 namespace fem {
 
 // ==================== JTG D60-2015 规范荷载库 ====================
 // 返回 SI 单位（N / N/m / N/m²），与求解器荷载单位一致。
+
+// 汽车冲击系数 μ（JTG D60）。f 为结构竖向基频，单位 Hz。
+// f<1.5 Hz 取 0.05；1.5–14 Hz 为 0.1767·ln(f)−0.0157；f>14 Hz 取 0.45。
+inline double jtgD60ImpactCoefficient(double fHz) {
+    if (!(fHz > 0.0)) return 0.0;
+    if (fHz < 1.5) return 0.05;
+    if (fHz <= 14.0) return 0.1767 * std::log(fHz) - 0.0157;
+    return 0.45;
+}
 
 // 车道荷载均布力 qk = 10.5 kN/m（返回 N/m）。
 inline double jtgD60LaneLoadQk() { return 10500.0; }

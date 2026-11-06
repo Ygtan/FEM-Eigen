@@ -1084,6 +1084,123 @@ void testAnalyticTangentSpeed() {
     check("解析切线：单元级耗时 ≤ 差分的一半", tA / tF, 0.0, 0.5);
 }
 
+// 两阶段：先是悬臂梁受端部力，再激活一根竖向索并命中目标索力。
+// 位移是各阶段的全量平衡，不是线性内核那种可相加的增量。
+void testNonlinearStageCable() {
+    std::printf("\n[非线性施工阶段：悬臂 + 索力命中]\n");
+    const double E = 3.0e10, A = 0.5, Iy = 1.0e-3, Iz = 1.0e-3, J = 1.0e-3, G = 1.2e10;
+    const double L = 10.0, P = -5000.0;
+    Model3D m;
+    m.nodes[1] = Vec3(0, 0, 0);
+    m.nodes[2] = Vec3(L, 0, 0);
+    m.nodes[3] = Vec3(L, 0, 8);
+    Element3D beam;
+    beam.id = 1; beam.type = "BEAM";
+    beam.E = E; beam.A = A; beam.Iy = Iy; beam.Iz = Iz; beam.J = J; beam.G = G;
+    beam.n1 = 1; beam.n2 = 2;
+    Element3D cable;
+    cable.id = 2; cable.type = "CABLE";
+    cable.E = 1.95e11; cable.A = 2.0e-4; cable.n1 = 2; cable.n2 = 3;
+    m.elements = {beam, cable};
+    for (int d = 1; d <= 6; ++d) m.constraints.push_back({1, d, 0.0, 0.0});
+    for (int d = 1; d <= 6; ++d) m.constraints.push_back({3, d, 0.0, 0.0});
+
+    Model3D::Stage3D s1;
+    s1.id = 1;
+    s1.activate = {1};
+    s1.loads = {{2, 3, P}};
+    Model3D::Stage3D s2;
+    s2.id = 2;
+    s2.activate = {2};
+    s2.tensions = {{2, 20000.0}};
+    m.stages = {s1, s2};
+
+    NonlinearOptions3D nl;
+    nl.loadSteps = 4;
+    nl.maxIter = 25;
+    const auto rs = solveModel3DStagesNonlinear(m, nl);
+    check("两个阶段都收敛", (rs.size() == 2 && rs[0].converged && rs[1].converged) ? 0.0 : 1.0,
+          0.0, 0.0);
+
+    const int dz = rs[0].dm.safeDof(2, 2);
+    const double uz1 = rs[0].u[dz];
+    const double uzEuler = P * L * L * L / (3.0 * E * Iy);
+    check("阶段 1 端部挠度 / 欧拉解", uz1 / uzEuler, 1.0, 0.02);
+
+    const int dz2 = rs[1].dm.safeDof(2, 2);
+    const double uz2 = rs[1].u[dz2];
+    const double T = rs[1].cableForce.at(2);
+    check("阶段 2 索力命中目标", T / 20000.0, 1.0, 0.01);
+    check("索把梁端往上拉", (uz2 > uz1) ? 0.0 : 1.0, 0.0, 0.0);
+    std::printf("  uz1=%.4f m  uz2=%.4f m  T=%.1f kN\n", uz1, uz2, T / 1e3);
+}
+
+void testNonlinearStagePrestress() {
+    std::printf("\n[非线性施工阶段：预应力等效荷载]\n");
+    const double E = 2.0e11, A = 0.01, I = 0.01, Pe = 1.0e6;
+    NonlinearOptions3D nl;
+    nl.loadSteps = 2;
+    nl.maxIter = 20;
+
+    Model3D axial;
+    axial.nodes[1] = Vec3(0, 0, 0);
+    axial.nodes[2] = Vec3(10, 0, 0);
+    Element3D b;
+    b.id = 1; b.type = "BEAM"; b.E = E; b.A = A;
+    b.Iy = b.Iz = I; b.J = 1e-4; b.G = 8.0e10; b.n1 = 1; b.n2 = 2;
+    axial.elements.push_back(b);
+    axial.constraints.push_back({1, 1, 0.0, 0.0});
+    axial.constraints.push_back({1, 2, 0.0, 0.0});
+    axial.constraints.push_back({1, 3, 0.0, 0.0});
+    axial.constraints.push_back({1, 4, 0.0, 0.0});
+    axial.constraints.push_back({1, 6, 0.0, 0.0});
+    axial.constraints.push_back({2, 2, 0.0, 0.0});
+    axial.constraints.push_back({2, 3, 0.0, 0.0});
+    axial.constraints.push_back({2, 4, 0.0, 0.0});
+    axial.constraints.push_back({2, 6, 0.0, 0.0});
+    Model3D::Stage3D s1; s1.id = 1; s1.activate = {1};
+    Model3D::Prestress3D ps; ps.id = 1; ps.elems = {1}; ps.P = Pe; ps.e = -0.5; ps.loss = 1.0;
+    s1.prestresses.push_back(ps);
+    axial.stages = {s1};
+    const auto ra = solveModel3DStagesNonlinear(axial, nl);
+    const double ux = ra[0].u[ra[0].dm.safeDof(2, 0)];
+    check("直线束轴压位移 = −Pe·L/(EA)", ux, -Pe * 10.0 / (E * A), 1e-6);
+
+    Model3D curved;
+    curved.nodes[1] = Vec3(0, 0, 0);
+    curved.nodes[2] = Vec3(5, 0, 0);
+    curved.nodes[3] = Vec3(10, 0, 0);
+    b.id = 1; b.n1 = 1; b.n2 = 2; curved.elements.push_back(b);
+    b.id = 2; b.n1 = 2; b.n2 = 3; curved.elements.push_back(b);
+    curved.constraints.push_back({1, 1, 0.0, 0.0});
+    curved.constraints.push_back({1, 2, 0.0, 0.0});
+    curved.constraints.push_back({1, 3, 0.0, 0.0});
+    curved.constraints.push_back({1, 4, 0.0, 0.0});
+    curved.constraints.push_back({1, 6, 0.0, 0.0});
+    curved.constraints.push_back({3, 2, 0.0, 0.0});
+    curved.constraints.push_back({3, 3, 0.0, 0.0});
+    curved.constraints.push_back({3, 4, 0.0, 0.0});
+    curved.constraints.push_back({3, 6, 0.0, 0.0});
+    curved.constraints.push_back({2, 2, 0.0, 0.0});
+    curved.constraints.push_back({2, 4, 0.0, 0.0});
+    curved.constraints.push_back({2, 6, 0.0, 0.0});
+    const double sag = -0.3, L = 10.0;
+    Model3D::Stage3D c1; c1.id = 1; c1.activate = {1, 2};
+    Model3D::Prestress3D pc; pc.id = 1; pc.elems = {1, 2};
+    pc.P = Pe; pc.e = 0.0; pc.s = sag; pc.loss = 1.0;
+    c1.prestresses.push_back(pc);
+    Model3D::Stage3D c2; c2.id = 2;   // 不再写这束，等效荷载仍须留在平衡里
+    curved.stages = {c1, c2};
+    const auto rc = solveModel3DStagesNonlinear(curved, nl);
+    const double want = -Pe * sag * L * L / (12.0 * E * I);
+    const double uz1 = rc[0].u[rc[0].dm.safeDof(2, 2)];
+    const double uz2 = rc[1].u[rc[1].dm.safeDof(2, 2)];
+    check("曲线束跨中上拱 = −Pe·s·L²/(12EI)", uz1, want, 1e-5);
+    check("下一阶段仍保留预加力", uz2, want, 1e-5);
+    std::printf("  uz1=%.6f mm  uz2=%.6f mm  闭式=%.6f mm\n",
+                uz1 * 1e3, uz2 * 1e3, want * 1e3);
+}
+
 }  // namespace
 
 int main() {
@@ -1109,6 +1226,8 @@ int main() {
         testAnalyticTangentSpeed();
         testCableInfluenceMatrix();
         testCableLiveInfluence();
+        testNonlinearStageCable();
+        testNonlinearStagePrestress();
     } catch (const std::exception& e) {
         std::printf("\n[ERROR] 异常: %s\n", e.what());
         ++g_fail;
