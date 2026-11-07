@@ -719,6 +719,11 @@ double creepCoefficientAt(const Model2D& m, double time) {
 double shrinkageStrainAt(const Model2D& m, double time) {
     if (m.shrinkageModel == "CURVE" && !m.shrinkageCurve.points.empty())
         return interpolateTimeCurve(m.shrinkageCurve, time);
+    if (m.creepRh > 0.0 && m.creepH > 0.0 && m.creepFcm > 0.0) {
+        // 从加载龄期算到 time 的新发展收缩。干燥可以更早开始，但更早的部分不在这里。
+        const double ts = m.shrinkageTs > 0.0 ? m.shrinkageTs : m.creepT0;
+        return jtg3362ShrinkageStrain(time, m.creepT0, ts, m.creepRh, m.creepH, m.creepFcm);
+    }
     const double dt = std::max(0.0, time - m.shrinkageTs);
     return m.shrinkageEcsInf * std::pow(dt / (m.shrinkageAlphaDs + dt), m.shrinkagePower);
 }
@@ -729,8 +734,11 @@ void processTimeEffects(Model2D& m,
     if (m.creepSpecs.empty()) return;
     const bool useAge = (now > 0.0);
 
+    const bool codeConcrete = m.creepRh > 0.0 && m.creepH > 0.0 && m.creepFcm > 0.0;
     for (auto& e : m.elements) {
         if (isRigid(e.type)) continue;
+        // 规范曲线是混凝土的。拉索和钢杆保持弹性模量，不跟着折减。
+        if (codeConcrete && e.type != "BEAM") continue;
 
         double bestChi = 0.0, bestDphi = 0.0;
         bool hit = false;
@@ -940,8 +948,12 @@ Model2D readModel2D(const std::string& path) {
                     it = p.find("RH"); if (it != p.end()) m.creepRh = std::stod(it->second);
                     it = p.find("H"); if (it != p.end()) m.creepH = std::stod(it->second);
                     it = p.find("FCM"); if (it != p.end()) m.creepFcm = std::stod(it->second);
-                    if (m.creepRh > 0.0 && m.creepH > 0.0 && m.creepFcm > 0.0)
+                    it = p.find("TS"); if (it != p.end()) m.shrinkageTs = std::stod(it->second);
+                    if (m.creepRh > 0.0 && m.creepH > 0.0 && m.creepFcm > 0.0) {
                         m.creepModel = "JTG3362";
+                        m.shrinkageModel = "JTG3362";
+                        if (p.find("TS") == p.end()) m.shrinkageTs = m.creepT0;
+                    }
                 } else {
                     auto it = p.find("MODEL"); if (it != p.end()) m.shrinkageModel = detail::toUpper(it->second);
                     it = p.find("ECS_INF"); if (it != p.end()) m.shrinkageEcsInf = std::stod(it->second);
@@ -1492,8 +1504,12 @@ Model2D readModel2D(const std::string& path) {
                 it = p.find("RH"); if (it != p.end()) m.creepRh = std::stod(it->second);
                 it = p.find("H"); if (it != p.end()) m.creepH = std::stod(it->second);
                 it = p.find("FCM"); if (it != p.end()) m.creepFcm = std::stod(it->second);
-                if (m.creepRh > 0.0 && m.creepH > 0.0 && m.creepFcm > 0.0)
+                it = p.find("TS"); if (it != p.end()) m.shrinkageTs = std::stod(it->second);
+                if (m.creepRh > 0.0 && m.creepH > 0.0 && m.creepFcm > 0.0) {
                     m.creepModel = "JTG3362";
+                    m.shrinkageModel = "JTG3362";
+                    if (p.find("TS") == p.end()) m.shrinkageTs = m.creepT0;
+                }
             } else {
                 auto it = p.find("MODEL"); if (it != p.end()) m.shrinkageModel = detail::toUpper(it->second);
                 it = p.find("ECS_INF"); if (it != p.end()) m.shrinkageEcsInf = std::stod(it->second);
@@ -2864,7 +2880,14 @@ std::vector<StageResult> solveModel2DStages(const Model2D& m,
         }
         if (st.time > 0.0 && (m.shrinkageModel != "CURVE" || !m.shrinkageCurve.points.empty())) {
             Model2D::ShrinkageSpec sh;
-            sh.all = true;
+            const bool codeShrink = m.creepRh > 0.0 && m.creepH > 0.0 && m.creepFcm > 0.0;
+            if (codeShrink) {
+                sh.all = false;
+                for (const auto& e : m.elements)
+                    if (e.type == "BEAM") sh.elems.push_back(e.id);
+            } else {
+                sh.all = true;
+            }
             const double ecsNow = shrinkageStrainAt(m, st.time);
             const double ecsPrev = prevStageTime > 0.0
                                        ? shrinkageStrainAt(m, prevStageTime)
@@ -2901,7 +2924,9 @@ std::vector<StageResult> solveModel2DStages(const Model2D& m,
                                creepByAge ? st.time : 0.0);
 
         if (creepDPhi != 0.0 && !prevAxialForce.empty()) {
+            const bool codeConcrete = m.creepRh > 0.0 && m.creepH > 0.0 && m.creepFcm > 0.0;
             for (const auto& e : mc.elements) {
+                if (codeConcrete && e.type != "BEAM") continue;
                 auto it = prevAxialForce.find(e.id);
                 if (it == prevAxialForce.end() || it->second == 0.0) continue;
                 const double P = creepDPhi * it->second;
