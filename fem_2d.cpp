@@ -700,8 +700,20 @@ double interpolateTimeCurve(const Model2D::TimeCurve& curve, double time) {
 double creepCoefficientAt(const Model2D& m, double time) {
     if (m.creepModel == "CURVE" && !m.creepCurve.points.empty())
         return interpolateTimeCurve(m.creepCurve, time);
+    double phi0 = m.creepPhi0;
+    double betaH = m.creepBetaH;
+    double power = m.creepPower;
+    if (m.creepRh > 0.0 && m.creepH > 0.0 && m.creepFcm > 0.0) {
+        const Jtg3362Creep c = jtg3362NominalCreep(
+            m.creepRh, m.creepH, m.creepFcm, m.creepT0);
+        phi0 = c.phi0;
+        betaH = c.betaH;
+        power = 0.3;
+    }
     const double dt = std::max(0.0, time - m.creepT0);
-    return m.creepPhi0 * std::pow(dt / (m.creepBetaH + dt), m.creepPower);
+    const double den = betaH + dt;
+    if (den <= 0.0) return 0.0;
+    return phi0 * std::pow(dt / den, power);
 }
 
 double shrinkageStrainAt(const Model2D& m, double time) {
@@ -925,6 +937,11 @@ Model2D readModel2D(const std::string& path) {
                     it = p.find("T0"); if (it != p.end()) m.creepT0 = std::stod(it->second);
                     it = p.find("BETA_H"); if (it != p.end()) m.creepBetaH = std::stod(it->second);
                     it = p.find("POWER"); if (it != p.end()) m.creepPower = std::stod(it->second);
+                    it = p.find("RH"); if (it != p.end()) m.creepRh = std::stod(it->second);
+                    it = p.find("H"); if (it != p.end()) m.creepH = std::stod(it->second);
+                    it = p.find("FCM"); if (it != p.end()) m.creepFcm = std::stod(it->second);
+                    if (m.creepRh > 0.0 && m.creepH > 0.0 && m.creepFcm > 0.0)
+                        m.creepModel = "JTG3362";
                 } else {
                     auto it = p.find("MODEL"); if (it != p.end()) m.shrinkageModel = detail::toUpper(it->second);
                     it = p.find("ECS_INF"); if (it != p.end()) m.shrinkageEcsInf = std::stod(it->second);
@@ -1247,6 +1264,7 @@ Model2D readModel2D(const std::string& path) {
             it = p.find("DIR"); if (it != p.end()) ll.dir = detail::toUpper(it->second);
             it = p.find("METHOD"); if (it != p.end()) ll.method = detail::toUpper(it->second);
             it = p.find("CODE"); if (it != p.end()) ll.autoCode = (detail::toUpper(it->second) == "JTG_D60");
+            it = p.find("IMPACT"); if (it != p.end()) ll.impact = std::stod(it->second);
             if (ll.dir != "GX" && ll.dir != "GY")
                 throw std::runtime_error("*LANE_LOAD DIR 只能为 GX 或 GY");
             if (ll.method != "LINEAR" && ll.method != "NONLINEAR")
@@ -1471,6 +1489,11 @@ Model2D readModel2D(const std::string& path) {
                 it = p.find("T0"); if (it != p.end()) m.creepT0 = std::stod(it->second);
                 it = p.find("BETA_H"); if (it != p.end()) m.creepBetaH = std::stod(it->second);
                 it = p.find("POWER"); if (it != p.end()) m.creepPower = std::stod(it->second);
+                it = p.find("RH"); if (it != p.end()) m.creepRh = std::stod(it->second);
+                it = p.find("H"); if (it != p.end()) m.creepH = std::stod(it->second);
+                it = p.find("FCM"); if (it != p.end()) m.creepFcm = std::stod(it->second);
+                if (m.creepRh > 0.0 && m.creepH > 0.0 && m.creepFcm > 0.0)
+                    m.creepModel = "JTG3362";
             } else {
                 auto it = p.find("MODEL"); if (it != p.end()) m.shrinkageModel = detail::toUpper(it->second);
                 it = p.find("ECS_INF"); if (it != p.end()) m.shrinkageEcsInf = std::stod(it->second);
@@ -2445,6 +2468,66 @@ std::vector<double> computeBucklingFactors2D(const Model2D& m, int nModes) {
 
 double impactCoefficientFromFrequency(double fHz) {
     return jtgD60ImpactCoefficient(fHz);
+}
+
+namespace {
+
+double verticalBendingFrequency2D(const Model2D& m, const ModalResult2D& modal) {
+    std::map<int, int> index;
+    for (const auto& [id, c] : m.nodes) index[id] = static_cast<int>(index.size());
+    std::vector<int> beams;
+    for (const auto& e : m.elements) {
+        if (e.type != "BEAM" || e.conn.size() != 2) continue;
+        beams.push_back(e.conn[0]);
+        beams.push_back(e.conn[1]);
+    }
+    if (beams.empty()) return -1.0;
+    for (std::size_t i = 0; i < modal.frequencies.size(); ++i) {
+        const double f = modal.frequencies[i];
+        if (f <= 0.0) continue;
+        const DenseVec& mode = modal.modes[i];
+        double x2 = 0.0, y2 = 0.0;
+        for (int nid : beams) {
+            const int ix = 3 * index[nid];
+            const int iy = ix + 1;
+            if (iy >= mode.size()) continue;
+            x2 += mode(ix) * mode(ix);
+            y2 += mode(iy) * mode(iy);
+        }
+        if (x2 + y2 <= 0.0) continue;
+        if (y2 / (x2 + y2) > 0.5) return f;
+    }
+    return -1.0;
+}
+
+}  // namespace
+
+LaneImpact2D resolveLaneImpact2D(const Model2D& m) {
+    LaneImpact2D out;
+    bool want = false;
+    for (const auto& lane : m.laneLoads)
+        if (lane.impact == 1.0) want = true;
+    if (!want) return out;
+    try {
+        const ModalResult2D modal = computeNaturalFrequencies2D(m, 8);
+        double f1 = verticalBendingFrequency2D(m, modal);
+        if (f1 < 0.0 && !modal.frequencies.empty()) f1 = modal.frequencies[0];
+        if (f1 > 0.0) {
+            out.f1 = f1;
+            out.mu = jtgD60ImpactCoefficient(f1);
+            out.factor = 1.0 + out.mu;
+            out.automatic = true;
+        }
+    } catch (const std::exception&) {
+        out.automatic = false;
+    }
+    return out;
+}
+
+double laneImpactFactor(const Model2D::LaneLoad& lane, const LaneImpact2D& imp) {
+    if (lane.impact == 1.0 && imp.automatic) return imp.factor;
+    if (lane.impact != 1.0) return lane.impact;
+    return 1.0;
 }
 
 ModelResult makeResult2D(const Model2D& m, const Assembled2D& a,
@@ -3427,11 +3510,9 @@ InfluenceCurve computeInfluenceCurve(const Model2D& m,
         out.s.push_back(s);
     }
 
-    // 索/压杆的激活状态依赖位移，且非线性分析每步都要重算切线，
-    // 这两种情况只能逐位置重新求解。
-    bool needsReSolve = (m.analysisType == "NONLINEAR");
-    for (const auto& e : m.elements)
-        if (e.type == "CABLE" || e.type == "STRUT") { needsReSolve = true; break; }
+    // METHOD=LINEAR（缺省）时，索也按线弹性杆进同一张刚度，装配一次、逐点回代。
+    // 松弛、垂度和几何刚度都不在这条路径上。只有 METHOD=NONLINEAR 才逐位置重解。
+    const bool needsReSolve = (lane.method == "NONLINEAR");
 
     if (needsReSolve) {
         const ModelResult base = solveModel2D(m, type);
@@ -3623,6 +3704,21 @@ std::vector<EnvelopeSpec> defaultEnvelopeSpecs(const Model2D& m) {
                 }
             }
         }
+    }
+    // 车道节点的竖向位移影响线。挠度限值要比汽车荷载本身的位移，
+    // 和内力包络用同一次线弹性装配、同一个 1+μ。
+    std::map<int, int> dispDof;
+    for (const auto& lane : m.laneLoads) {
+        const int dof = (lane.dir == "GX") ? 1 : 2;
+        for (int nid : lane.nodes) dispDof[nid] = dof;
+    }
+    for (const auto& [nid, dof] : dispDof) {
+        Model2D::InfluenceRequest req;
+        req.id = ++id;
+        req.kind = "DISP";
+        req.node = nid;
+        req.dof = dof;
+        specs.push_back({req, "D" + std::to_string(nid) + "_" + std::to_string(dof)});
     }
     return specs;
 }

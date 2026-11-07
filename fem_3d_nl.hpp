@@ -2133,6 +2133,8 @@ inline std::vector<NLStageResult3D> solveModel3DStagesNonlinear(
     std::map<int, std::array<double, 12>> creepForceG;      // 局部应力对应的全局节点力
     std::map<int, std::array<double, 12>> creepLoadG;       // 已施加的全局徐变节点力
     double prevCreepTime = 0.0;
+    // 单元第一次激活的龄期。规范收缩只计这之后新发展的应变，不把浇筑前的收缩放进平衡。
+    std::map<int, double> shrinkBirth;
     int psSeq = 0;
     std::vector<NLStageResult3D> out;
 
@@ -2153,6 +2155,12 @@ inline std::vector<NLStageResult3D> solveModel3DStagesNonlinear(
         }
         for (const auto& ld : st.loads)
             loadSum[{std::get<0>(ld), std::get<1>(ld)}] += std::get<2>(ld);
+        for (std::size_t i = 0; i < m.elements.size(); ++i) {
+            if (!active[i]) continue;
+            const int id = m.elements[i].id;
+            if (!shrinkBirth.count(id))
+                shrinkBirth[id] = st.time > 0.0 ? st.time : m.creepT0;
+        }
 
         Model3D mc;
         mc.nodes = m.nodes;
@@ -2167,7 +2175,17 @@ inline std::vector<NLStageResult3D> solveModel3DStagesNonlinear(
             Element3D e = m.elements[i];
             // 收缩是初应变，每个全量平衡都在，但不是再加一份荷载。
             // 正值缩短。后面的徐变阶段仍用同一个 e.ecs，不会再缩短一个 ε·L。
-            if (m.shrinkageEcs != 0.0) e.ecs += m.shrinkageEcs;
+            if (m.shrinkageEcs != 0.0) {
+                e.ecs += m.shrinkageEcs;
+            } else if (e.type == "BEAM" && st.time > 0.0
+                       && m.creepRh > 0.0 && m.creepH > 0.0 && m.creepFcm > 0.0) {
+                // 手写收缩应变优先。没写时，混凝土梁按附录 C.1 随龄期缩短。索不收缩。
+                const double birth = shrinkBirth.count(e.id) ? shrinkBirth[e.id] : m.creepT0;
+                const double ts = m.shrinkageTs > 0.0 ? m.shrinkageTs : m.creepT0;
+                const double eps = jtg3362ShrinkageStrain(
+                    st.time, birth, ts, m.creepRh, m.creepH, m.creepFcm);
+                if (eps != 0.0) e.ecs += eps;
+            }
             if (e.type == "CABLE") {
                 if (!L0state.count(e.id))
                     L0state[e.id] = (e.L0 > 0.0)
@@ -2204,7 +2222,9 @@ inline std::vector<NLStageResult3D> solveModel3DStagesNonlinear(
         // 有龄期时 Δφ=φ(t)−φ(上一阶段)。第一阶段还没有已积累的应力，增量为 0。
         // 手写 DPHI 只在没写 TIME 时使用，避免同一阶段乘两次。
         double dphi = st.creepDphi;
-        if (st.time > 0.0 && m.creepPhi0 > 0.0) {
+        const bool ageCreep = m.creepPhi0 > 0.0
+            || (m.creepRh > 0.0 && m.creepH > 0.0 && m.creepFcm > 0.0);
+        if (st.time > 0.0 && ageCreep) {
             const double phiNow = creepCoefficientAt3D(m, st.time);
             const double phiPrev = prevCreepTime > 0.0
                                        ? creepCoefficientAt3D(m, prevCreepTime) : 0.0;

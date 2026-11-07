@@ -342,6 +342,14 @@ struct Model3D {
     double creepT0 = 7.0;
     double creepBetaH = 700.0;
     double creepPower = 0.3;
+    // 三者都大于 0 时，名义徐变系数和 βH 改按 JTG 3362 附录 C.2.1，不再用上面的 PHI0。
+    // RH 为百分数，H 为理论厚度 mm，FCM 为圆柱体平均强度 MPa。
+    double creepRh = 0.0;
+    double creepH = 0.0;
+    double creepFcm = 0.0;
+    // 干燥开始龄期（天）。0 表示与加载龄期 creepT0 相同。
+    // 只影响规范收缩：参与受力之前已经发生的收缩不进入平衡。
+    double shrinkageTs = 0.0;
     double shrinkageEcs = 0.0;
 
     // 与二维 creepCoefficientAt 的简化曲线相同。t≤t0 时为 0。
@@ -391,11 +399,21 @@ struct Model3D {
 // 与二维 creepCoefficientAt 的简化曲线相同。t≤t0 时 φ=0。
 // 多龄期取相邻阶段的差值，不把从加载日起的整段 φ 一次乘到后来才加上的应力上。
 inline double creepCoefficientAt3D(const Model3D& m, double timeDays) {
-    if (m.creepPhi0 <= 0.0) return 0.0;
+    double phi0 = m.creepPhi0;
+    double betaH = m.creepBetaH;
+    double power = m.creepPower;
+    if (m.creepRh > 0.0 && m.creepH > 0.0 && m.creepFcm > 0.0) {
+        const Jtg3362Creep c = jtg3362NominalCreep(
+            m.creepRh, m.creepH, m.creepFcm, m.creepT0);
+        phi0 = c.phi0;
+        betaH = c.betaH;
+        power = 0.3;
+    }
+    if (phi0 <= 0.0) return 0.0;
     const double dt = std::max(0.0, timeDays - m.creepT0);
-    const double den = m.creepBetaH + dt;
+    const double den = betaH + dt;
     if (den <= 0.0) return 0.0;
-    return m.creepPhi0 * std::pow(dt / den, m.creepPower);
+    return phi0 * std::pow(dt / den, power);
 }
 
 // ==================== 自由度映射 ====================
@@ -2683,6 +2701,10 @@ inline Model3D readModel3D(const std::string& path) {
                         else if (kv.rfind("T0=",0)==0) m.creepT0=std::stod(kv.substr(3));
                         else if (kv.rfind("BETAH=",0)==0) m.creepBetaH=std::stod(kv.substr(6));
                         else if (kv.rfind("POWER=",0)==0) m.creepPower=std::stod(kv.substr(6));
+                        else if (kv.rfind("RH=",0)==0) m.creepRh=std::stod(kv.substr(3));
+                        else if (kv.rfind("H=",0)==0) m.creepH=std::stod(kv.substr(2));
+                        else if (kv.rfind("FCM=",0)==0) m.creepFcm=std::stod(kv.substr(4));
+                        else if (kv.rfind("TS=",0)==0) m.shrinkageTs=std::stod(kv.substr(3));
                     } else {
                         if (kv.rfind("ECS=",0)==0) m.shrinkageEcs=std::stod(kv.substr(4));
                     }

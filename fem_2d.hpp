@@ -160,6 +160,8 @@ struct Model2D {
         std::string dir = "GY"; // GX 或 GY
         std::string method = "LINEAR"; // LINEAR=影响线叠加；NONLINEAR=直接非线性扫描
         bool autoCode = false;  // CODE=JTG_D60：按跨径自动生成车道荷载
+        // 1 表示按竖向基频自动取 1+μ。写成别的数则当作放大倍数本身。
+        double impact = 1.0;
     };
     std::vector<LaneLoad> laneLoads;
 
@@ -238,6 +240,10 @@ struct Model2D {
     double creepT0 = 7.0;
     double creepBetaH = 700.0;
     double creepPower = 0.3;
+    // 三者都大于 0 时按 JTG 3362 附录 C.2.1 取名义徐变系数和 βH。
+    double creepRh = 0.0;
+    double creepH = 0.0;
+    double creepFcm = 0.0;
 
     std::string shrinkageModel = "CURVE";  // CURVE / CEB90
     double shrinkageEcsInf = 3.0e-4;
@@ -882,6 +888,17 @@ std::vector<double> computeBucklingFactors2D(const Model2D& m, int nModes = 3) ;
 
 // 冲击系数（按基频 f，Hz）：JTG D60 简支梁/连续梁近似。
 double impactCoefficientFromFrequency(double fHz) ;
+
+struct LaneImpact2D {
+    double f1 = 0.0;
+    double mu = 0.0;
+    double factor = 1.0;
+    bool automatic = false;
+};
+
+// IMPACT=1 时由竖向弯曲基频按 JTG D60 取 1+μ。算不出基频则 automatic 为假。
+LaneImpact2D resolveLaneImpact2D(const Model2D& m);
+double laneImpactFactor(const Model2D::LaneLoad& lane, const LaneImpact2D& imp);
 
 // 由位移与装配结果构造 ModelResult（含反力），供响应计算复用。
 ModelResult makeResult2D(const Model2D& m, const Assembled2D& a,

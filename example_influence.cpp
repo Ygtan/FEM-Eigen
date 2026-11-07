@@ -64,9 +64,18 @@ static void writeEnvelopeFile(const std::string& path,
     std::ofstream out(path);
     if (!out) throw std::runtime_error("无法写入包络文件: " + path);
     out << std::setprecision(12);
+    const LaneImpact2D imp = resolveLaneImpact2D(model);
+    const double impact = laneImpactFactor(lane, imp);
     out << "# 车道荷载内力/应力包络\n";
     out << "# LANE " << lane.id << "  dir=" << lane.dir
-        << "  q=" << lane.q << "  P=" << lane.P << "\n";
+        << "  q=" << lane.q << "  P=" << lane.P;
+    if (lane.impact == 1.0 && imp.automatic)
+        out << "  f1_vertical=" << imp.f1
+            << "  impact_mu=" << imp.mu
+            << "  impact_factor=" << imp.factor;
+    else if (impact != 1.0)
+        out << "  impact_factor=" << impact;
+    out << "\n";
     out << "label\tmax\tmin\tsmax\tsmin\n";
 
     for (const auto& sp : specs) {
@@ -76,6 +85,8 @@ static void writeEnvelopeFile(const std::string& path,
         } else {
             const InfluenceCurve c = computeInfluenceCurve(model, lane, sp.req, solver);
             ev = envelopeFromInfluence(model, lane, c);
+            ev.maxVal *= impact;
+            ev.minVal *= impact;
         }
         out << sp.label << '\t' << ev.maxVal << '\t' << ev.minVal
             << '\t' << ev.smax << '\t' << ev.smin << '\n';
