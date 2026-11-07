@@ -1512,12 +1512,15 @@ inline std::vector<double> cableTensionsMinBendingEnergy(const Model3D& m,
         const int d = dm.safeDof(node, dof - 1);
         if (d >= 0) F0(d) += val;
     }
-    // 弹性支承（k>0）：直接进切线并贡献 k·value 的荷载项
+    // 弹性支承（k>0）：刚度已由 assembleStiffness3D 计入（见其"弹性支承留在
+    // 刚度里"一段），这里**只补 k·value 的等效荷载项**。重复再加一次 k 会让
+    // 弹簧刚度翻倍——实测「悬臂梁 + 塔顶弹簧」算例的索力被算成 1358 kN 而
+    // 闭式解是 947 kN（误差 43%）。F0 的 k·value 项 assembleStiffness3D 不管，
+    // 必须在这里补上（弹性支承带非零强制位移时才有）。
     for (const auto& c : mc.constraints) {
         if (c.k <= 0.0) continue;
         const int d = dm.safeDof(c.node, c.dof - 1);
         if (d < 0) continue;
-        K.coeffRef(d, d) += c.k;
         F0(d) += c.k * c.value;
     }
     std::vector<int> cdofs;

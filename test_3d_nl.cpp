@@ -559,11 +559,13 @@ double bareStructureEnergy(const Model3D& m, const std::vector<CableAnchor3D>& c
         const int d = dm.safeDof(node, dof - 1);
         if (d >= 0) F(d) += val;
     }
+    // 弹性支承刚度已由 assembleStiffness3D 计入（其末尾把 k>0 的约束加到对角），
+    // 这里只补 k·value 的等效荷载项——重复加 k 会让弹簧刚度翻倍，能量极小点
+    // 偏移（本算例会从 947 kN 漂到 1358 kN），与内核修复前犯的是同一个错。
     for (const auto& c : mc.constraints) {
         if (c.k <= 0.0) continue;
         const int d = dm.safeDof(c.node, c.dof - 1);
         if (d < 0) continue;
-        K0.coeffRef(d, d) += c.k;
         F(d) += c.k * c.value;
     }
     for (std::size_t k = 0; k < ca.size(); ++k) {
