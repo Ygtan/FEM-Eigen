@@ -74,6 +74,7 @@ struct Model2D {
         double dens = 0.0;  // 材料密度（自动自重）
         double addmass = 0.0; // 附加质量 kg/m（自动自重）
         double istrn = 0.0; // 初应变（cable/strut/truss 预应力）
+        double hTheory = 0.0; // 理论厚度 mm。0 表示没有。模型 creepH>0 时以模型值为准。
         double nu = 0.0;    // 泊松比（>0 时梁按 Timoshenko 考虑剪切变形）
         double K = 5.0 / 6.0; // 剪切修正系数（矩形默认 5/6）
         std::vector<int> conn; // 两个节点号
@@ -311,6 +312,7 @@ struct Model2D {
         double h = 0.0;   // 截面高度（梁温度梯度）
         double addmass = 0.0; // 附加质量 kg/m
         double istrn = 0.0;   // 初应变（cable/strut 预应力）
+        double hTheory = 0.0; // 理论厚度 mm
         double K = 5.0 / 6.0; // 剪切修正系数
     };
     std::map<int, RealConst> realConsts;
@@ -706,9 +708,9 @@ double creepReductionFactor(double chi, double dphi) ;
 
 double interpolateTimeCurve(const Model2D::TimeCurve& curve, double time) ;
 
-double creepCoefficientAt(const Model2D& m, double time) ;
+double creepCoefficientAt(const Model2D& m, double time, double hMm = 0.0) ;
 
-double shrinkageStrainAt(const Model2D& m, double time) ;
+double shrinkageStrainAt(const Model2D& m, double time, double hMm = 0.0) ;
 
 // 处理混凝土徐变的模量折减（AEMM 龄期调整有效模量法）。
 //

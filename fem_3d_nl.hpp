@@ -2178,12 +2178,18 @@ inline std::vector<NLStageResult3D> solveModel3DStagesNonlinear(
             if (m.shrinkageEcs != 0.0) {
                 e.ecs += m.shrinkageEcs;
             } else if (e.type == "BEAM" && st.time > 0.0
-                       && m.creepRh > 0.0 && m.creepH > 0.0 && m.creepFcm > 0.0) {
+                       && m.creepRh > 0.0 && m.creepFcm > 0.0) {
                 // 手写收缩应变优先。没写时，混凝土梁按附录 C.1 随龄期缩短。索不收缩。
+                // 模型上的理论厚度优先；否则用该截面自己的 h=2A/u。
+                const double h = m.creepH > 0.0 ? m.creepH : e.hTheory;
+                if (h <= 0.0) {
+                    mc.elements.push_back(e);
+                    continue;
+                }
                 const double birth = shrinkBirth.count(e.id) ? shrinkBirth[e.id] : m.creepT0;
                 const double ts = m.shrinkageTs > 0.0 ? m.shrinkageTs : m.creepT0;
                 const double eps = jtg3362ShrinkageStrain(
-                    st.time, birth, ts, m.creepRh, m.creepH, m.creepFcm);
+                    st.time, birth, ts, m.creepRh, h, m.creepFcm);
                 if (eps != 0.0) e.ecs += eps;
             }
             if (e.type == "CABLE") {
@@ -2221,29 +2227,38 @@ inline std::vector<NLStageResult3D> solveModel3DStagesNonlinear(
         }
         // 有龄期时 Δφ=φ(t)−φ(上一阶段)。第一阶段还没有已积累的应力，增量为 0。
         // 手写 DPHI 只在没写 TIME 时使用，避免同一阶段乘两次。
+        const bool codeCreep = m.creepRh > 0.0 && m.creepFcm > 0.0
+            && (m.creepH > 0.0 || std::any_of(mc.elements.begin(), mc.elements.end(),
+                    [](const Element3D& el) { return el.hTheory > 0.0; }));
+        const bool ageCreep = m.creepPhi0 > 0.0 || codeCreep;
         double dphi = st.creepDphi;
-        const bool ageCreep = m.creepPhi0 > 0.0
-            || (m.creepRh > 0.0 && m.creepH > 0.0 && m.creepFcm > 0.0);
-        if (st.time > 0.0 && ageCreep) {
+        if (st.time > 0.0 && ageCreep && !codeCreep) {
             const double phiNow = creepCoefficientAt3D(m, st.time);
             const double phiPrev = prevCreepTime > 0.0
                                        ? creepCoefficientAt3D(m, prevCreepTime) : 0.0;
             dphi = prevCreepTime > 0.0 ? (phiNow - phiPrev) : 0.0;
         }
-        if (dphi != 0.0) {
-            for (const auto& e : mc.elements) {
-                if (e.type != "BEAM") continue;
-                const auto itG = creepForceG.find(e.id);
-                const auto itL = creepStress.find(e.id);
-                if (itG == creepForceG.end() || itL == creepStress.end()) continue;
-                auto& g = creepLoadG[e.id];
-                auto& loc = creepApplied[e.id];
-                for (int i = 0; i < 12; ++i) {
-                    g[static_cast<std::size_t>(i)] +=
-                        dphi * itG->second[static_cast<std::size_t>(i)];
-                    loc[static_cast<std::size_t>(i)] +=
-                        dphi * itL->second[static_cast<std::size_t>(i)];
-                }
+        auto dphiAt = [&](double hElem) {
+            if (!(st.time > 0.0 && codeCreep)) return dphi;
+            const double phiNow = creepCoefficientAt3D(m, st.time, hElem);
+            const double phiPrev = prevCreepTime > 0.0
+                                       ? creepCoefficientAt3D(m, prevCreepTime, hElem) : 0.0;
+            return prevCreepTime > 0.0 ? (phiNow - phiPrev) : 0.0;
+        };
+        for (const auto& e : mc.elements) {
+            if (e.type != "BEAM") continue;
+            const double dphiE = codeCreep ? dphiAt(e.hTheory) : dphi;
+            if (dphiE == 0.0) continue;
+            const auto itG = creepForceG.find(e.id);
+            const auto itL = creepStress.find(e.id);
+            if (itG == creepForceG.end() || itL == creepStress.end()) continue;
+            auto& g = creepLoadG[e.id];
+            auto& loc = creepApplied[e.id];
+            for (int i = 0; i < 12; ++i) {
+                g[static_cast<std::size_t>(i)] +=
+                    dphiE * itG->second[static_cast<std::size_t>(i)];
+                loc[static_cast<std::size_t>(i)] +=
+                    dphiE * itL->second[static_cast<std::size_t>(i)];
             }
         }
         for (const auto& e : mc.elements) {

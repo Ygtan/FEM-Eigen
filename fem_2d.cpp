@@ -697,15 +697,16 @@ double interpolateTimeCurve(const Model2D::TimeCurve& curve, double time) {
     return pts.back().second;
 }
 
-double creepCoefficientAt(const Model2D& m, double time) {
+double creepCoefficientAt(const Model2D& m, double time, double hMm) {
     if (m.creepModel == "CURVE" && !m.creepCurve.points.empty())
         return interpolateTimeCurve(m.creepCurve, time);
+    const double h = m.creepH > 0.0 ? m.creepH : hMm;
     double phi0 = m.creepPhi0;
     double betaH = m.creepBetaH;
     double power = m.creepPower;
-    if (m.creepRh > 0.0 && m.creepH > 0.0 && m.creepFcm > 0.0) {
+    if (m.creepRh > 0.0 && h > 0.0 && m.creepFcm > 0.0) {
         const Jtg3362Creep c = jtg3362NominalCreep(
-            m.creepRh, m.creepH, m.creepFcm, m.creepT0);
+            m.creepRh, h, m.creepFcm, m.creepT0);
         phi0 = c.phi0;
         betaH = c.betaH;
         power = 0.3;
@@ -716,13 +717,14 @@ double creepCoefficientAt(const Model2D& m, double time) {
     return phi0 * std::pow(dt / den, power);
 }
 
-double shrinkageStrainAt(const Model2D& m, double time) {
+double shrinkageStrainAt(const Model2D& m, double time, double hMm) {
     if (m.shrinkageModel == "CURVE" && !m.shrinkageCurve.points.empty())
         return interpolateTimeCurve(m.shrinkageCurve, time);
-    if (m.creepRh > 0.0 && m.creepH > 0.0 && m.creepFcm > 0.0) {
+    const double h = m.creepH > 0.0 ? m.creepH : hMm;
+    if (m.creepRh > 0.0 && h > 0.0 && m.creepFcm > 0.0) {
         // 从加载龄期算到 time 的新发展收缩。干燥可以更早开始，但更早的部分不在这里。
         const double ts = m.shrinkageTs > 0.0 ? m.shrinkageTs : m.creepT0;
-        return jtg3362ShrinkageStrain(time, m.creepT0, ts, m.creepRh, m.creepH, m.creepFcm);
+        return jtg3362ShrinkageStrain(time, m.creepT0, ts, m.creepRh, h, m.creepFcm);
     }
     const double dt = std::max(0.0, time - m.shrinkageTs);
     return m.shrinkageEcsInf * std::pow(dt / (m.shrinkageAlphaDs + dt), m.shrinkagePower);
@@ -734,7 +736,7 @@ void processTimeEffects(Model2D& m,
     if (m.creepSpecs.empty()) return;
     const bool useAge = (now > 0.0);
 
-    const bool codeConcrete = m.creepRh > 0.0 && m.creepH > 0.0 && m.creepFcm > 0.0;
+    const bool codeConcrete = m.creepRh > 0.0 && m.creepFcm > 0.0;
     for (auto& e : m.elements) {
         if (isRigid(e.type)) continue;
         // 规范曲线是混凝土的。拉索和钢杆保持弹性模量，不跟着折减。
@@ -752,8 +754,10 @@ void processTimeEffects(Model2D& m,
                     auto it = loadAge->find(e.id);
                     if (it != loadAge->end()) t0 = it->second;
                 }
-                // AEMM：只计加载龄期之后发展的那部分徐变
-                dphi = creepCoefficientAt(m, now) - creepCoefficientAt(m, t0);
+                // AEMM：只计加载龄期之后发展的那部分徐变。
+                // 手写理论厚度覆盖全桥；否则用该截面的 hTheory。
+                const double h = e.hTheory;
+                dphi = creepCoefficientAt(m, now, h) - creepCoefficientAt(m, t0, h);
             }
             const double red = cs.chi * std::max(0.0, dphi);
             if (!hit || red > bestChi * bestDphi) {
@@ -826,6 +830,7 @@ Model2D readModel2D(const std::string& path) {
                     e.h = rit->second.h;
                     e.addmass = rit->second.addmass;
                     e.istrn = rit->second.istrn;
+                    e.hTheory = rit->second.hTheory;
                     e.K = rit->second.K;
                     e.conn = {ni, nj};
                     if (e.type == "BEAM" && e.I <= 0.0)
@@ -949,7 +954,7 @@ Model2D readModel2D(const std::string& path) {
                     it = p.find("H"); if (it != p.end()) m.creepH = std::stod(it->second);
                     it = p.find("FCM"); if (it != p.end()) m.creepFcm = std::stod(it->second);
                     it = p.find("TS"); if (it != p.end()) m.shrinkageTs = std::stod(it->second);
-                    if (m.creepRh > 0.0 && m.creepH > 0.0 && m.creepFcm > 0.0) {
+                    if (m.creepRh > 0.0 && m.creepFcm > 0.0) {
                         m.creepModel = "JTG3362";
                         m.shrinkageModel = "JTG3362";
                         if (p.find("TS") == p.end()) m.shrinkageTs = m.creepT0;
@@ -1075,10 +1080,11 @@ Model2D readModel2D(const std::string& path) {
             it = p.find("H"); if (it != p.end()) rc.h = std::stod(it->second);
             it = p.find("ADDMASS"); if (it != p.end()) rc.addmass = std::stod(it->second);
             it = p.find("ISTRN"); if (it != p.end()) rc.istrn = std::stod(it->second);
+            it = p.find("HTH"); if (it != p.end()) rc.hTheory = std::stod(it->second);
             it = p.find("K"); if (it != p.end()) rc.K = std::stod(it->second);
             for (const auto& [k, v] : p)
                 if (k != "A" && k != "I" && k != "WT" && k != "WB" && k != "H" &&
-                    k != "ADDMASS" && k != "ISTRN" && k != "K")
+                    k != "ADDMASS" && k != "ISTRN" && k != "K" && k != "HTH")
                     std::cerr << "[警告] *R 未知关键字: " << k << "=" << v << "\n";
             m.realConsts[id] = rc;
         } else if (section == "*BOUNDARY") {
@@ -1505,7 +1511,7 @@ Model2D readModel2D(const std::string& path) {
                 it = p.find("H"); if (it != p.end()) m.creepH = std::stod(it->second);
                 it = p.find("FCM"); if (it != p.end()) m.creepFcm = std::stod(it->second);
                 it = p.find("TS"); if (it != p.end()) m.shrinkageTs = std::stod(it->second);
-                if (m.creepRh > 0.0 && m.creepH > 0.0 && m.creepFcm > 0.0) {
+                if (m.creepRh > 0.0 && m.creepFcm > 0.0) {
                     m.creepModel = "JTG3362";
                     m.shrinkageModel = "JTG3362";
                     if (p.find("TS") == p.end()) m.shrinkageTs = m.creepT0;
@@ -2879,21 +2885,38 @@ std::vector<StageResult> solveModel2DStages(const Model2D& m,
             mc.creepSpecs = st.creepSpecs;
         }
         if (st.time > 0.0 && (m.shrinkageModel != "CURVE" || !m.shrinkageCurve.points.empty())) {
-            Model2D::ShrinkageSpec sh;
-            const bool codeShrink = m.creepRh > 0.0 && m.creepH > 0.0 && m.creepFcm > 0.0;
+            const bool codeShrink = m.creepRh > 0.0 && m.creepFcm > 0.0;
             if (codeShrink) {
-                sh.all = false;
-                for (const auto& e : m.elements)
-                    if (e.type == "BEAM") sh.elems.push_back(e.id);
+                std::map<long long, std::vector<int>> groups;
+                for (const auto& e : m.elements) {
+                    if (e.type != "BEAM") continue;
+                    const double h = m.creepH > 0.0 ? m.creepH : e.hTheory;
+                    if (h <= 0.0) continue;
+                    groups[std::llround(h * 1000.0)].push_back(e.id);
+                }
+                mc.shrinkageSpecs.clear();
+                for (const auto& [key, ids] : groups) {
+                    const double h = static_cast<double>(key) / 1000.0;
+                    Model2D::ShrinkageSpec sh;
+                    sh.all = false;
+                    sh.elems = ids;
+                    const double ecsNow = shrinkageStrainAt(m, st.time, h);
+                    const double ecsPrev = prevStageTime > 0.0
+                                               ? shrinkageStrainAt(m, prevStageTime, h)
+                                               : 0.0;
+                    sh.ecs = (prevStageTime > 0.0) ? (ecsNow - ecsPrev) : ecsNow;
+                    mc.shrinkageSpecs.push_back(sh);
+                }
             } else {
+                Model2D::ShrinkageSpec sh;
                 sh.all = true;
+                const double ecsNow = shrinkageStrainAt(m, st.time);
+                const double ecsPrev = prevStageTime > 0.0
+                                           ? shrinkageStrainAt(m, prevStageTime)
+                                           : 0.0;
+                sh.ecs = (prevStageTime > 0.0) ? (ecsNow - ecsPrev) : ecsNow;
+                mc.shrinkageSpecs = {sh};
             }
-            const double ecsNow = shrinkageStrainAt(m, st.time);
-            const double ecsPrev = prevStageTime > 0.0
-                                       ? shrinkageStrainAt(m, prevStageTime)
-                                       : 0.0;
-            sh.ecs = (prevStageTime > 0.0) ? (ecsNow - ecsPrev) : ecsNow;
-            mc.shrinkageSpecs = {sh};
         } else {
             mc.shrinkageSpecs = st.shrinkageSpecs;
         }
@@ -2924,7 +2947,7 @@ std::vector<StageResult> solveModel2DStages(const Model2D& m,
                                creepByAge ? st.time : 0.0);
 
         if (creepDPhi != 0.0 && !prevAxialForce.empty()) {
-            const bool codeConcrete = m.creepRh > 0.0 && m.creepH > 0.0 && m.creepFcm > 0.0;
+            const bool codeConcrete = m.creepRh > 0.0 && m.creepFcm > 0.0;
             for (const auto& e : mc.elements) {
                 if (codeConcrete && e.type != "BEAM") continue;
                 auto it = prevAxialForce.find(e.id);
@@ -2942,11 +2965,21 @@ std::vector<StageResult> solveModel2DStages(const Model2D& m,
                     mc.loads.push_back({e.conn[1], 1, P * c(0)});
                     mc.loads.push_back({e.conn[1], 2, P * c(1)});
                 } else if (e.type == "BEAM") {
+                    double dphiE = creepDPhi;
+                    if (m.creepRh > 0.0 && m.creepFcm > 0.0 && m.creepH <= 0.0
+                        && e.hTheory > 0.0 && st.time > 0.0) {
+                        const double now = creepCoefficientAt(m, st.time, e.hTheory);
+                        const double prev = prevStageTime > 0.0
+                                                ? creepCoefficientAt(m, prevStageTime, e.hTheory)
+                                                : 0.0;
+                        dphiE = prevStageTime > 0.0 ? (now - prev) : now;
+                    }
+                    const double Pb = dphiE * it->second;
                     DenseVec fl = DenseVec::Zero(6);
-                    fl(0) = -P;
-                    fl(3) = P;
-                    if (prevM1.count(e.id)) fl(2) = -creepDPhi * prevM1[e.id];
-                    if (prevM2.count(e.id)) fl(5) = creepDPhi * prevM2[e.id];
+                    fl(0) = -Pb;
+                    fl(3) = Pb;
+                    if (prevM1.count(e.id)) fl(2) = -dphiE * prevM1[e.id];
+                    if (prevM2.count(e.id)) fl(5) = dphiE * prevM2[e.id];
                     EulerBeam2D be{e.E, e.A, e.I, p1, p2};
                     const DenseVec fe = be.transformation().transpose() * fl;
                     for (int d = 0; d < 3; ++d) {

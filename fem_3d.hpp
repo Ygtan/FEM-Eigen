@@ -261,6 +261,8 @@ struct Element3D {
     // 本阶段才计入的收缩应变。增量法里全局 shrinkageEcs 不能每个阶段都加，
     // 只在单元第一次参与受力时写入这里。
     double ecs = 0.0;
+    // 理论厚度 mm。0 表示没有。模型上的 creepH>0 时以模型值为准。
+    double hTheory = 0.0;
 };
 
 // 三维约束：节点 + 自由度(1~6) + 指定位移值。
@@ -398,13 +400,15 @@ struct Model3D {
 
 // 与二维 creepCoefficientAt 的简化曲线相同。t≤t0 时 φ=0。
 // 多龄期取相邻阶段的差值，不把从加载日起的整段 φ 一次乘到后来才加上的应力上。
-inline double creepCoefficientAt3D(const Model3D& m, double timeDays) {
+// hMm 是构件自己的理论厚度。模型写了 creepH 时全桥用那一个数。
+inline double creepCoefficientAt3D(const Model3D& m, double timeDays, double hMm = 0.0) {
+    const double h = m.creepH > 0.0 ? m.creepH : hMm;
     double phi0 = m.creepPhi0;
     double betaH = m.creepBetaH;
     double power = m.creepPower;
-    if (m.creepRh > 0.0 && m.creepH > 0.0 && m.creepFcm > 0.0) {
+    if (m.creepRh > 0.0 && h > 0.0 && m.creepFcm > 0.0) {
         const Jtg3362Creep c = jtg3362NominalCreep(
-            m.creepRh, m.creepH, m.creepFcm, m.creepT0);
+            m.creepRh, h, m.creepFcm, m.creepT0);
         phi0 = c.phi0;
         betaH = c.betaH;
         power = 0.3;
@@ -2541,7 +2545,7 @@ inline Model3D readModel3D(const std::string& path) {
     std::map<int, std::string> types;
     std::map<int, double> mats;
     std::map<int, double> areas;
-    std::map<int, double> realIy, realIz, realJ, realG;
+    std::map<int, double> realIy, realIz, realJ, realG, realHth;
     std::map<int, double> realIstrn;
     std::map<int, double> mpDens, realAddmass;
     std::map<int,double> realWtop, realWbot, realWy, realWt, realIw;
@@ -2588,6 +2592,7 @@ inline Model3D readModel3D(const std::string& path) {
         e.Wy = realWy[activeReal];     e.Wt = realWt[activeReal];
         e.Iw = realIw[activeReal];
         e.w = realCableW[activeReal];  e.L0 = realCableL0[activeReal];
+        e.hTheory = realHth[activeReal];
         // 单元级覆盖：*EN,id,n1,n2 W=<N/m> L0=<m>
         // 每根索的 W/L0 本来就各不相同（下料长度是逐根量），只靠 *R 共享
         // 一份会逼得同类索拆成多个实常数。
@@ -2757,6 +2762,7 @@ inline Model3D readModel3D(const std::string& path) {
                 // 注意 "W=" 与 "WT=/WB=/WY=/WTORS=" 前缀不同，靠精确前两位区分。
                 else if (kv.rfind("W=",0)==0) realCableW[id]=std::stod(kv.substr(2));
                 else if (kv.rfind("L0=",0)==0) realCableL0[id]=std::stod(kv.substr(3));
+                else if (kv.rfind("HTH=",0)==0) realHth[id]=std::stod(kv.substr(4));
                 else std::cerr << "[警告] *R 未知关键字: " << kv << "\n";
             }
             areas[id]=A;
