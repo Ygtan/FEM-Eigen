@@ -2448,8 +2448,7 @@ inline void fillTangentGirderLive(const Model3D& mc, const NLTangent3D& tangent,
     for (const auto& lane : mc.lanes) {
         if (lane.nodes.empty()) continue;
         Model3D::Lane3D laneUse = lane;
-        if (lane.impact == 1.0 && row.liveImpact.automatic)
-            laneUse.impact = row.liveImpact.factor;
+        laneUse.impact = 1.0;   // 位移包络不计冲击（表 4.3.2 挠度限值，冲击只放大内力）
         std::vector<double> eta(lane.nodes.size(), 0.0);
         scanTangentLane3D(fac, dm, isC, lane.nodes, lane.dof,
             [&](std::size_t k, const std::vector<double>& U) {

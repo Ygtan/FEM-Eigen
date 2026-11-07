@@ -2093,7 +2093,8 @@ struct StageLiveEnvelope3D {
 };
 
 // IMPACT 缺省（=1）时由竖向基频自动填 1+μ。显式写成非 1 的倍数则尊重手动值。
-// 位移包络和梁端内力包络必须用同一套系数，否则计算书里挠度和弯矩对不上。
+// 冲击系数只用于**内力/应力包络**（承载力组合）；位移包络不计冲击，见
+// compute3DStageLiveEnvelope。两处用同一套 resolveLaneImpact3D 求 f1/μ，系数一致。
 struct LaneImpact3D {
     double f1 = 0.0;
     double mu = 0.0;
@@ -2136,14 +2137,12 @@ inline std::vector<StageLiveEnvelope3D> compute3DStageLiveEnvelope(
         constrainDisconnected3D(mc);
 
         double maxAll=-1e300,minAll=1e300;
-        bool wantAuto = false;
-        for (const auto& lane : m.lanes)
-            if (lane.impact == 1.0) wantAuto = true;
-        const LaneImpact3D autoImp = wantAuto ? resolveLaneImpact3D(mc) : LaneImpact3D{};
+        // 位移包络不计冲击：JTG D60-2015 表 4.3.2 的挠度限值针对汽车荷载
+        // 本身（不计冲击），冲击系数只放大内力（承载力组合）。故这里把
+        // lane.impact 压成 1.0，横向折减/偏载增大仍保留。基频也不用算。
         for(const auto& lane:m.lanes){
             Model3D::Lane3D laneUse = lane;
-            if (lane.impact == 1.0 && autoImp.automatic)
-                laneUse.impact = autoImp.factor;
+            laneUse.impact = 1.0;
             auto eta=compute3DInfluence(mc,spec,lane);
             auto env=envelope3DFromInfluence(mc,laneUse,eta);
             maxAll=std::max(maxAll,env.first); minAll=std::min(minAll,env.second);

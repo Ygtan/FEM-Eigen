@@ -85,8 +85,13 @@ static void writeEnvelopeFile(const std::string& path,
         } else {
             const InfluenceCurve c = computeInfluenceCurve(model, lane, sp.req, solver);
             ev = envelopeFromInfluence(model, lane, c);
-            ev.maxVal *= impact;
-            ev.minVal *= impact;
+            // 冲击系数只放大**内力/应力**包络（承载力组合用），不放大位移包络：
+            // JTG D60-2015 表 4.3.2 的挠度限值针对汽车荷载「不计冲击」本身的挠度，
+            // 位移若乘了 1+μ，验算时还得除掉，且报告里展示的"含冲击挠度"会误导。
+            if (sp.req.kind != "DISP") {
+                ev.maxVal *= impact;
+                ev.minVal *= impact;
+            }
         }
         out << sp.label << '\t' << ev.maxVal << '\t' << ev.minVal
             << '\t' << ev.smax << '\t' << ev.smin << '\n';

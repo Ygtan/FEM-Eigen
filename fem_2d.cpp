@@ -3763,8 +3763,8 @@ std::vector<EnvelopeSpec> defaultEnvelopeSpecs(const Model2D& m) {
             }
         }
     }
-    // 车道节点的竖向位移影响线。挠度限值要比汽车荷载本身的位移，
-    // 和内力包络用同一次线弹性装配、同一个 1+μ。
+    // 车道节点的竖向位移影响线。挠度限值要比汽车荷载本身（不计冲击）的
+    // 位移，和内力包络同一次线弹性装配，但**不乘 1+μ**（冲击只放大内力）。
     std::map<int, int> dispDof;
     for (const auto& lane : m.laneLoads) {
         const int dof = (lane.dir == "GX") ? 1 : 2;
