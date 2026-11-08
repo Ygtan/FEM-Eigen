@@ -1,4 +1,5 @@
 #include "fem_3d.hpp"
+#include "modal_output_3d.hpp"
 
 #include <fstream>
 #include <iostream>
@@ -111,6 +112,34 @@ int main(int argc, char** argv) {
             out << "E" << e.elem << endName(e.end)
                 << " MyMin=" << nz(e.MyMin) << " MyMax=" << nz(e.MyMax)
                 << " VzMin=" << nz(e.VzMin) << " VzMax=" << nz(e.VzMax) << "\n";
+    }
+
+    // ---- 模态：把内核本来就在算的东西写出来 -------------------------------
+    // resolveLaneImpact3D 内部已经对**同一个成桥态构型**调了
+    // computeNaturalFrequencies3D(mc, 8)，但只留下一个竖向基频用于 μ。这里
+    // 用同样的 K/M 再输出前 8 阶的频率、周期、参与质量与节点振型，报告里
+    // 的逐阶数值与 f1_vertical 因而天然同源，不存在"两套频率"。
+    //
+    // 不静默：无质量 / 无自由自由度 / 特征求解抛异常都要写一段 ERROR=…，
+    // 让下游明确知道"这次没有模态结果"，而不是解析不到就当没有这回事。
+    {
+        const Model3D mc = finalStageModel3D(m);
+        const DofMap3D dmM = buildDofMap3D(mc);
+        const SparseMat3D Mm = assembleMassMatrix3D(mc, dmM);
+        if (Mm.nonZeros() == 0) {
+            out << modalErrorSection3D("modal", "no_mass");
+        } else {
+            try {
+                const ModalResult3D modal = computeNaturalFrequencies3D(mc, 8);
+                if (modal.frequencies.empty())
+                    out << modalErrorSection3D("modal", "no_free_dof");
+                else
+                    out << formatModalSection3D(dmM, Mm, modal, "modal");
+            } catch (const std::exception& e) {
+                out << modalErrorSection3D("modal", "solver_exception");
+                std::cerr << "[modal] " << e.what() << "\n";
+            }
+        }
     }
     std::cout << "summary written: " << path.substr(0,path.rfind(".dat"))+"_summary.txt" << "\n";
     return 0;

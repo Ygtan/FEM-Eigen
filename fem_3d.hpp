@@ -2226,12 +2226,14 @@ struct LiveBeamEnvelope3D {
     double MyMin = 0.0, MyMax = 0.0, VzMin = 0.0, VzMax = 0.0;
 };
 
-inline std::vector<LiveBeamEnvelope3D> compute3DLiveBeamEnvelope(
-    const Model3D& m, LaneImpact3D* impactOut = nullptr) {
-    std::vector<LiveBeamEnvelope3D> out;
-    if (m.lanes.empty() || m.stages.empty()) return out;
-
-    // 取最后阶段激活的单元构成
+// 成桥态构型：按各 *STAGE 的 activate / deactivate 取最后仍在的单元，
+// 断开的孤立节点补约束。活载影响线与模态分析都必须用**同一个构型**——
+// 拿"某一跨还没浇完"的临时刚度去算自振频率，和拿全桥刚度算，结果不是
+// 一回事；汽车冲击系数的 f1_vertical 用的就是这个 mc。
+//
+// 无施工阶段时全模型即成桥态（调用方自己决定要不要早退）。
+inline Model3D finalStageModel3D(const Model3D& m) {
+    if (m.stages.empty()) return m;
     std::vector<char> active(m.elements.size(), 0);
     for (const auto& st : m.stages) {
         for (int id : st.activate)
@@ -2248,6 +2250,15 @@ inline std::vector<LiveBeamEnvelope3D> compute3DLiveBeamEnvelope(
     for (std::size_t i = 0; i < m.elements.size(); ++i)
         if (active[i]) mc.elements.push_back(m.elements[i]);
     constrainDisconnected3D(mc);
+    return mc;
+}
+
+inline std::vector<LiveBeamEnvelope3D> compute3DLiveBeamEnvelope(
+    const Model3D& m, LaneImpact3D* impactOut = nullptr) {
+    std::vector<LiveBeamEnvelope3D> out;
+    if (m.lanes.empty() || m.stages.empty()) return out;
+
+    const Model3D mc = finalStageModel3D(m);
 
     std::vector<const Element3D*> tgt;
     for (const auto& e : mc.elements)

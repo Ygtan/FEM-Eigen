@@ -92,6 +92,7 @@
 
 #include "fem_3d_nl.hpp"
 #include "fem_2d.hpp"   // impactCoefficientFromFrequency（JTG D60 冲击系数）
+#include "modal_output_3d.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -1177,6 +1178,10 @@ int main(int argc, char** argv) {
             double Nmin = 0, Nmax = 0, MyMin = 0, MyMax = 0, VzMin = 0, VzMax = 0;
         };
         std::vector<GirderLiveEnd> girderLive;
+        // 成桥态切线刚度上的完整模态（频率 / 周期 / 参与质量 / 节点振型）。
+        // 在下面算 f1Vertical 的同一次 modalFromTangent 里就地格式化成文本，
+        // 避免把 K/M 的生命周期拖到输出段；没有就是没有，输出 ERROR 段。
+        std::string modalSection;
         if (converged) {
             // 车道：显式 *LANE_3D 优先；没写则自动识别主梁纵向链。
             // 识别不出时 girderLive 留空，前端按"未定义车道"提示，不静默。
@@ -1213,6 +1218,10 @@ int main(int argc, char** argv) {
                                 if (f1Vertical < 0.0) f1Vertical = modal.frequencies[0];
                                 impactMu = impactCoefficientFromFrequency(f1Vertical);
                                 impactFactor = 1.0 + impactMu;
+                                // 同一份 ModalResult3D：报告逐阶数值与
+                                // f1_vertical / μ 必然出自同一次特征求解。
+                                modalSection = formatModalSection3D(
+                                    dmLive, Mlive, modal, "[MODAL]");
                             }
                         }
                     }
@@ -1640,6 +1649,13 @@ int main(int argc, char** argv) {
                 }
             }
         }
+        // 模态段放在 [END] 前。没算出模态（未收敛 / 无车道 / 无质量）时
+        // 也要写一段 ERROR=…，下游据此明确标注「本次无模态结果」。
+        if (!modalSection.empty())
+            std::fputs(modalSection.c_str(), f);
+        else
+            std::fputs(modalErrorSection3D(
+                "[MODAL]", converged ? "no_lane_or_no_mass" : "not_converged").c_str(), f);
         std::fprintf(f, "[END]\n");
         std::fclose(f);
 

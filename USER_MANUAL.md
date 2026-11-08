@@ -228,7 +228,7 @@ NODES=1,2,3 DOF=2 CODE=JTG_D60
 
 - 二维 `example_mixed`：写 `<模型名>.result`（节点位移、单元内力、单元应力、支座反力）。
 - 二维 `example_viz`：额外生成 `*_model.svg`、`*_disp.svg`、`*_moment.svg`、`*_shear.svg`、`*_stress_top/bottom.svg` 等矢量图。
-- 三维 `example_3d_grillage`：写 `*_summary.txt`（位移包络、梁内力包络）。
+- 三维 `example_3d_grillage`：写 `*_summary.txt`（位移包络、梁内力包络、成桥态恒载/活载内力、施工阶段索力与预应力、冲击系数，以及 `modal` 段：前 8 阶自振频率/周期/参与质量/节点振型；质量全为零时写 `ERROR=no_mass`）。成桥态索承体系 `cable_solver` 的对应段是 `[MODAL]`（12 阶，成桥态一致切线刚度）。段格式见 `modal_output_3d.hpp`。
 - 三维 `example_3d_beam_live`：写 `*_live_envelope.csv`（轴力/弯矩/剪力/应力/双力矩包络）。
 
 ## 11. 常见问题

@@ -2,6 +2,40 @@
 
 本文件记录 FEM-Eigen 项目的新增功能和主要修改内容。
 
+## 2026-11-08
+
+### 新增：模态结果全量输出（不改算法、不改输入格式、不改 CMake 目标）
+
+内核一直在解 Kφ=λMφ（`computeNaturalFrequencies3D`、`cable_solver.cpp` 的
+`modalFromTangent`），但只为 JTG D60 汽车冲击系数留下一个竖向基频
+`f1_vertical`，各阶频率与振型只存在于局部变量里。本轮把**同一次特征求解**
+的结果写进结果文件，供 BridgeStudio 解析：
+
+- 新增 `modal_output_3d.hpp`：`formatModalSection3D(dm, M, modal, header)`
+  输出 `NMODES/NDOF`、`MASS X/Y/Z`（各方向平动总质量 rᵀMr，kg）、每阶
+  `F <i> <f_Hz> <T_s> <mx> <my> <mz> <mnorm>`（有效参与质量 Γ_d²/(φᵀMφ)
+  与 φᵀMφ 自检值）、每节点 `S <i> <node> <ux> <uy> <uz>`；
+  `modalErrorSection3D` 在算不出时写 `ERROR=<code>`，不静默跳过。
+  自由度顺序 [u,v,w,θx,θy,θz]，故 Z = 竖向 w。
+- `fem_3d.hpp`：把 `compute3DLiveBeamEnvelope` 里的「取各 *STAGE
+  activate/deactivate 后的成桥态构型 + `constrainDisconnected3D`」抽成
+  `finalStageModel3D(m)`，两个调用方共用，保证模态与 `resolveLaneImpact3D`
+  的 f1 使用**同一个构型**。无施工阶段时返回全模型。
+- `example_3d_grillage.cpp`：末尾写 `modal` 段，成桥态构型 + 线弹性刚度
+  前 8 阶。无质量 / 无自由自由度 / 特征求解异常分别写 `no_mass` /
+  `no_free_dof` / `solver_exception`。
+- `cable_solver.cpp`：在算 `f1Vertical` 的同一次 `modalFromTangent` 里
+  就地格式化 12 阶（成桥态一致切线刚度，含索的 Ernst 效应与几何刚度），
+  输出 `[MODAL]` 段；未收敛 / 无车道 / 无质量写 ERROR 段。
+- 结果段向后兼容：新段放在既有段之后，段内行不匹配任何旧解析正则；
+  `<stem>_summary.txt` 与 `<stem>_cable.txt` 的其它字段一字未改。
+
+**验证**：10 m 简支梁 `verify_3d_modal.dat` 前 8 阶频率
+119.954 / 128.199 / 146.913 / 387.766 / 479.865 / 587.712 Hz 与黄金基线
+`tests/regression/baselines/verify_3d_modal.modal.txt` 逐项吻合，
+f₁ 与 Euler-Bernoulli 闭式解 119.9534 Hz 误差 0.0007%。
+构建：`mingw32-make -C build example_3d_grillage cable_solver`。
+
 ## 2026-11-07（续）
 
 ### 修正：活载位移包络不计冲击
