@@ -2,6 +2,7 @@
 // 读入与线性阶段相同的 .dat，调用 solveModel3DStagesNonlinear。
 // 每个阶段的位移是当前结构的全量平衡，不能按线性增量累加。
 #include "fem_3d_nl.hpp"
+#include "newton_output_3d.hpp"   // [NEWTON]：每阶段内层共转列式 Newton 过程
 
 #include <fstream>
 #include <iostream>
@@ -57,6 +58,13 @@ int main(int argc, char** argv) {
                         << " " << f.T << " " << f.My << " " << f.Mz << "\n";
                 }
             }
+            // 内层 Newton 过程：每阶段一段。与 [LENGTH] 的外层迭代不是一层；
+            // 本算例的 TENSION= 调索另由 CableLengthResult3D 处理，不在结果
+            // 文件里重复堆中间求解。阶段位移是全量平衡，不能跨阶段累加。
+            if (!s.newton.steps.empty())
+                out << formatNewtonSection3D(s.newton, "[NEWTON]", s.id);
+            else
+                out << newtonErrorSection3D("[NEWTON]", "no_newton_solution");
             out << "[ENDSTAGE]\n";
         }
         // 没有索时，活载仍是参考几何上的线弹性影响线，与 example_3d_grillage 相同。

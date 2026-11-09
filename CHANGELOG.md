@@ -4,6 +4,56 @@
 
 ## 2026-11-09
 
+### 新增：内层共转列式 Newton 过程量输出（`[NEWTON]`，不改算法）
+
+以前 `solveModel3DNonlinear` 的荷载步 / 逐次 Newton 残差只在 `verbose`
+控制台里打印，结果文件完全没有；`[LENGTH]` 只记录**外层**迭代（改 L0 或
+制造线形 ΔX）。这次把**内层**过程量补上，两层迭代在计算书里分开读：
+
+- `fem_3d_nl.hpp` 新增 `NewtonStep3D` / `NewtonTrace3D`，在 Newton 循环里
+  逐次记录荷载步号 `k`、步内迭代号、λ=k/NSTEP、|R|、|du|、|Ftarget|、
+  是否重建符号分解、本步是否收敛。`NonlinearResult3D.trace` 带出；
+  `CableLengthResult3D` / `ErectionGeometryResult3D` /
+  `CompletionStateResult3D` 用 `lastNewton` 透传**收敛那一轮**，
+  `NLStageResult3D.newton` 每阶段各带一段。
+- 新增 `newton_output_3d.hpp`（只格式化，不重算力学）：`[NEWTON]` 段含
+  `KIND/STATUS/STAGE/NSTEP/NITER/MAXITER/TOLF/TOLD/CONVERGED/REFACT/
+  RESFIRST/RESLAST` + 逐迭代 `S` 行；无内层过程时写 `ERROR=` 段，不静默。
+- `cable_solver.cpp` 在 `[LENGTH]` 后写最终成桥态那一段；
+  `example_3d_stage_nl.cpp` 在每阶段 `[ENDSTAGE]` 前各写一段（带 `STAGE=`）。
+  线性梁格 / 桁架 / 拱桥走线性内核，本来没有这一段。
+- **口径**：收敛判据是 `|R| ≤ tolForce·max(|Ftarget|,1e-12)` **或**
+  `|du| ≤ tolDisp·max(1,|u|)`，每个荷载步都要满足；换荷载步时 |Ftarget|
+  变大、残差允许跳升，整条曲线不是单调的。`REFACT` 只统计符号分解重建，
+  数值 `refactorize` 不计。规范没有 Newton 迭代轮数的合格限值，过程量
+  不构成设计合格判定。
+
+留痕字段一律**不参与**判据、步长或收敛计算，与 `IterationTrace3D` 同一
+条纪律；改动前后 Newton 收敛判据逐位一致。
+
+### 核销：P3-2b「影响矩阵复用同一次分解」早已实现，注释过时
+
+`solveModel3DNonlinear` 与索长迭代上方两处注释仍写「影响矩阵靠 nc 次扰动
+重跑非线性求解」「见 TODO(P3-2b)」，与代码不符。实际 `cableSensitivity3D`
+接收收敛构形的 `NLTangent3D`，闭式给出 `J = M·D`（一次分解 + nc 次回代），
+冻结复用直到残差停滞才重建，重建次数已写进 `[LENGTH]` 的 `SENS JREBUILD`。
+本次只改注释并写明「P3-2b 已实现」，不动算法。
+
+### 取证：P3-3b（梁参考形状未计入敏感度 G）暂不改数值路径
+
+`fem_3d_nl.hpp` 的 `TODO(P3-3b)` 说低秩敏感度 G 只计索项、漏了梁参考
+形状，误差约 20%，会拖累 Newton 收敛率。用真实斜拉桥 `MODE=COMPLETION`
+算例复核当前 `[LENGTH]` 段：6 轮闭合误差
+`0.158 → 0.0030 → 8.7e-5 → 2.2e-6 → 5.6e-8 → 1.4e-9 m`，逐轮收敛比
+约 0.025，**每轮都是 Newton 步被线搜索接受，没有一次触发 FALLBACK 不动点
+兜底**。即该算例里 G 的近似误差没有导致 Newton 失效，注释里的「20%」不能
+直接推导出「必须改算法」。
+
+完整计入需构造 `∂F_int/∂X` 的 nd×nd 算子并放弃现有 Woodbury 低秩结构，
+属于架构级改动；现有不动点步 `ΔX ← -u` 仍是收敛保证。本次不盲改已验证
+的成桥态数值路径，改为把实现规格与验证要求写进 `USER_MANUAL.md` §9.8，
+下一轮先做差分 G 对拍再决定是否动手。
+
 ### 修复：刷新 3 处陈旧黄金基线，ctest 恢复 6/6 全绿（不改算法）
 
 `dat_byte_regression` 曾报 3/37 失败。逐行取证确认三处都是**口径变更后基线

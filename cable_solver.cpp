@@ -99,6 +99,7 @@
 #include "modal_output_3d.hpp"
 #include "buckling_output_3d.hpp"
 #include "cable_length_output_3d.hpp"
+#include "newton_output_3d.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -952,6 +953,9 @@ int main(int argc, char** argv) {
         // 逐轮过程留痕：MODE=TENSION / COMPLETION 才填，STATIC 与悬索桥找形
         // 是闭式反算 L0 解一次，本来就没有外层迭代（输出 ERROR 段说明）。
         IterationTrace3D lengthTrace;
+        // 内层 Newton 过程：只保留**最终成桥态那一次**非线性平衡（外层每轮都
+        // 会重跑，把几十次中间求解全写进结果文件没有意义也不好读）。
+        NewtonTrace3D finalNewton;
 
         const double t0 = nowMs();
         if (susp) {
@@ -995,6 +999,7 @@ int main(int argc, char** argv) {
                                                             e->E * e->A, e->w, Lh);
                 }
                 r = solveModel3DNonlinear(m, nl);
+                finalNewton = r.trace;
                 if (!r.converged) break;
                 double dev = 0.0;
                 for (std::size_t k = 0; k < nc; ++k) {
@@ -1061,6 +1066,7 @@ int main(int argc, char** argv) {
         } else if (cfg.mode == "STATIC") {
             // 只算：索的 L0 来自 .dat（每根索的 *R W=/L0= 或 *EN 覆盖）。
             const NonlinearResult3D r = solveModel3DNonlinear(m, nl);
+            finalNewton = r.trace;
             converged = r.converged;
             iterations = r.totalIterations;
             u = r.u;
@@ -1092,6 +1098,7 @@ int main(int argc, char** argv) {
             co.nl = nl;
             const CableLengthResult3D r = iterateCableUnstrainedLengths(m, tg, co);
             lengthTrace = r.trace;
+            finalNewton = r.lastNewton;
             converged = r.converged;
             iterations = r.iterations;
             T = r.tension;
@@ -1122,6 +1129,7 @@ int main(int argc, char** argv) {
             }
             const CompletionStateResult3D r = solveCompletionState3D(m, cc, co);
             lengthTrace = r.trace;
+            finalNewton = r.lastNewton;
             converged = r.converged;
             iterations = r.iterations;
             T = r.tension;
@@ -1688,6 +1696,15 @@ int main(int argc, char** argv) {
             std::fputs(cableLengthErrorSection3D(
                 "[LENGTH]", susp ? "no_iteration_suspension_formfinding"
                                  : "no_iteration_static_mode").c_str(), f);
+        // ---- 内层 Newton（共转列式）过程 --------------------------------
+        // 与 [LENGTH] 是两层不同的迭代：这里记录给定模型上的荷载步 / 残差
+        // 收敛，只暴露最终成桥态那一次平衡（外层每轮都会重跑，把几十次中间
+        // 求解全写进结果文件没有意义）。旧内核无段时下游写 no_newton_section。
+        if (!finalNewton.steps.empty())
+            std::fputs(formatNewtonSection3D(finalNewton, "[NEWTON]").c_str(), f);
+        else
+            std::fputs(newtonErrorSection3D(
+                "[NEWTON]", "no_newton_solution").c_str(), f);
         std::fprintf(f, "[END]\n");
         std::fclose(f);
 

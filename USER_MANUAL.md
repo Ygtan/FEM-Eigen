@@ -265,6 +265,39 @@ NODES=1,2,3 DOF=2 CODE=JTG_D60
   `cable_length_output_3d.hpp`；过程量只说明数值如何收敛，**不是设计合格
   判定**。
 
+**这是外层迭代，不是内层。** 每一次 `[LENGTH]` 轮次里都要重跑一次完整的
+`solveModel3DNonlinear`（共转列式 Newton + 荷载步）求平衡。内层过程单独写
+`[NEWTON]` 段（见 §10）：成桥态只暴露收敛那一轮，非线性施工阶段每阶段
+各暴露一段。两层迭代的控制量、未知量与收敛判据都不同，不要混读。
+
+**关于 `TODO(P3-3b)`（梁参考形状未计入敏感度 G）**：当前低秩敏感度
+`G = -W·M⁻¹·Kc·Bᵀ` 只计入「移动节点 → 索弦长变 → 索力变 → 位移变」，
+没有计入「梁的参考轴方向随锚点移动、空间增量约定下节点三元组跟着转」。
+它影响的是 **Newton 收敛率**，不是结果正确性——不动点步 `ΔX ← -u` 的
+收敛率等于 `|G|` 的谱半径（结构稳定时 <1），是这里唯一的收敛保证；
+线搜索也按实际闭合误差做 Armijo 判据，不是按近似 G 判据。
+
+2026-11-09 用真实斜拉桥 `MODE=COMPLETION` 算例复核 `[LENGTH]`：6 轮闭合
+误差 `0.158 → 0.0030 → 8.7e-5 → 2.2e-6 → 5.6e-8 → 1.4e-9 m`，逐轮
+收敛比约 0.025，**每轮都是 Newton 步被线搜索接受、没有一次 FALLBACK**。
+故源码注释里「G 误差约 20%」不能直接推成「必须改算法」，先做对拍再定。
+
+若要完整计入，实现规格与验收要求（本版未实现）：
+
+1. 构造 `K_shape = ∂F_int/∂X|_{u fixed}`：保持全局位移向量 `u` 不变，对
+   参考构形 `X` 的每个平动自由度做中心差分，重建 `CRElemData`（`p1/p2`、
+   `E0`、`L0`、`Kl12` 都随之变）后装配 `F_int`。这是 nd 次**装配**，不是
+   nd 次非线性求解；注意只有 `isT` 自由度参与几何闭合，约束/弹簧自由度
+   必须排除。
+2. `G_full = -K_t⁻¹·K_shape`，`K_t` 复用收敛构形的 `NLTangent3D`；
+   Newton 步解 `(I + G_full)·δ = -(ΔX + u)`。因为 `K_shape` 满秩，
+   **不能再走 Woodbury 低秩公式**，要么分解 `(K_t - K_shape)`，要么用
+   matrix-free Krylov，代价要实测。
+3. 独立 oracle：先用有限差分算 `F'(X)·v` 与 `G_full·v` 逐分量对拍，
+   确认符号与量级，再比较完整敏感度 / 现有低秩敏感度 / 纯不动点三条
+   路径的逐轮闭合误差；最终制造线形与索力三者必须一致到 `tolClosure`。
+4. 保留不动点兜底与按实际误差的线搜索；未达上述验收不得改默认路径。
+
 ## 10. 输出与可视化
 
 - 二维 `example_mixed`：写 `<模型名>.result`（节点位移、单元内力、单元应力、支座反力）。
@@ -279,6 +312,15 @@ NODES=1,2,3 DOF=2 CODE=JTG_D60
   `SENS` 诊断见 §9.8。`MODE=STATIC` / 悬索桥找形写
   `ERROR=no_iteration_static_mode` / `no_iteration_suspension_formfinding`：
   本来就无外层迭代，不是求解失败。段格式见 `cable_length_output_3d.hpp`。
+- 内层共转列式 Newton：`cable_solver` 写 `[NEWTON]`（最终成桥态那一次
+  平衡），`example_3d_stage_nl` 在 `<stem>.dat.nlstage.txt` 的每个
+  `STAGE` 块里各写一段并带 `STAGE=<id>`。段内是
+  `NSTEP/NITER/MAXITER/TOLF/TOLD/CONVERGED/REFACT/RESFIRST/RESLAST`
+  + 逐迭代 `S` 行（荷载步、步内迭代、λ、|R|、|du|、|Ftarget|、
+  重建分解、本步收敛）。收敛判据是残差**或**位移增量二选一，每个
+  荷载步都要满足；换步时残差允许跳升。段格式见
+  `newton_output_3d.hpp`。线性内核链路不产出此段，下游应写
+  `no_newton_section` 说明，不摆空段。
 - 三维 `example_3d_beam_live`：写 `*_live_envelope.csv`（轴力/弯矩/剪力/应力/双力矩包络）。
 
 ## 11. 常见问题

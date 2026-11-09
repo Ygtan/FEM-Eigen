@@ -391,7 +391,8 @@ support_v_sum_kN=... applied_v_kN=... balance_pct=...
 [U]        node dof value
 [MODAL]    NMODES/NDOF/MASS/F/S ...（成桥态一致切线刚度上的模态，见 modal_output_3d.hpp）
 [BUCKLING] ERROR=nonlinear_state_not_supported（本内核不做线弹性屈曲，见 buckling_output_3d.hpp）
-[LENGTH]   KIND/STATUS/ERRKIND/.../I/E/NJ/J（索长迭代 / 几何闭合逐轮过程，见下）
+[LENGTH]   KIND/STATUS/ERRKIND/.../I/E/NJ/J（外层索长迭代 / 几何闭合逐轮过程，见下）
+[NEWTON]   KIND/STATUS/STAGE/NSTEP/.../S（内层共转列式 Newton 逐迭代过程，见下）
 [END]
 ```
 
@@ -451,6 +452,41 @@ J 0 1 1791540.618
 ~3e-8 而成桥弦长偏差稳定在 0.15 m 左右，制造线形必须另跑 COMPLETION。
 过程量只说明数值如何收敛，**不是规范意义上的设计合格判定**；未收敛如实
 写 `STATUS=not_converged`。
+
+### 内层共转列式 Newton 过程量（`[NEWTON]`）
+
+段格式与口径定义在 `newton_output_3d.hpp`。它写的是
+`solveModel3DNonlinear` 已经算出的 `NewtonTrace3D`，**不改任何数值口径**。
+与 `[LENGTH]` 是两层不同的迭代：外层改模型参数（L0 或制造线形 ΔX），
+每轮重跑一次完整非线性平衡；内层在给定模型上做荷载步 + Newton 求位移。
+成桥态只写**收敛那一轮**的内层过程；`example_3d_stage_nl` 写出的
+`<stem>.nlstage.txt` 则在每个 `STAGE` 块里各写一段（多一行 `STAGE=<id>`）。
+
+```text
+[NEWTON]
+KIND=newton_cr STATUS=ok
+NSTEP=3 NITER=15 MAXITER=30 TOLF=1e-08 TOLD=1e-09 CONVERGED=1
+       REFACT=1 RESFIRST=19024291.18 RESLAST=0.04180729204
+S 1 1 0.3333333333 19024291.18 0.4578740125 3059597.38 1 0
+S 1 2 0.3333333333 4900282.175 0.1468978793 3059597.38 0 0
+...
+S 3 4 1 0.04180729204 6.325719466e-09 9178792.139 0 1
+```
+
+- `S <loadStep> <iter> <lambda> <|R|> <|du|> <|Ftarget|> <refactor> <converged>`：
+  `iter` 是**该荷载步内**的迭代序号；`lambda = loadStep/NSTEP`；
+  `|R|`/`|du|`/`|Ftarget|` 只统计自由自由度；末两列是 0|1，
+  `converged=1` 表示该步之后 break。
+- 收敛判据是 **或**：`|R| ≤ TOLF·max(|Ftarget|,1e-12)` 或
+  `|du| ≤ TOLD·max(1,|u|)`，**每个荷载步都要满足**。换荷载步时
+  `|Ftarget|` 变大，残差会跳升——整条 `|R|` 曲线不是单调的，不能按
+  "跨步单调下降"去读，更不能据此判定发散。
+- `REFACT` 只统计符号分解重建（首次 / 稀疏模式单调增长时新增位置），
+  数值 `refactorize` 不计；是性能诊断量，不是力学量。
+- 无内层过程（旧内核 / 未走几何非线性平衡）写
+  `KIND=none STATUS=not_applicable` + `ERROR=no_newton_solution`，不摆空段。
+
+过程量只说明"数值怎么收敛"，规范没有 Newton 迭代轮数的合格限值。
 
 ### 活载梁内力包络（`[GIRDER_LIVE]`）
 

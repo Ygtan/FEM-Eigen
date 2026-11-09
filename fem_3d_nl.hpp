@@ -748,10 +748,38 @@ struct NonlinearOptions3D {
     SolverType solver = SolverType::SimplicialLDLT;
 };
 
+// ---- 内层 Newton 过程留痕（只记录，不参与任何判据 / 步长 / 收敛计算）----
+// 与外层索长迭代 / 几何闭合的 IterationTrace3D 是两层不同的迭代：外层改模型
+// 参数（L0 或制造线形 ΔX），内层在给定模型上做共转列式 Newton + 荷载步求平衡。
+// 这一层以前只打印在 verbose 控制台里，结果文件里完全没有；暴露它是为了能
+// 从计算书直接看出「本次平衡是否真收敛、残差按什么量级降下来」。
+struct NewtonStep3D {
+    int loadStep = 0;        // 荷载步 1..loadSteps
+    int iter = 0;            // 步内 Newton 迭代 1..maxIter
+    double lambda = 0.0;     // 荷载因子 λ = loadStep / loadSteps
+    double residual = 0.0;   // |R|（自由自由度，力）
+    double du = 0.0;         // |du|（自由自由度，位移）
+    double ref = 0.0;        // |Ftarget|，残差判据的参考范数
+    bool refactor = false;   // 本迭代是否重建了符号分解（稀疏模式变化 / 首次）
+    bool converged = false;  // 本迭代满足收敛判据，随后 break
+};
+
+struct NewtonTrace3D {
+    int loadSteps = 0;
+    int maxIter = 0;
+    double tolForce = 0.0, tolDisp = 0.0;
+    int totalIterations = 0;
+    int refactorizations = 0;
+    bool converged = false;
+    double residualFirst = 0.0, residualLast = 0.0;
+    std::vector<NewtonStep3D> steps;
+};
+
 struct NonlinearResult3D {
     bool converged = false;
     int totalIterations = 0;
     int steps = 0;
+    NewtonTrace3D trace;                                // 内层 Newton 逐迭代留痕
     std::vector<double> u;                              // 自由度位移（含转角向量）
     std::vector<int> elemIds;                           // 单元 id（与下列数组同序）
     std::vector<std::vector<double>> localForces;       // 单元局部端力
@@ -916,6 +944,10 @@ inline NonlinearResult3D solveModel3DNonlinear(const Model3D& m,
     // ---- Newton + 荷载步 ----
     const int nSteps = std::max(1, opt.loadSteps);
     const double Fnorm = Fext.norm();
+    out.trace.loadSteps = nSteps;
+    out.trace.maxIter = opt.maxIter;
+    out.trace.tolForce = opt.tolForce;
+    out.trace.tolDisp = opt.tolDisp;
     bool ok = true;
     for (int istep = 1; istep <= nSteps && ok; ++istep) {
         const double lam = static_cast<double>(istep) / nSteps;
@@ -930,9 +962,11 @@ inline NonlinearResult3D solveModel3DNonlinear(const Model3D& m,
             applyDirichlet(K, R, cdofs, zeros);
             // 复用符号分解：矩阵结构不变，只有数值变 → 只做数值分解，
             // 省掉重复的符号分解与列排序（大模型上通常是 factorize 的大头）。
-            if (!fac || patChanged || !opt.reuseFactorization) {
+            const bool didRefactor = !fac || patChanged || !opt.reuseFactorization;
+            if (didRefactor) {
                 fac.reset(new Factorization3D(K, opt.solver));
                 patChanged = false;
+                ++out.trace.refactorizations;
             } else {
                 fac->refactorize(K);
             }
@@ -949,26 +983,41 @@ inline NonlinearResult3D solveModel3DNonlinear(const Model3D& m,
             u += du;
             for (std::size_t i = 0; i < cdofs.size(); ++i) u(cdofs[i]) = cvals[i];
             ++out.totalIterations;
+            NewtonStep3D ns;
+            ns.loadStep = istep;
+            ns.iter = iter + 1;
+            ns.lambda = lam;
+            ns.residual = std::sqrt(rn);
+            ns.du = std::sqrt(dn);
+            ns.ref = std::sqrt(fn);
+            ns.refactor = didRefactor;
+            ns.converged = (ns.residual <= opt.tolForce * std::max(ns.ref, 1e-12) ||
+                            ns.du <= opt.tolDisp * std::max(1.0, u.norm()));
+            out.trace.steps.push_back(ns);   // 只留痕；判据数值与改动前逐位一致
             if (opt.verbose) {
                 std::printf("  步 %d/%d 迭代 %d: |R|=%.3e  |du|=%.3e\n",
-                            istep, nSteps, iter + 1,
-                            std::sqrt(rn), std::sqrt(dn));
+                            istep, nSteps, iter + 1, ns.residual, ns.du);
             }
-            const double cref = std::sqrt(fn);
-            if (std::sqrt(rn) <= opt.tolForce * std::max(cref, 1e-12) ||
-                std::sqrt(dn) <= opt.tolDisp * std::max(1.0, u.norm())) {
-                break;
-            }
+            if (ns.converged) break;
             if (iter == opt.maxIter - 1) ok = false;   // 未收敛
         }
         out.steps = istep;
+    }
+    out.trace.converged = ok;
+    out.trace.totalIterations = out.totalIterations;
+    if (!out.trace.steps.empty()) {
+        out.trace.residualFirst = out.trace.steps.front().residual;
+        out.trace.residualLast = out.trace.steps.back().residual;
     }
     out.converged = ok;
     if (!ok) throw std::runtime_error("非线性求解未收敛：达到最大迭代次数");
 
     // ---- 收敛构形的一致切线（可选导出）----
-    // 成桥态几何迭代用它做低秩 Newton；影响矩阵复用同一次分解可把
-    // nc 次非线性求解降为 1 次 + nc 次回代（见 TODO(P3-2b)）。
+    // 成桥态几何迭代用它做低秩 Newton；影响矩阵 J = M·D 由
+    // cableSensitivity3D 复用**这一次分解** + nc 次回代闭式给出
+    // （P3-2b 已实现，不再是待办），不用为每根索扰动重跑一次完整非线性
+    // 求解。J 冻结复用直到残差停滞才重建，重建次数见 [LENGTH] 的
+    // SENS JREBUILD。
     if (tangent) {
         Eigen::VectorXd Fint;
         SparseMat3D Kt;
@@ -1107,7 +1156,9 @@ inline CableSensitivity3D cableSensitivity3D(const Model3D& m, const DofMap3D& d
 //      （L* = 设计弦长；即先假设"结构上正好落在设计几何时索力为 T*"）
 //   ② 完整非线性求解（含恒载 + 索自重），取出该索的索力 Tn；
 //   ③ 影响矩阵 Newton 步：ΔL0 = -J⁻¹·(Tn - T*)，  J_ij = ∂T_i/∂L0_j
-//      J 由 nc 次扰动求解一次性建立并冻结复用（详见下方实现处注释）。
+//      J = M·D 由 cableSensitivity3D 闭式给出：复用收敛构形的一次切线
+//      分解 + nc 次回代，而不是 nc 次扰动重跑非线性求解（详见实现处注释）。
+//      J 冻结复用，残差停滞才重建。
 //      索与索之间通过结构位移耦合，若只用对角斜率，收敛率≈耦合系数，
 //      实测会退化到数十轮；完整 J 才恢复二次收敛。
 //
@@ -1187,6 +1238,7 @@ struct CableLengthResult3D {
     double maxTensionErr = 0.0;
     std::vector<double> u;           // 成桥态位移；其反号 = 需要的预抬高量
     IterationTrace3D trace;          // 逐轮过程留痕（只记录，不参与计算）
+    NewtonTrace3D lastNewton;        // 收敛那一轮的内层 Newton 过程（透传给 CLI）
 };
 
 inline CableLengthResult3D iterateCableUnstrainedLengths(
@@ -1280,6 +1332,7 @@ inline CableLengthResult3D iterateCableUnstrainedLengths(
         }
         out.iterations = it + 1;
         out.u = r.u;
+        out.lastNewton = r.trace;
 
         IterationStep3D step;       // 逐轮留痕，不参与任何判据/步长计算
         step.iter = it + 1;
@@ -1779,6 +1832,7 @@ struct ErectionGeometryResult3D {
     std::vector<double> chord;
     double maxClosureErr = 0.0;
     IterationTrace3D trace;          // 逐轮过程留痕（只记录，不参与计算）
+    NewtonTrace3D lastNewton;        // 最后一次 evalGeom 的内层 Newton 过程
 };
 
 inline ErectionGeometryResult3D iterateErectionGeometry(Model3D m,
@@ -1832,6 +1886,7 @@ inline ErectionGeometryResult3D iterateErectionGeometry(Model3D m,
         double err = 0.0;
         std::vector<double> u, tension, chord;
         Eigen::VectorXd Fv;
+        NewtonTrace3D newton;       // 本次评估的内层 Newton 过程（只留痕）
     };
     auto evalGeom = [&](const std::vector<double>& dx, NLTangent3D* tan) {
         // 把 ΔX 落到节点坐标上（参考构形随之改变 = 制造线形无应力）
@@ -1844,6 +1899,7 @@ inline ErectionGeometryResult3D iterateErectionGeometry(Model3D m,
         }
         const NonlinearResult3D r = solveModel3DNonlinear(m, opt.nl, tan);
         GeomEval g;
+        g.newton = r.trace;         // 每次评估自带内层过程，由主循环挑选收敛那轮
         g.u = r.u;
         g.chord.assign(nc, 0.0);
         g.tension.assign(nc, 0.0);
@@ -1879,6 +1935,7 @@ inline ErectionGeometryResult3D iterateErectionGeometry(Model3D m,
         const bool needS = !haveS || opt.refreshSensitivity ||
                        (it > 0 && errPrev > 0.0 && cur.err > 0.5 * errPrev);
         cur = evalGeom(dX, needS ? &tan : nullptr);
+        out.lastNewton = cur.newton;   // 收敛轮（或末轮）的内层 Newton 过程
         out.iterations = it + 1;
         out.u = cur.u;
         out.tension = cur.tension;
@@ -1963,8 +2020,13 @@ inline ErectionGeometryResult3D iterateErectionGeometry(Model3D m,
             // 参考形状同样参与：移动锚点会改变梁的参考轴方向，在"空间增量
             // 约定"下节点三元组跟着转、局部转角因此改变一阶量——实测扰动无
             // 索节点也能引起位移变化，且量级与索项相当（斜拉桥算例里 G 的
-            // 误差约 20%）。完整计入需要构造材料刚度 K_mat 并令 G=-K⁻¹K_mat，
-            // 代价是每轮多一次差分装配（见 TODO(P3-3b)）。
+            // 误差约 20%）。完整计入需构造 K_shape = ∂F_int/∂X|_{u fixed}
+            // 并令 G_full = -K⁻¹K_shape；K_shape 是满秩 nd×nd 算子，
+            // 不能再走 Woodbury 低秩公式。实现规格与验收 oracle 见
+            // USER_MANUAL.md §9.8 / CHANGELOG 2026-11-09（TODO(P3-3b)）。
+            // 2026-11-09 用真实斜拉桥 COMPLETION 算例复核：6 轮闭合误差
+            // 0.158 → 1.4e-9 m、逐轮收敛比约 0.025，每轮都是 Newton 步
+            // 被线搜索接受、零次 FALLBACK，故暂不改默认数值路径。
             //
             // 不动点步 ΔX ← -u 的收敛率 = |G| 的谱半径 < 1（结构稳定时），
             // 不需要任何敏感度，是这里唯一的收敛保证。
@@ -2026,6 +2088,7 @@ struct CompletionStateResult3D {
     double maxClosureErr = 0.0;
     double maxTensionErr = 0.0;
     IterationTrace3D trace;          // 透传制造线形几何闭合的逐轮过程
+    NewtonTrace3D lastNewton;        // 透传收敛轮的内层 Newton 过程
 };
 
 inline CompletionStateResult3D solveCompletionState3D(Model3D m,
@@ -2094,6 +2157,7 @@ inline CompletionStateResult3D solveCompletionState3D(Model3D m,
     const ErectionGeometryResult3D eg = iterateErectionGeometry(m, ids, eo);
 
     out.trace = eg.trace;              // 制造线形几何闭合的逐轮过程
+    out.lastNewton = eg.lastNewton;    // 收敛轮的内层 Newton 过程
     out.trace.targetTension = Tst;     // 给定或自动定出的目标成桥索力
     out.iterations = eg.iterations;
     out.converged = eg.converged;
@@ -2221,6 +2285,7 @@ struct BeamEnd3D {
 struct NLStageResult3D {
     int id = 0;
     bool converged = false;
+    NewtonTrace3D newton;   // 本阶段全量平衡的内层 Newton 过程（每阶段一段）
     DofMap3D dm;
     std::vector<double> u;
     std::map<int, double> cableForce;
@@ -2431,6 +2496,7 @@ inline std::vector<NLStageResult3D> solveModel3DStagesNonlinear(
             mc, nl, (lastStage && hasCable && !m.lanes.empty()) ? &tangent : nullptr);
         NLStageResult3D row;
         row.id = st.id;
+        row.newton = r.trace;
         row.converged = tuned && r.converged;
         row.dm = buildDofMap3D(mc);
         row.u = r.u;
