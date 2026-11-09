@@ -86,6 +86,10 @@
 //     [CAMBER] node dx dy dz            制造线形相对设计线形的偏移（m）
 //     [ERECTED] node x y z              制造线形绝对坐标
 //     [U]      node dof value           成桥位移（相对制造线形）
+//     [MODAL]  ...                      成桥态切线刚度上的模态（modal_output_3d.hpp）
+//     [BUCKLING] ...                   本内核只写 ERROR=nonlinear_state_not_supported
+//     [LENGTH] KIND/STATUS/…/I/E/J     索长迭代 / 几何闭合逐轮过程
+//               （cable_length_output_3d.hpp；无外层迭代时写 ERROR 段）
 //     [END]
 //
 // 编译：随 CMake 一起（目标 cable_solver）。
@@ -94,6 +98,7 @@
 #include "fem_2d.hpp"   // impactCoefficientFromFrequency（JTG D60 冲击系数）
 #include "modal_output_3d.hpp"
 #include "buckling_output_3d.hpp"
+#include "cable_length_output_3d.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -944,6 +949,9 @@ int main(int argc, char** argv) {
         std::map<int, Vec3> erected;
         std::vector<double> camber;
         std::string method = "given";
+        // 逐轮过程留痕：MODE=TENSION / COMPLETION 才填，STATIC 与悬索桥找形
+        // 是闭式反算 L0 解一次，本来就没有外层迭代（输出 ERROR 段说明）。
+        IterationTrace3D lengthTrace;
 
         const double t0 = nowMs();
         if (susp) {
@@ -1083,6 +1091,7 @@ int main(int argc, char** argv) {
             co.tolTension = cfg.tolTension;
             co.nl = nl;
             const CableLengthResult3D r = iterateCableUnstrainedLengths(m, tg, co);
+            lengthTrace = r.trace;
             converged = r.converged;
             iterations = r.iterations;
             T = r.tension;
@@ -1112,6 +1121,7 @@ int main(int argc, char** argv) {
                 if (c.tension > 0.0) allAuto = false; else anyAuto = true;
             }
             const CompletionStateResult3D r = solveCompletionState3D(m, cc, co);
+            lengthTrace = r.trace;
             converged = r.converged;
             iterations = r.iterations;
             T = r.tension;
@@ -1666,6 +1676,18 @@ int main(int argc, char** argv) {
         // 报告层如实标注「本次未产出」。
         std::fputs(bucklingErrorSection3D(
             "[BUCKLING]", "nonlinear_state_not_supported").c_str(), f);
+        // ---- 索长迭代 / 制造线形几何闭合的逐轮过程 ----------------------
+        // 内核本来就把每轮误差打印到控制台，但结果文件里只有 converged /
+        // iterations / closure_err / tension_err 四个汇总标量。这里把同一份
+        // IterationTrace3D 写进段，Python 侧不再另算一遍。没有外层迭代的
+        // 模式（STATIC、悬索桥找形）明确写 ERROR 段，不摆空表。
+        if (!lengthTrace.steps.empty())
+            std::fputs(formatCableLengthSection3D(lengthTrace, T, L0, chord, Ltar,
+                                                  "[LENGTH]").c_str(), f);
+        else
+            std::fputs(cableLengthErrorSection3D(
+                "[LENGTH]", susp ? "no_iteration_suspension_formfinding"
+                                 : "no_iteration_static_mode").c_str(), f);
         std::fprintf(f, "[END]\n");
         std::fclose(f);
 

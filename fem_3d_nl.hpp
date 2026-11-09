@@ -1130,6 +1130,39 @@ inline CableSensitivity3D cableSensitivity3D(const Model3D& m, const DofMap3D& d
 //       不影响索长迭代本身。）
 //   · L0 可直接用于下料与正装分析。
 
+// ==================== 迭代过程留痕（只记录，不改数值）====================
+// 段格式见 cable_length_output_3d.hpp。这两个结构由索长迭代 / 制造线形
+// 几何闭合在循环里顺手填，绝不参与判据、步长或收敛计算——"暴露过程量"
+// 不允许改变既有数值口径。
+struct IterationStep3D {
+    int iter = 0;                  // 从 1 起
+    double err = 0.0;              // 控制误差：索长迭代=max 相对索力偏差；几何闭合=max|ΔX+u| (m)
+    double geomErr = 0.0;          // max|成桥弦长 − 设计弦长| (m)
+    double stepMax = 0.0;          // 本轮最大修正量 |ΔL0| / |ΔX| (m)
+    double stepRelMax = 0.0;       // stepMax / 对应参考长度
+    double alpha = 1.0;            // 线搜索实际步长因子（索长迭代恒 1，靠 stepCap 限幅）
+    int lineSearch = 0;            // 本轮线搜索评估次数
+    bool rebuilt = false;          // 本轮是否重建影响矩阵 / 索敏感度
+    bool capped = false;           // 修正是否被步长上限截断
+    bool fallback = false;         // 是否退化为不动点步（Newton 方向失效）
+    bool converged = false;        // 本轮命中收敛判据
+};
+
+struct IterationTrace3D {
+    std::string kind;              // "cable_length" | "erection_geometry"
+    std::string errKind;           // "tension_rel" | "closure_m"
+    int maxIter = 0;
+    double tol = 0.0;
+    bool converged = false;
+    std::vector<IterationStep3D> steps;
+    std::vector<int> elems;
+    std::vector<double> targetTension;   // N（仅索长迭代）
+    Eigen::MatrixXd J;                   // 索长迭代最后一次影响矩阵 (nc×nc)
+    bool jAvailable = false;
+    int jRebuilds = 0;
+    double sensDiagMin = 0.0, sensDiagMax = 0.0;  // 影响/敏感度矩阵对角范围
+};
+
 struct CableTarget3D {
     int elem = 0;
     double tension = 0.0;        // 目标成桥索力（N，拉为正）
@@ -1153,6 +1186,7 @@ struct CableLengthResult3D {
     double maxGeomErr = 0.0;         // max|弦长 - 设计弦长|：成桥变形量（报告，不作判据）
     double maxTensionErr = 0.0;
     std::vector<double> u;           // 成桥态位移；其反号 = 需要的预抬高量
+    IterationTrace3D trace;          // 逐轮过程留痕（只记录，不参与计算）
 };
 
 inline CableLengthResult3D iterateCableUnstrainedLengths(
@@ -1180,6 +1214,7 @@ inline CableLengthResult3D iterateCableUnstrainedLengths(
         Lh[k] = std::sqrt(d.x() * d.x() + d.y() * d.y());
         EA[k] = e->E * e->A;
         out.elems.push_back(targets[k].elem);
+        out.trace.targetTension.push_back(targets[k].tension);
         // 初始 L0：目标状态估计（含垂度缩短 s(T*) = w²Lh³/(24T*²)）
         double sag = 0.0;
         if (e->w > 0.0 && Lh[k] > 1e-12)
@@ -1188,6 +1223,11 @@ inline CableLengthResult3D iterateCableUnstrainedLengths(
         e->L0 = (Ltar[k] + sag) / (1.0 + targets[k].tension / EA[k]);
     }
     out.Ltarget = Ltar;
+    out.trace.kind = "cable_length";
+    out.trace.errKind = "tension_rel";
+    out.trace.maxIter = opt.maxIter;
+    out.trace.tol = opt.tolTension;
+    out.trace.elems = out.elems;
 
     // ---- 影响矩阵 Newton：对 T(L0) 求根 ----
     // 索与索之间通过结构位移耦合。若只用对角斜率，收敛率≈耦合系数（本仓库
@@ -1241,6 +1281,8 @@ inline CableLengthResult3D iterateCableUnstrainedLengths(
         out.iterations = it + 1;
         out.u = r.u;
 
+        IterationStep3D step;       // 逐轮留痕，不参与任何判据/步长计算
+        step.iter = it + 1;
         double gerr = 0.0, terr = 0.0;
         for (std::size_t k = 0; k < nc; ++k) {
             gerr = std::max(gerr, std::abs(chord[k] - Ltar[k]));
@@ -1250,13 +1292,24 @@ inline CableLengthResult3D iterateCableUnstrainedLengths(
         out.tension = tens;
         out.maxGeomErr = gerr;
         out.maxTensionErr = terr;
-        if (terr <= opt.tolTension) { out.converged = true; break; }
+        step.err = terr;
+        step.geomErr = gerr;
+        if (terr <= opt.tolTension) {
+            step.converged = true;
+            out.trace.steps.push_back(step);
+            out.converged = true;
+            break;
+        }
 
         // 影响矩阵：J = M·D（一次分解 + nc 次回代）
+        step.rebuilt = needJ;
         if (needJ) {
             const CableSensitivity3D s =
                 cableSensitivity3D(m, dm, ids, r.u, tens, isT, tan);
             J = s.M * s.D.asDiagonal();
+            out.trace.J = J;
+            out.trace.jAvailable = true;
+            ++out.trace.jRebuilds;
         }
 
         // Newton 步 + 步长保护（J 奇异时退化为对角步）
@@ -1270,10 +1323,25 @@ inline CableLengthResult3D iterateCableUnstrainedLengths(
             if (!std::isfinite(s))
                 s = (J(kk, kk) < -1e-12) ? -res(kk) / J(kk, kk) : 0.0;
             const double cap = opt.stepCap * ep[k]->L0;
-            if (s > cap) s = cap;
-            if (s < -cap) s = -cap;
+            if (s > cap) { s = cap; step.capped = true; }
+            if (s < -cap) { s = -cap; step.capped = true; }
+            step.stepMax = std::max(step.stepMax, std::abs(s));
+            step.stepRelMax = std::max(step.stepRelMax,
+                                       std::abs(s) / std::max(ep[k]->L0, 1e-12));
             ep[k]->L0 = std::max(ep[k]->L0 + s, 1e-6);
         }
+        out.trace.steps.push_back(step);
+    }
+
+    out.trace.converged = out.converged;
+    if (out.trace.jAvailable && out.trace.J.rows() > 0) {
+        double dmin = out.trace.J(0, 0), dmax = dmin;
+        for (int k = 1; k < out.trace.J.rows(); ++k) {
+            dmin = std::min(dmin, out.trace.J(k, k));
+            dmax = std::max(dmax, out.trace.J(k, k));
+        }
+        out.trace.sensDiagMin = dmin;
+        out.trace.sensDiagMax = dmax;
     }
 
     // ---- 输出最终 L0 ----
@@ -1710,6 +1778,7 @@ struct ErectionGeometryResult3D {
     std::vector<double> tension;
     std::vector<double> chord;
     double maxClosureErr = 0.0;
+    IterationTrace3D trace;          // 逐轮过程留痕（只记录，不参与计算）
 };
 
 inline ErectionGeometryResult3D iterateErectionGeometry(Model3D m,
@@ -1718,6 +1787,11 @@ inline ErectionGeometryResult3D iterateErectionGeometry(Model3D m,
     ErectionGeometryResult3D out;
     if (cableIds.empty()) throw std::runtime_error("制造线形迭代：未指定索单元");
     out.cableIds = cableIds;
+    out.trace.kind = "erection_geometry";
+    out.trace.errKind = "closure_m";
+    out.trace.maxIter = opt.maxIter;
+    out.trace.tol = opt.tolClosure;
+    out.trace.elems = cableIds;
 
     const DofMap3D dm = buildDofMap3D(m);
     const int nd = dm.nDofs;
@@ -1748,6 +1822,10 @@ inline ErectionGeometryResult3D iterateErectionGeometry(Model3D m,
         if (!ep[k]) throw std::runtime_error("制造线形迭代：找不到索单元 "
                                              + std::to_string(cableIds[k]));
     }
+    // 设计弦长（只用于过程留痕里的"成桥弦长偏差"，不参与闭合方程）
+    std::vector<double> Ltar(nc, 0.0);
+    for (std::size_t k = 0; k < nc; ++k)
+        Ltar[k] = (X0.at(ep[k]->n2) - X0.at(ep[k]->n1)).norm();
 
     // 一次"应用几何 → 非线性求解 → 取闭合残差"
     struct GeomEval {
@@ -1796,6 +1874,7 @@ inline ErectionGeometryResult3D iterateErectionGeometry(Model3D m,
     GeomEval cur;
 
     for (int it = 0; it < opt.maxIter; ++it) {
+        const std::vector<double> dXprev = dX;   // 只用于过程留痕的步长统计
         NLTangent3D tan;
         const bool needS = !haveS || opt.refreshSensitivity ||
                        (it > 0 && errPrev > 0.0 && cur.err > 0.5 * errPrev);
@@ -1805,12 +1884,34 @@ inline ErectionGeometryResult3D iterateErectionGeometry(Model3D m,
         out.tension = cur.tension;
         out.chord = cur.chord;
         out.maxClosureErr = cur.err;
+
+        IterationStep3D step;       // 逐轮留痕，不参与任何判据/步长计算
+        step.iter = it + 1;
+        step.err = cur.err;
+        for (std::size_t k = 0; k < nc; ++k)
+            step.geomErr = std::max(step.geomErr, std::abs(cur.chord[k] - Ltar[k]));
+        step.rebuilt = needS;
         if (opt.verbose)
             std::printf("  几何迭代 %d：闭合误差 = %.3e m\n", it + 1, cur.err);
-        if (cur.err <= opt.tolClosure) { out.converged = true; break; }
+        if (cur.err <= opt.tolClosure) {
+            step.converged = true;
+            out.trace.steps.push_back(step);
+            out.converged = true;
+            break;
+        }
         if (needS) {
             sens = cableSensitivity3D(m, dm, cableIds, cur.u, cur.tension, isT, tan);
             haveS = true;
+            ++out.trace.jRebuilds;
+            if (sens.M.rows() > 0) {
+                double dmin = sens.M(0, 0), dmax = dmin;
+                for (int q = 1; q < sens.M.rows(); ++q) {
+                    dmin = std::min(dmin, sens.M(q, q));
+                    dmax = std::max(dmax, sens.M(q, q));
+                }
+                out.trace.sensDiagMin = dmin;
+                out.trace.sensDiagMax = dmax;
+            }
         }
         errPrev = cur.err;
 
@@ -1830,12 +1931,14 @@ inline ErectionGeometryResult3D iterateErectionGeometry(Model3D m,
             mx = std::max(mx, std::sqrt(delta(s) * delta(s) + delta(s + 1) * delta(s + 1)
                                         + delta(s + 2) * delta(s + 2)));
         }
+        step.capped = (mx > opt.stepCap);
         double alpha = (mx > opt.stepCap) ? opt.stepCap / mx : 1.0;
         bool accepted = false;
         GeomEval bestG = cur;
         std::vector<double> bestDx = dX;
         double bestErr = cur.err;
         for (int ls = 0; ls < opt.maxLineSearch; ++ls) {
+            ++step.lineSearch;
             std::vector<double> trial(nd, 0.0);
             for (int d = 0; d < nd; ++d) trial[d] = dX[d] + alpha * delta(d);
             const GeomEval g = evalGeom(trial, nullptr);
@@ -1846,11 +1949,14 @@ inline ErectionGeometryResult3D iterateErectionGeometry(Model3D m,
                 dX = trial;
                 cur = g;
                 accepted = true;
+                step.alpha = alpha;
                 break;
             }
             alpha *= opt.lineSearchFactor;
         }
         if (!accepted) {
+            step.fallback = true;
+            step.alpha = 1.0;       // 不动点步是全量替换，不是带 α 的增量
             // Newton 方向失效时的兜底：退化为不动点步 ΔX ← -u。
             //
             // 上面的 G 只计入了索（ΔX 只通过索的弦长产生不平衡力），而梁的
@@ -1870,7 +1976,14 @@ inline ErectionGeometryResult3D iterateErectionGeometry(Model3D m,
             if (g.err < bestErr) { dX = fp; cur = g; }
             else { dX = bestDx; cur = bestG; }   // 取试过的最优点
         }
+        double smax = 0.0;
+        for (int d = 0; d < nd; ++d)
+            smax = std::max(smax, std::abs(dX[d] - dXprev[d]));
+        step.stepMax = smax;
+        // 几何闭合没有单一参考长度，stepRelMax 留给 0，Python 侧不展示该列。
+        out.trace.steps.push_back(step);
     }
+    out.trace.converged = out.converged;
 
     out.camber = dX;
     out.erected = m.nodes;
@@ -1912,6 +2025,7 @@ struct CompletionStateResult3D {
     std::vector<double> u;           // 成桥位移（相对制造线形）
     double maxClosureErr = 0.0;
     double maxTensionErr = 0.0;
+    IterationTrace3D trace;          // 透传制造线形几何闭合的逐轮过程
 };
 
 inline CompletionStateResult3D solveCompletionState3D(Model3D m,
@@ -1979,6 +2093,8 @@ inline CompletionStateResult3D solveCompletionState3D(Model3D m,
     eo.nl = opt.nl;
     const ErectionGeometryResult3D eg = iterateErectionGeometry(m, ids, eo);
 
+    out.trace = eg.trace;              // 制造线形几何闭合的逐轮过程
+    out.trace.targetTension = Tst;     // 给定或自动定出的目标成桥索力
     out.iterations = eg.iterations;
     out.converged = eg.converged;
     out.maxClosureErr = eg.maxClosureErr;

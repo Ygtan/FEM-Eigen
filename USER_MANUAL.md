@@ -224,6 +224,31 @@ NODES=1,2,3 DOF=2 CODE=JTG_D60
 - 后张法 σpe=σcon−σl1−σl2−σl4，先张法 σpe=σcon−σl2，用 `POST=0/1` 选择。
 - 已对照正式条文核对 σl1~σl6 系数。仍为简化式的是：σl2 曲线筋按附录 G 的反摩擦影响未实现（仅直线筋 ΣΔl/l·Ep）；σl6 的 εcs、φ 需由用户按附录 C 计算后输入，程序不自动算收缩/徐变随龄期发展。
 
+### 9.8 索长迭代与制造线形几何闭合（`cable_solver`）
+
+成桥态索承体系有两条**互不等价**的外层迭代，由 `.dat` 的 `MODE=` 选择，
+都基于共转列式几何非线性内核（`fem_3d_nl.hpp`）：
+
+| MODE | 未知量 | 控制误差 / 判据 | 方法 | 产出 |
+| --- | --- | --- | --- | --- |
+| `TENSION` | 各索无应力长度 L0 | max 相对索力偏差（无量纲，`tolTension`） | 影响矩阵 `J = ∂T_i/∂L0_j = M·D` 的 Newton，一次分解 + nc 次回代，冻结复用、残差停滞才重建 | 命中目标索力的下料 L0；**不保证线形闭合** |
+| `COMPLETION` | 节点坐标偏移 ΔX（预抬高） | `max|ΔX + u|`（m，`tolClosure`） | 低秩 Newton / Woodbury + 回溯线搜索 + 不动点兜底 | 制造线形（预抬高）与成桥态坐标 |
+| `STATIC` | 无（给定 L0 一次求解） | 无外层迭代 | 一次几何非线性求解 | 成桥态；`[LENGTH]` 写 ERROR 段 |
+
+要点：
+
+- **索力命中 ≠ 线形闭合**。`TENSION` 的唯一判据是索力相对偏差，成桥弦长
+  相对设计弦长的偏差 `geomErr` 只是报告量。实测斜拉桥算例索力收敛到
+  ~3e-8，而 `geomErr` 稳定在 0.15 m 左右；需要制造线形必须另跑
+  `MODE=COMPLETION`。
+- 两种迭代的控制误差**单位不同**（无量纲 / m），不能画在同一根轴上。
+- 悬索桥主缆找形是「索多边形找形 → 平衡态弦长闭式反算 L0 → 一次求解」，
+  同样没有外层迭代。
+- 逐轮过程（误差、弦长偏差、步长、线搜索次数、影响矩阵重建/限幅/兜底
+  事件、每索终值、完整 J）写入结果文件 `[LENGTH]` 段，格式见
+  `cable_length_output_3d.hpp`；过程量只说明数值如何收敛，**不是设计合格
+  判定**。
+
 ## 10. 输出与可视化
 
 - 二维 `example_mixed`：写 `<模型名>.result`（节点位移、单元内力、单元应力、支座反力）。
@@ -231,6 +256,13 @@ NODES=1,2,3 DOF=2 CODE=JTG_D60
 - 三维 `example_3d_grillage`：写 `*_summary.txt`（位移包络、梁内力包络、成桥态恒载/活载内力、施工阶段索力与预应力、冲击系数，以及 `modal` 段：前 8 阶自振频率/周期/参与质量/节点振型；质量全为零时写 `ERROR=no_mass`）。成桥态索承体系 `cable_solver` 的对应段是 `[MODAL]`（12 阶，成桥态一致切线刚度）。段格式见 `modal_output_3d.hpp`。
 - 线性屈曲：`example_3d_grillage` 另写 `buckling` 段（前 6 阶 `L <i> <λ> <Pcr_kN>`、`REF` 行的参考荷载与几何刚度诊断、`STATUS`）。参考荷载 = 成桥态构型 + 成桥态恒载合力（阶段增量累加），`Pcr = λ·Σ|Fi|`；`STATUS=no_compression` 表示参考荷载下无受压杆件、本就不存在压屈模态，不是求解失败。`cable_solver` 写 `[BUCKLING] ERROR=nonlinear_state_not_supported`：共转列式成桥态的切线刚度已含几何刚度，线弹性 λ 不适用，需另做非线性稳定全过程分析。段格式与口径见 `buckling_output_3d.hpp`。
 - **λ 不是规范稳定安全系数**：JTG 3362 没有 λ 的合格限值；线性屈曲不含初始缺陷、材料非线性与几何非线性，是真实稳定承载力的上限。构件稳定按 §5.3 的稳定系数 φ 另行验算。
+- 成桥态索承体系 `cable_solver` 另写 `[LENGTH]` 段：`KIND=cable_length`
+  （MODE=TENSION 的索长迭代，`ERRKIND=tension_rel`，含完整 `NJ` + `J` 影响
+  矩阵）或 `KIND=erection_geometry`（MODE=COMPLETION 的几何闭合，
+  `ERRKIND=closure_m`，不产出 J）；每轮 `I` 行、每索 `E` 行与
+  `SENS` 诊断见 §9.8。`MODE=STATIC` / 悬索桥找形写
+  `ERROR=no_iteration_static_mode` / `no_iteration_suspension_formfinding`：
+  本来就无外层迭代，不是求解失败。段格式见 `cable_length_output_3d.hpp`。
 - 三维 `example_3d_beam_live`：写 `*_live_envelope.csv`（轴力/弯矩/剪力/应力/双力矩包络）。
 
 ## 11. 常见问题

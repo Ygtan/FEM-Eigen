@@ -4,6 +4,42 @@
 
 ## 2026-11-09
 
+### 新增：索长迭代 / 制造线形几何闭合的逐轮过程量输出（不改算法、不改输入格式）
+
+`fem_3d_nl.hpp` 里的两类外层迭代（影响矩阵 Newton 求下料索长 L0、
+Woodbury 低秩 Newton + 回溯线搜索求制造线形预抬高 ΔX）一直把每轮误差
+打到控制台，但 `cable_solver` 的结果文件只给 `converged / iterations /
+closure_err / tension_err` 四个汇总标量，BridgeStudio 看不到收敛过程，
+也无法区分「索力命中」与「线形闭合」。本轮把**内核已经算出来的**过程写成
+`[LENGTH]` 段，数值口径一个字没改。
+
+- 新增 `cable_length_output_3d.hpp`：`formatCableLengthSection3D(tr, ...,
+  header)` 与 `cableLengthErrorSection3D(header, code)`；STATUS 由
+  `cableLengthStatus3D` 单点判定（`no_iteration` / `not_converged` / `ok`），
+  下游只读不算。段内 `KIND/STATUS/ERRKIND/NCABLES/NITER/MAXITER/TOL/
+  CONVERGED`、`SENS JAVAIL/JREBUILD/JDIAGMIN/JDIAGMAX`、每轮
+  `I <it> <err> <geomErr> <stepMax> <stepRelMax> <alpha> <lineSearch>
+  <flags>`、每索 `E <elem> <Ttarget_N> <Tfinal_N> <L0_m> <chord_m>
+  <Ltar_m>`，以及 `NJ=<n>` + `J <i> <j> <value>` 完整影响矩阵。
+  flags 为 `REBUILD/CAPPED/FALLBACK/CONVERGED` 逗号串。
+- `fem_3d_nl.hpp`：新增 `IterationStep3D` / `IterationTrace3D`，由
+  `iterateCableUnstrainedLengths`（`CableLengthResult3D.trace`）与
+  `iterateErectionGeometry`（`ErectionGeometryResult3D.trace`）在循环里顺手填。
+  **留痕不参与判据、步长或收敛计算**；`solveCompletionState3D` 把同一份
+  trace 透传出来。补记了几何闭合的「设计弦长」（只供报告量 geomErr）。
+- `cable_solver.cpp`：在 `[END]` 前写 `[LENGTH]`。`MODE=TENSION` 走
+  `KIND=cable_length`（`ERRKIND=tension_rel`，控制误差是最大相对索力偏差，
+  输出 J = M·D）；`MODE=COMPLETION` 走 `KIND=erection_geometry`
+  （`ERRKIND=closure_m`，控制误差是 max|ΔX + u|，单位 m，**不产出 J**）；
+  `MODE=STATIC` 与悬索桥找形是闭式反算 L0 后一次解完，本来就没有外层
+  迭代，分别写 `ERROR=no_iteration_static_mode` /
+  `ERROR=no_iteration_suspension_formfinding`，不摆空表冒充「0 轮收敛」。
+- 口径要点（必须随段进报告）：两种迭代的控制误差**单位不同、判据不同**，
+  不能画同一根轴；`geomErr` 是成桥变形量级、只是结果量不参与判据——
+  实测 TENSION 下索力收敛到 3e-8 而弦长偏差稳定在 0.15 m 左右，说明
+  「索力对了但线形没闭合」；过程量只说明数值如何收敛，**不构成规范意义上
+  的设计合格判定**，未收敛如实标 `STATUS=not_converged`。
+
 ### 新增：线性屈曲荷载因子全量输出（不改算法、不改输入格式）
 
 `computeBucklingFactors3D` 一直在解 `(K+λ·Kg)·φ=0`，但只在

@@ -389,6 +389,9 @@ support_v_sum_kN=... applied_v_kN=... balance_pct=...
 [CAMBER]   node dx dy dz
 [ERECTED]  node x y z
 [U]        node dof value
+[MODAL]    NMODES/NDOF/MASS/F/S ...（成桥态一致切线刚度上的模态，见 modal_output_3d.hpp）
+[BUCKLING] ERROR=nonlinear_state_not_supported（本内核不做线弹性屈曲，见 buckling_output_3d.hpp）
+[LENGTH]   KIND/STATUS/ERRKIND/.../I/E/NJ/J（索长迭代 / 几何闭合逐轮过程，见下）
 [END]
 ```
 
@@ -403,6 +406,51 @@ j 端，这一行描述的是梁上并不存在的截面，**不能拿它算应�
 
 内力是对着**制造线形**（`[ERECTED]`）算的：位移 `u` 是相对制造线形的量，
 若拿设计构形当参考，算出来的梁内力会把预拱度当成变形。
+
+### 索长迭代 / 制造线形几何闭合过程量（`[LENGTH]`）
+
+段格式与口径定义在 `cable_length_output_3d.hpp`。它是**把内核已经算出来的
+`IterationTrace3D` 写出来**，不改任何数值口径、不改变收敛判据：
+
+```text
+[LENGTH]
+KIND=cable_length STATUS=ok ERRKIND=tension_rel
+NCABLES=48 NITER=6 MAXITER=15 TOL=1e-07 CONVERGED=1
+SENS JAVAIL=1 JREBUILD=1 JDIAGMIN=-3.05e7 JDIAGMAX=-9.6e6
+I 1 0.6239684236 0.05139830483 0.1564928983 0.001698811455 1 0 REBUILD
+I 2 0.007025579264 0.1572006999 0.0008461001838 9.169278796e-06 1 0 -
+I 3 3.069754663e-08 0.1574791316 0 0 1 0 CONVERGED
+E 9001 682510.3021 682510.3027 36.39508919 36.41630034 36.40054945
+NJ=48
+J 0 0 -30544922.38
+J 0 1 1791540.618
+```
+
+- `KIND=cable_length`（`MODE=TENSION`）：未知量是各索无应力长度 L0，
+  `ERRKIND=tension_rel` 的控制误差是 **max 相对索力偏差**（无量纲），
+  由影响矩阵 `J = ∂T_i/∂L0_j = M·D` 的 Newton 步命中；`JAVAIL=1` 时
+  给完整 `NJ` + `J <i> <j> <value>`（0 起）。`J` 对角应为负——放长 L0
+  索力下降。冻结复用、残差停滞才重建，`JREBUILD` 记次数。
+- `KIND=erection_geometry`（`MODE=COMPLETION`）：未知量是节点坐标偏移
+  ΔX（制造线形预抬高），`ERRKIND=closure_m` 的控制误差是
+  `max|ΔX + u|`（**单位 m**），走低秩 Newton / Woodbury + 回溯线搜索 +
+  不动点兜底；**不产出 J**（`JAVAIL=0`），`SENS` 只给敏感度算子对角范围。
+- `I` 行：`<it> <err> <geomErr> <stepMax> <stepRelMax> <alpha>
+  <lineSearch> <flags>`；`geomErr = max|成桥弦长 − 设计弦长|`（m）只是
+  **结果量、不作收敛判据**；`flags` 是 `REBUILD/CAPPED/FALLBACK/CONVERGED`
+  的逗号串，无事件写 `-`。
+- `E` 行：`<elem> <Ttarget_N> <Tfinal_N> <L0_m> <chord_m> <Ltar_m>`，
+  力单位 **N**（前端换算成 kN）。
+- `MODE=STATIC` 与悬索桥找形是闭式反算 L0 后一次求解，本来就没有外层
+  迭代，写 `KIND=none STATUS=not_applicable` +
+  `ERROR=no_iteration_static_mode` / `no_iteration_suspension_formfinding`。
+  **不静默**：下游不给空表、不把它当求解失败。
+
+**两条最容易读错的口径**：① 两种迭代的控制误差单位不同、判据不同，
+不能画在同一根轴上；② 索力命中 ≠ 线形闭合——TENSION 实测索力收敛到
+~3e-8 而成桥弦长偏差稳定在 0.15 m 左右，制造线形必须另跑 COMPLETION。
+过程量只说明数值如何收敛，**不是规范意义上的设计合格判定**；未收敛如实
+写 `STATUS=not_converged`。
 
 ### 活载梁内力包络（`[GIRDER_LIVE]`）
 
