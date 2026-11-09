@@ -4,6 +4,37 @@
 
 ## 2026-11-09
 
+### 修复：刷新 3 处陈旧黄金基线，ctest 恢复 6/6 全绿（不改算法）
+
+`dat_byte_regression` 曾报 3/37 失败。逐行取证确认三处都是**口径变更后基线
+未同步**，不是算法回归，因此刷新基线而不改内核：
+
+- `verify_influence_envelope_lane1.txt`（+5 行）、
+  `verify_lane_nonlinear_envelope_lane1.txt`（+3 行）：`6a2d439` 给二维车道
+  包络新增竖向位移规格 `D*_2`，原有 43 / 11 行内力数值一字未变，失败原因是
+  「数字个数不一致 243→273 / 51→69」。
+- `verify_3d_beam_live_live_envelope.csv`（`1,N,1,-0,-120` → `-115`）：
+  `09c56bc` 修正 `envelope3DFromInfluence` 线荷载漏积分权重（补梯形
+  `laneWeights3D`），`Q=-10` 项由 `10×2=20` 变 `10×1.5=15`，
+  `20+100=120` → `15+100=115`，`max_rel=0.0417` 正好 `5/120`。
+  **与冲击系数无关**：该算例 `lane.impact=1.0`；`8145a1f` 只改
+  `compute3DStageLiveEnvelope`（位移包络），本算例走
+  `envelope3DFromInfluence` 直接算轴力，从未乘 `1+μ`。内力包络按 JTG D60
+  计冲击的口径没有变化。此前把它猜成「差一个 μ、需要人工拍板是否该含
+  1+μ」是误判，记录在此，避免以后照着错误结论去改内核。
+
+刷新前 34 个 PASS 全部是 `identical`（字节相同），故只重写这 3 个文件，
+其余 34 个基线一字未动。`--freeze` 会把 37 个文件全量 `copy2`，CRLF/LF
+行尾差异会把 34 个无变化文件也标成 `M`——**不要直接全量提交**，按实际
+差异逐个刷新并保持原行尾。`ctest` 全套 6/6 通过（含
+`dat_byte_regression` 37/37）。
+
+**防呆**：任何改动 `example_*.cpp` 输出行、`defaultEnvelopeSpecs` 规格、
+`envelope3DFromInfluence` 乘子或积分权重的提交，都要同步
+`python tests/regression/compare_regression.py --freeze --bin <build>
+--src <source> --baseline <dir>`，并在 CHANGELOG 写明每条基线变动的数值
+依据；否则字节回归会长期挂红灯，掩盖真正的算法回归。
+
 ### 新增：索长迭代 / 制造线形几何闭合的逐轮过程量输出（不改算法、不改输入格式）
 
 `fem_3d_nl.hpp` 里的两类外层迭代（影响矩阵 Newton 求下料索长 L0、

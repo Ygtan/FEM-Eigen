@@ -59,6 +59,22 @@ cmake --build build -j8
 ctest --test-dir build  # 等价入口
 ```
 
+`dat_byte_regression` 把 37 个 `verify_*.dat` 算例的输出与
+`tests/regression/baselines/` 下的黄金基线逐字节比对。**任何改动
+`example_*.cpp` 输出行、`defaultEnvelopeSpecs` 规格、
+`envelope3DFromInfluence` 的乘子或积分权重的提交，都必须同步刷新基线**：
+
+```powershell
+python tests/regression/compare_regression.py --freeze --bin build --src . --baseline tests/regression/baselines
+```
+
+刷新前先跑一次不带 `--freeze` 的比对，确认差异全部能解释；刷新时**只提交
+真正有内容变化的文件**——`--freeze` 会把 37 个文件全量 `copy2`，CRLF/LF
+行尾差异会把无变化文件也标成 `M`。每条基线变动都要在 `CHANGELOG.md` 写明
+数值依据。2026-11-09 曾因 `6a2d439`（二维包络新增位移行）与 `09c56bc`
+（补线荷载梯形积分权重）两处有意变更后未同步基线，导致该项长期 3/37
+失败；已刷新并恢复 6/6 全绿，详见 CHANGELOG 当日条目。
+
 ## 3. 两套输入格式
 
 程序根据节点坐标维度自动区分二维/三维模型，二者关键字风格一致但有差异：
