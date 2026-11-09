@@ -2,6 +2,58 @@
 
 本文件记录 FEM-Eigen 项目的新增功能和主要修改内容。
 
+## 2026-11-09
+
+### 新增：线性屈曲荷载因子全量输出（不改算法、不改输入格式）
+
+`computeBucklingFactors3D` 一直在解 `(K+λ·Kg)·φ=0`，但只在
+`example_3d_modal.cpp` / `bench/modal_bench.cpp` 里把 λ 打到控制台，
+`example_3d_grillage.exe` 的结果文件里没有，BridgeStudio 拿不到。本轮
+把**同一次特征求解**的结果与诊断写进结果文件：
+
+- 新增 `buckling_output_3d.hpp`：`formatBucklingSection3D(ref, dm, result,
+  header)` 写 `buckling`（`<stem>_summary.txt`）/ `[BUCKLING]`
+  （`<stem>_cable.txt`）段：`NMODES/NDOF/BASIS`、`REF NLOAD/PREF/SUMFZ/
+  NBEAM/NAXIAL/KGNZ/NFREE/COMPRESSION/CHOLESKY/STATUS`、
+  每阶 `L <i> <λ> <Pcr_kN>`。`P_ref = Σ|Fi|`（N，不限方向），
+  `Pcr = λ·P_ref/1000`（kN）；`SUMFZ` 只作诊断，竖向是 dof 3。
+  `bucklingErrorSection3D` 在真正做不了时写 `ERROR=<code>`，不静默。
+- `fem_3d.hpp`：
+  - 抽出 `assembleGeometricStiffness3D(m, dm, U)`，除 BEAM 的一致几何
+    刚度外补齐 **TRUSS/CABLE** 的 `Kg=(N/L)·[[P,-P],[-P,P]]`
+    （`P=I-n⊗n` 横向投影）。原实现只遍历 BEAM，纯桁架桥 Kg 恒为零、
+    永远报"没有屈曲模态"；`BEAM7` 的 14 自由度翘曲项无对应式子，
+    显式跳过而不是塞 12×12 错位。
+  - `computeBucklingResult3D` 在 λ 之外返回 `kgNonZeros / nFree /
+    choleskyOk / compression`，`STATUS` 由 `bucklingStatus3D` 单点判定：
+    `no_compression`（参考荷载下无受压软化）是物理预期，不是求解失败；
+    `Kg` 全零时早退，避免稀疏无解后掉进 nf³ 稠密回退。旧接口
+    `computeBucklingFactors3D` 保持不变。
+  - 新增 `finalStageBucklingModel3D(m)`：成桥态构型 + 成桥态恒载合力。
+    施工阶段是**增量法**，按 `(node,dof)` 累加 `st.loads`；有阶段时
+    不读 `m.loads`。**坑**：`finalStageModel3D` 无阶段时 `return m`
+    是连 `loads` 一起拷的，有阶段时只新建构型；不清空 `ref.loads`
+    会把 `*CLOAD` 算两遍，实测悬臂柱 λ 正好减半（10.17 vs Euler
+    20.33）而 Pcr 不变。
+- `example_3d_grillage.cpp`：末尾写 `buckling` 段，前 6 阶。无参考荷载 /
+  特征求解异常分别写 `no_reference_load` / `solver_exception`。
+- `cable_solver.cpp`：写 `[BUCKLING] ERROR=nonlinear_state_not_supported`。
+  成桥态是共转列式几何非线性平衡态，一致切线刚度已含成桥态几何刚度，
+  基于未变形构型的一次特征值 λ 不适用；真实需求是非线性稳定全过程
+  （荷载–位移极值点）分析，本版本未覆盖，不拿线弹性 λ 冒充。
+- 结果段向后兼容：新段放在既有段之后，段内行不匹配任何旧解析正则；
+  两个结果文件的其它字段一字未改。
+
+**口径**：λ 是参考荷载整体放大倍数，不是规范稳定安全系数；JTG 3362
+没有 λ 的合格限值。线性屈曲不含初始缺陷、材料非线性与几何非线性，
+是稳定承载力的上限。
+
+**验证**：20 段悬臂柱（E=206 GPa、Iy=0.4、L=100 m、轴压 1 MN）
+`λ₁ = 20.33138614`，Euler 闭式解 `π²EI/(4L²)/P = 20.33138507`，
+误差 5×10⁻⁸；`example_3d_modal.exe` 旧接口输出一致。空间桁架桥
+（109 根 TRUSS）Kg 非零元 1030、求出 5 阶 λ。
+构建：`mingw32-make -C build example_3d_grillage cable_solver`。
+
 ## 2026-11-08
 
 ### 新增：模态结果全量输出（不改算法、不改输入格式、不改 CMake 目标）

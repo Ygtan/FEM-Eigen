@@ -960,46 +960,112 @@ inline double verticalBendingFrequency3D(const Model3D& m, const DofMap3D& dm,
     return -1.0;
 }
 
-inline std::vector<double> computeBucklingFactors3D(const Model3D& m, int nModes = 3) {
+// 由参考荷载下的线性位移组装几何刚度 Kg，(K + λ·Kg)·φ = 0 的输入之一。
+//
+// 两种单元各有各的 Kg，别只装 BEAM：
+//   BEAM       —— 一致几何刚度（横向 v/w 与转角的耦合项 + 扭转项），
+//                 局部 12×12 经 T 变换到全局；
+//   TRUSS/CABLE—— Kg = (N/L)·[[P,-P],[-P,P]]，P = I - n⊗n 是垂直于杆轴
+//                 的投影。轴向没有几何刚度（轴向刚度已在 K 里），
+//                 只有横向分量随轴力增刚/软化。
+// 早期版本只遍历 `e.type == "BEAM"`，于是纯桁架桥的 Kg 恒为零 —— 明明
+// 内核有屈曲求解器，桁架却永远报"没有屈曲模态"。现在按实际单元类型补齐。
+//
+// 轴力 N（受拉为正）统一由参考位移反算。CABLE 在**线性**内核里本来就按
+// TRUSS 处理（见 input_format_3d.md「阶段调索」），这里沿用同一物理模型；
+// 几何非线性成桥态的切线刚度不走这条路径。BEAM7 的 14 自由度翘曲项没有
+// 对应的几何刚度式，显式跳过而不是塞一个 12×12 进去错位。
+inline SparseMat3D assembleGeometricStiffness3D(const Model3D& m,
+                                                const DofMap3D& dm,
+                                                const std::vector<double>& U) {
+    auto uget = [&](int nid, int k) -> double {
+        const int d = dm.safeDof(nid, k);
+        return (d >= 0 && d < static_cast<int>(U.size())) ? U[d] : 0.0;
+    };
+    std::vector<Eigen::Triplet<double>> trips;
+    for (const auto& e : m.elements) {
+        const Vec3 d = m.nodes.at(e.n2) - m.nodes.at(e.n1);
+        const double L = d.norm();
+        if (L <= 0.0) continue;
+        const std::vector<int> g = elementGdofs3D(dm, e);
+        if (e.type == "BEAM") {
+            BeamElement b;
+            b.E = e.E; b.A = e.A; b.Iy = e.Iy; b.Iz = e.Iz; b.J = e.J; b.G = e.G;
+            b.x0 = m.nodes.at(e.n1); b.x1 = m.nodes.at(e.n2);
+            const DenseMat T = b.transformation();
+            Eigen::VectorXd ug(12);
+            for (int k = 0; k < 6; ++k) {
+                ug(k)     = uget(e.n1, k);
+                ug(6 + k) = uget(e.n2, k);
+            }
+            const Eigen::VectorXd ul = T * ug;
+            const double N = e.E * e.A / L * (ul(6) - ul(0));
+            const DenseMat Kg = T.transpose() * b.geometricStiffness(N) * T;
+            for (int r = 0; r < 12; ++r)
+                for (int c = 0; c < 12; ++c)
+                    if (Kg(r, c) != 0.0) trips.emplace_back(g[r], g[c], Kg(r, c));
+        } else if (g.size() == 6) {
+            const Vec3 n = d / L;
+            const Vec3 u1(uget(e.n1, 0), uget(e.n1, 1), uget(e.n1, 2));
+            const Vec3 u2(uget(e.n2, 0), uget(e.n2, 1), uget(e.n2, 2));
+            const double N = e.E * e.A / L * n.dot(u2 - u1);
+            const Mat3 P = Mat3::Identity() - n * n.transpose();
+            const Mat3 K = (N / L) * P;
+            for (int r = 0; r < 3; ++r)
+                for (int c = 0; c < 3; ++c) {
+                    const double v = K(r, c);
+                    if (v == 0.0) continue;
+                    trips.emplace_back(g[r], g[c], v);
+                    trips.emplace_back(g[r], g[c + 3], -v);
+                    trips.emplace_back(g[r + 3], g[c], -v);
+                    trips.emplace_back(g[r + 3], g[c + 3], v);
+                }
+        }
+    }
+    SparseMat3D Kg(dm.nDofs, dm.nDofs);
+    Kg.setFromTriplets(trips.begin(), trips.end());
+    Kg.makeCompressed();
+    return Kg;
+}
+
+// 屈曲结果 + **诊断**。λ 为空时不能一律叫"求解失败"：三跨连续梁格在
+// 竖向均布荷载下几乎没有轴力，Kg 里没有受压软化项，本来就不存在压屈模态。
+// 把 Kg 的非零元数、是否存在受压对角、自由自由度数一并带出去，下游才能
+// 区分「物理上无压杆」和「有压杆却没算出来」这两件完全不同的事。
+struct BucklingResult3D {
+    std::vector<double> factors;
+    int kgNonZeros = 0;
+    int nFree = 0;
+    bool choleskyOk = true;
+    bool compression = false;   // Kg 对角存在负值（有单元受压软化）
+};
+
+inline BucklingResult3D computeBucklingResult3D(const Model3D& m, int nModes = 3) {
+    BucklingResult3D res;
     const std::vector<double> U = solveModel3D(m);   // 参考荷载下的线性位移
     DofMap3D dm;
     const SparseMat3D K = assembleStiffness3D(m, dm);
-
-    // 几何刚度：由各梁的轴力（受拉正）组装
-    std::vector<Eigen::Triplet<double>> trips;
-    for (const auto& e : m.elements) {
-        if (e.type != "BEAM") continue;
-        BeamElement b;
-        b.E = e.E; b.A = e.A; b.Iy = e.Iy; b.Iz = e.Iz; b.J = e.J; b.G = e.G;
-        b.x0 = m.nodes.at(e.n1); b.x1 = m.nodes.at(e.n2);
-        const double L = b.length();
-        const DenseMat T = b.transformation();
-        Eigen::VectorXd ug(12);
-        for (int k = 0; k < 6; ++k) {
-            const int d1 = dm.safeDof(e.n1, k), d2 = dm.safeDof(e.n2, k);
-            ug(k)     = (d1 >= 0 && d1 < static_cast<int>(U.size())) ? U[d1] : 0.0;
-            ug(6 + k) = (d2 >= 0 && d2 < static_cast<int>(U.size())) ? U[d2] : 0.0;
-        }
-        const Eigen::VectorXd ul = T * ug;
-        const double N = e.E * e.A / L * (ul(6) - ul(0));
-        const DenseMat Kg = T.transpose() * b.geometricStiffness(N) * T;
-        const std::vector<int> g = elementGdofs3D(dm, e);
-        for (int r = 0; r < 12; ++r)
-            for (int c = 0; c < 12; ++c)
-                if (Kg(r, c) != 0.0) trips.emplace_back(g[r], g[c], Kg(r, c));
-    }
-    SparseMat3D Ksg(dm.nDofs, dm.nDofs);
-    Ksg.setFromTriplets(trips.begin(), trips.end());
-    Ksg.makeCompressed();
+    const SparseMat3D Ksg = assembleGeometricStiffness3D(m, dm, U);
+    res.kgNonZeros = static_cast<int>(Ksg.nonZeros());
+    for (int k = 0; k < Ksg.outerSize(); ++k)
+        for (SparseMat3D::InnerIterator it(Ksg, k); it; ++it)
+            if (it.row() == it.col() && it.value() < -1e-12) res.compression = true;
 
     const std::vector<int> free = freeDofs3D(m, dm, K);
-    const int nf = static_cast<int>(free.size());
-    std::vector<double> out;
-    if (nf == 0) return out;
+    res.nFree = static_cast<int>(free.size());
+    const int nf = res.nFree;
+
+    // Kg 恒为零（例如连续梁格只受竖向荷载、没有轴力）时 (K+λKg) 恒正定，
+    // 不可能有屈曲模态。早退也避免稀疏求解无解后掉进 nf³ 的稠密回退。
+    if (res.kgNonZeros == 0) return res;
+    if (nf == 0) return res;
 
 #ifdef FEM_HAS_SPECTRA
     const std::vector<double> sp = solveSparseBuckling(K, Ksg, free, dm.nDofs, nModes);
-    if (!sp.empty()) return sp;
+    if (!sp.empty()) {
+        res.factors = sp;
+        return res;
+    }
     // 稀疏求解失败/未收敛时回退稠密
 #endif
 
@@ -1011,7 +1077,10 @@ inline std::vector<double> computeBucklingFactors3D(const Model3D& m, int nModes
         }
     // (K + λ·Kg)·φ = 0 → A = L^{-1}·Kg·L^{-T}，λ = -1/μ（μ<0 为屈曲模态）。
     Eigen::LLT<Eigen::MatrixXd> llt(Kd);
-    if (llt.info() != Eigen::Success) return {};
+    if (llt.info() != Eigen::Success) {
+        res.choleskyOk = false;
+        return res;
+    }
     const Eigen::MatrixXd L = llt.matrixL();
     const Eigen::MatrixXd Linv = L.inverse();
     const Eigen::MatrixXd A = Linv * Kgd * Linv.transpose();
@@ -1022,8 +1091,13 @@ inline std::vector<double> computeBucklingFactors3D(const Model3D& m, int nModes
         const double mval = ses.eigenvalues()(i);
         if (mval < -1e-14 && std::isfinite(mval)) mu.push_back(mval);
     }
-    for (double mval : mu) out.push_back(-1.0 / mval);
-    return out;
+    for (double mval : mu) res.factors.push_back(-1.0 / mval);
+    return res;
+}
+
+// 旧接口保持不变：example_3d_modal / modal_bench 只关心 λ 序列。
+inline std::vector<double> computeBucklingFactors3D(const Model3D& m, int nModes = 3) {
+    return computeBucklingResult3D(m, nModes).factors;
 }
 
 // ==================== 施工阶段 ====================
@@ -2251,6 +2325,35 @@ inline Model3D finalStageModel3D(const Model3D& m) {
         if (active[i]) mc.elements.push_back(m.elements[i]);
     constrainDisconnected3D(mc);
     return mc;
+}
+
+// 线性屈曲的**参考荷载模型**：成桥态构型 + 成桥态恒载合力。
+//
+// finalStageModel3D 只给构型，不复制荷载（它是给模态用的：模态只需要
+// K/M，不需要 F）。屈曲不一样 —— 几何刚度 Kg 由参考荷载下的轴力决定，
+// 没有荷载就没有 Kg，也就没有屈曲模态。
+//
+// 施工阶段是**增量法**（每阶段 `mc.loads = st.loads`，成桥态 = Σ 各阶段
+// 增量），所以这里按 (node,dof) 把各阶段增量累加；无阶段时才用全局
+// *CLOAD。**不要把 m.loads 与 stages.loads 相加**：有阶段时阶段求解根本
+// 不读 m.loads，两者同时给会重复计入，λ 会偏小一倍。
+inline Model3D finalStageBucklingModel3D(const Model3D& m) {
+    Model3D ref = finalStageModel3D(m);
+    // finalStageModel3D 两条分支口径不一致：无阶段时 `return m` 是连 loads
+    // 一起拷的，有阶段时只新建构型、不带 loads。不清空的话无阶段模型会
+    // 把同一份 *CLOAD 算两遍 —— 实测悬臂柱 λ 正好减半（10.17 vs Euler
+    // 20.33），P_ref 翻倍而 P_cr 不变，是个极隐蔽的错。
+    ref.loads.clear();
+    std::map<std::pair<int, int>, double> acc;
+    if (m.stages.empty()) {
+        for (const auto& [node, dof, val] : m.loads) acc[{node, dof}] += val;
+    } else {
+        for (const auto& st : m.stages)
+            for (const auto& [node, dof, val] : st.loads) acc[{node, dof}] += val;
+    }
+    for (const auto& [key, val] : acc)
+        if (val != 0.0) ref.loads.push_back({key.first, key.second, val});
+    return ref;
 }
 
 inline std::vector<LiveBeamEnvelope3D> compute3DLiveBeamEnvelope(

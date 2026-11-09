@@ -229,6 +229,8 @@ NODES=1,2,3 DOF=2 CODE=JTG_D60
 - 二维 `example_mixed`：写 `<模型名>.result`（节点位移、单元内力、单元应力、支座反力）。
 - 二维 `example_viz`：额外生成 `*_model.svg`、`*_disp.svg`、`*_moment.svg`、`*_shear.svg`、`*_stress_top/bottom.svg` 等矢量图。
 - 三维 `example_3d_grillage`：写 `*_summary.txt`（位移包络、梁内力包络、成桥态恒载/活载内力、施工阶段索力与预应力、冲击系数，以及 `modal` 段：前 8 阶自振频率/周期/参与质量/节点振型；质量全为零时写 `ERROR=no_mass`）。成桥态索承体系 `cable_solver` 的对应段是 `[MODAL]`（12 阶，成桥态一致切线刚度）。段格式见 `modal_output_3d.hpp`。
+- 线性屈曲：`example_3d_grillage` 另写 `buckling` 段（前 6 阶 `L <i> <λ> <Pcr_kN>`、`REF` 行的参考荷载与几何刚度诊断、`STATUS`）。参考荷载 = 成桥态构型 + 成桥态恒载合力（阶段增量累加），`Pcr = λ·Σ|Fi|`；`STATUS=no_compression` 表示参考荷载下无受压杆件、本就不存在压屈模态，不是求解失败。`cable_solver` 写 `[BUCKLING] ERROR=nonlinear_state_not_supported`：共转列式成桥态的切线刚度已含几何刚度，线弹性 λ 不适用，需另做非线性稳定全过程分析。段格式与口径见 `buckling_output_3d.hpp`。
+- **λ 不是规范稳定安全系数**：JTG 3362 没有 λ 的合格限值；线性屈曲不含初始缺陷、材料非线性与几何非线性，是真实稳定承载力的上限。构件稳定按 §5.3 的稳定系数 φ 另行验算。
 - 三维 `example_3d_beam_live`：写 `*_live_envelope.csv`（轴力/弯矩/剪力/应力/双力矩包络）。
 
 ## 11. 常见问题

@@ -93,6 +93,7 @@
 #include "fem_3d_nl.hpp"
 #include "fem_2d.hpp"   // impactCoefficientFromFrequency（JTG D60 冲击系数）
 #include "modal_output_3d.hpp"
+#include "buckling_output_3d.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -1656,6 +1657,15 @@ int main(int argc, char** argv) {
         else
             std::fputs(modalErrorSection3D(
                 "[MODAL]", converged ? "no_lane_or_no_mass" : "not_converged").c_str(), f);
+        // ---- 线性屈曲：本内核不适用，明确写出原因，不静默 -----------------
+        // computeBucklingFactors3D 是「未变形构型 + 线弹性 K + 参考荷载 Kg」
+        // 的一次特征值问题。这里算的是共转列式几何非线性成桥态，一致切线
+        // 刚度 Kt 已经包含成桥态几何刚度；再把线性 λ 套上去会得到一个既
+        // 不是"荷载放大倍数"也不是"稳定安全系数"的数。真实需求是极值点/
+        // 荷载-位移全过程的非线性稳定分析，本版本未覆盖，写 ERROR 段让
+        // 报告层如实标注「本次未产出」。
+        std::fputs(bucklingErrorSection3D(
+            "[BUCKLING]", "nonlinear_state_not_supported").c_str(), f);
         std::fprintf(f, "[END]\n");
         std::fclose(f);
 

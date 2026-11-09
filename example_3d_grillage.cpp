@@ -1,5 +1,6 @@
 #include "fem_3d.hpp"
 #include "modal_output_3d.hpp"
+#include "buckling_output_3d.hpp"
 
 #include <fstream>
 #include <iostream>
@@ -138,6 +139,35 @@ int main(int argc, char** argv) {
             } catch (const std::exception& e) {
                 out << modalErrorSection3D("modal", "solver_exception");
                 std::cerr << "[modal] " << e.what() << "\n";
+            }
+        }
+    }
+
+    // ---- 线性屈曲：把内核本来就在算的 λ 写出来 ---------------------------
+    // computeBucklingFactors3D 解 (K + λ·Kg)·φ = 0，之前只在
+    // example_3d_modal / modal_bench 里打印到控制台，报告拿不到。这里用
+    // **成桥态构型 + 成桥态恒载合力**作参考荷载（阶段是增量法，见
+    // finalStageBucklingModel3D），输出前 6 阶 λ 与临界荷载 λ·P_ref。
+    //
+    // 这是线弹性屈曲，不是规范稳定验算：λ 的含义、上限性质和未覆盖项由
+    // 报告层写明；这里只保证数值来自内核同一次特征求解，不另算一套。
+    // 不静默：无参考荷载 / 无屈曲模态 / 求解抛异常都写 ERROR 段。
+    {
+        const Model3D mb = finalStageBucklingModel3D(m);
+        const DofMap3D dmB = buildDofMap3D(mb);
+        const BucklingReference3D ref = bucklingReference3D(mb);
+        if (ref.prefN <= 0.0) {
+            out << bucklingErrorSection3D("buckling", "no_reference_load");
+        } else {
+            try {
+                // λ 为空不写 ERROR：没有受压杆件时本就不该有屈曲模态，
+                // STATUS=no_compression 把「物理上无压杆」与「求解失败」
+                // 分开，报告层据此给 info 而不是假的"验算失败"。
+                const BucklingResult3D bk = computeBucklingResult3D(mb, 6);
+                out << formatBucklingSection3D(mb, dmB, bk, "buckling");
+            } catch (const std::exception& e) {
+                out << bucklingErrorSection3D("buckling", "solver_exception");
+                std::cerr << "[buckling] " << e.what() << "\n";
             }
         }
     }
