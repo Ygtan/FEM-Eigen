@@ -19,6 +19,11 @@
 //     SENSITIVITY=LOWRANK      ; 仅 COMPLETION：LOWRANK(默认) | FULL | FIXEDPOINT
 //                              ; FULL = P3-3b 完整形状敏感度 K_shape（诊断/对拍用，
 //                              ; 默认路径不变）；FIXEDPOINT = 纯不动点对照
+//     OPTIMIZE=0               ; 1 = 先做带约束成桥索力优化，把 T* 写回 *CABLE
+//     OPTOBJ=MINMAXM           ; MINMAXM(min max|M主梁|, IRLS) | MINENERGY
+//     OPTBALANCE=1             ; 逐塔 ΣT·cos = 0（罚函数并入二次型）
+//     TMAX=0                   ; 索力上限 N；0 = 程序默认取 1.5×RIGID 最大索力
+//                              ; （不是规范限值，段里写 TMAXSRC=DEFAULT_1.5_RIGID）
 //     VERBOSE=0
 //
 //     *CABLE
@@ -103,6 +108,7 @@
 #include "buckling_output_3d.hpp"
 #include "cable_length_output_3d.hpp"
 #include "newton_output_3d.hpp"
+#include "cable_opt_3d.hpp"      // [OPT]：带约束成桥索力优化（默认关闭）
 
 #include <algorithm>
 #include <cctype>
@@ -236,6 +242,11 @@ struct Cfg {
     double minTension = 0.0;
     double minTensionFraction = 0.02;
     double deckLoad = 0.0;          // 桥面恒载合计 N（仅用于校核报告，0=未知）
+    // 带约束成桥索力优化。默认全关，既有算例的索力口径逐位不变。
+    bool optimize = false;
+    std::string optObjective = "MINMAXM";   // MINMAXM | MINENERGY
+    bool optBalance = true;
+    double optTMax = 0.0;            // 0 = 程序默认上界 1.5×RIGID
     bool verbose = false;
     std::vector<CableReq> cables;
     // ---- 悬索桥（*SUSP_BRIDGE / *MAINCABLE / *HANGER）----
@@ -291,6 +302,10 @@ Cfg readCfg(const std::string& path) {
                 else if (key == "MINABS") c.minTension = std::stod(val);
                 else if (key == "SENSITIVITY") c.sensitivity = upper(val);
                 else if (key == "DECKLOAD") c.deckLoad = std::stod(val);
+                else if (key == "OPTIMIZE") c.optimize = (std::stod(val) != 0.0);
+                else if (key == "OPTOBJ") c.optObjective = upper(val);
+                else if (key == "OPTBALANCE") c.optBalance = (std::stod(val) != 0.0);
+                else if (key == "TMAX") c.optTMax = std::stod(val);
                 else if (key == "VERBOSE") c.verbose = (std::stod(val) != 0.0);
                 else std::fprintf(stderr, "[警告] *CABLE_BRIDGE 未知关键字: %s\n", kv.c_str());
             }
@@ -935,6 +950,58 @@ int main(int argc, char** argv) {
                                          + " 不是索单元 " + std::to_string(e->id) + " 的端点");
         }
 
+        // ---- 带约束成桥索力优化（OPTIMIZE=1，默认关闭） ------------------
+        // 在三种 MODE 之前先求 T* 并写回 cfg.cables，后面 TENSION / COMPLETION
+        // 仍走各自既有的「命中给定索力」路径：优化只负责"定目标"，不另造闭环。
+        // 失败不静默：写 [OPT] ERROR 段、保留原索力、stderr 给警告，绝不
+        // 拿一组半吊子的 T* 冒充优化结果。
+        CableOptResult3D optResult;
+        bool optRequested = cfg.optimize && !susp;
+        if (cfg.optimize && susp)
+            std::fprintf(stderr,
+                         "[警告] 悬索桥找形已定主缆/吊索索力，OPTIMIZE=1 不适用，已忽略。\n");
+        if (optRequested) {
+            std::vector<CableAnchor3D> anchors;
+            anchors.reserve(cfg.cables.size());
+            std::vector<double> givenT;
+            givenT.reserve(cfg.cables.size());
+            for (const auto& c : cfg.cables) {
+                anchors.push_back({c.elem, c.anchor});
+                givenT.push_back(c.tension);   // <=0 = 该索未给定
+            }
+            CableOptOptions3D oo;
+            oo.objective = (cfg.optObjective == "MINENERGY")
+                               ? CableOptOptions3D::Objective::MinBendingEnergy
+                               : CableOptOptions3D::Objective::MinMaxMoment;
+            oo.towerBalance = cfg.optBalance;
+            oo.tMin = cfg.minTension;
+            oo.tMax = cfg.optTMax;
+            oo.minTensionFraction = cfg.minTensionFraction;
+            oo.verbose = cfg.verbose;
+            // 用户把 *CABLE 段目标索力全给齐时，优化从这组索力出发
+            // （START=GIVEN）；否则退回刚性支承连续梁法解析起点（START=RIGID）。
+            optResult = optimizeCableTensions3D(m, anchors, oo, givenT);
+            const bool ok = optResult.error.empty()
+                && optResult.status != "objective_not_improved"
+                && optResult.T.size() == cfg.cables.size();
+            if (ok) {
+                for (std::size_t k = 0; k < cfg.cables.size(); ++k)
+                    cfg.cables[k].tension = optResult.T[k];
+            } else {
+                // 不静默：优化失败或线性化目标反而变差就保留原索力，
+                // [OPT] 段写 APPLIED=0，下游不得拿 T 行当设计索力。
+                std::fprintf(stderr,
+                             "[警告] 成桥索力优化未采纳（%s），保留原索力口径。\n",
+                             !optResult.error.empty() ? optResult.error.c_str()
+                                 : (optResult.status == "objective_not_improved"
+                                        ? "线性化目标未改善"
+                                        : "结果长度不符"));
+            }
+        }
+        const bool optApplied = optRequested && optResult.error.empty()
+            && optResult.status != "objective_not_improved"
+            && optResult.T.size() == cfg.cables.size();
+
         const DofMap3D dm = buildDofMap3D(m);
         const std::size_t nc = cfg.cables.size();
 
@@ -1114,7 +1181,7 @@ int main(int argc, char** argv) {
             u = r.u;
             tensionErr = r.maxTensionErr;
             closureErr = r.maxGeomErr;
-            method = "target";
+            method = optApplied ? "ConstrainedOpt" : "target";
         } else if (cfg.mode == "COMPLETION") {
             std::vector<CompletionCable3D> cc;
             for (const auto& c : cfg.cables) cc.push_back({c.elem, c.anchor, c.tension});
@@ -1156,8 +1223,10 @@ int main(int argc, char** argv) {
             camber = r.camber;
             closureErr = r.maxClosureErr;
             tensionErr = r.maxTensionErr;
-            method = allAuto ? (cfg.minEnergy ? "MinBendingEnergy" : "RigidSupport")
-                             : (anyAuto ? "Mixed" : "given");
+            method = optApplied ? "ConstrainedOpt"
+                                : (allAuto ? (cfg.minEnergy ? "MinBendingEnergy"
+                                                            : "RigidSupport")
+                                           : (anyAuto ? "Mixed" : "given"));
         } else {
             throw std::runtime_error("未知 MODE: " + cfg.mode
                                      + "（应为 COMPLETION / TENSION / STATIC）");
@@ -1699,6 +1768,26 @@ int main(int argc, char** argv) {
         // 报告层如实标注「本次未产出」。
         std::fputs(bucklingErrorSection3D(
             "[BUCKLING]", "nonlinear_state_not_supported").c_str(), f);
+        // ---- 带约束成桥索力优化（[OPT]） --------------------------------
+        // 与 [LENGTH] 不是同一层：这里是"定目标索力 T*"的外层优化过程，
+        // [LENGTH] 是"命中 T*"的索长/几何闭合迭代。没请求优化时明确写
+        // ERROR 段，下游按「不适用」解释，不摆空表也不冒充已优化。
+        if (optApplied) {
+            // 成桥态实际弯矩峰值：与 [GIRDEREND] 同源，回填进 [OPT] 让下游
+            // 并排看到「优化用的线性化目标」与「成桥态实际效应」。
+            // 实测二者可能反向变化，报告必须写清不能互相冒充。
+            double mp = 0.0;
+            for (const auto& ge : girderEnds) mp = std::max(mp, std::abs(ge.My));
+            optResult.momentPeakFinal = mp;
+        }
+        if (optRequested)
+            std::fputs(formatCableOptSection3D(optResult, "[OPT]",
+                                               optApplied).c_str(), f);
+        else
+            std::fputs(cableOptErrorSection3D(
+                "[OPT]", susp && cfg.optimize
+                             ? "not_applicable_suspension_formfinding"
+                             : "no_optimization_requested").c_str(), f);
         // ---- 索长迭代 / 制造线形几何闭合的逐轮过程 ----------------------
         // 内核本来就把每轮误差打印到控制台，但结果文件里只有 converged /
         // iterations / closure_err / tension_err 四个汇总标量。这里把同一份

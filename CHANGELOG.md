@@ -4,6 +4,34 @@
 
 ## 2026-11-09
 
+### 实现：带约束成桥目标索力优化 `[OPT]`（默认 OPTIMIZE=0，数值口径不变）
+
+承接「阶段二 D」。此前 `METHOD=RIGID|MINENERGY` 只是「按固定准则算一组
+索力」，`cable_opt.py` 只改索面积；本节补上真正的带约束优化。
+
+- 新增 `cable_opt_3d.hpp`：`optimizeCableTensions3D()` 复用内核裸结构
+  线性刚度、`solveMulti` 柔度与 `beamEndForcesAt` 弯矩影响矩阵，解带箱约束
+  + 逐塔 `ΣT·cos=0` 软约束的二次型；`MINMAXM`（IRLS 逼近 min max|M|）与
+  `MINENERGY` 两种目标，`START=GIVEN|RIGID` 两种起点。优化结果 T\* 写回
+  `*CABLE`，随后仍走既有 TENSION / COMPLETION 命中路径，不另造闭环。
+- `cable_solver.cpp` 新增 `OPTIMIZE/OPTOBJ/OPTBALANCE/TMAX` 关键字与 `[OPT]`
+  段输出。默认全关，既有算例逐位不变（`dat_byte_regression` 37/37 通过）。
+- **修量纲而非调参**：弯矩项 ~(N·m)²、平衡项 ~N²、变量 ~1e6 N，早期把
+  平衡罚乘弯矩尺度导致罚项大几百倍，实测「收敛了但弯矩反而变大」。
+  改为 `x=T/Tscale` 全量无量纲化 + 相对配平后回归正常。
+- **守卫不静默**：线性化目标不降反升时写 `STATUS=objective_not_improved`、
+  `APPLIED=0`，不写回 T\*、保留原索力；未收敛写 `not_converged`。
+  `MPEAK_KIND=LINEAR_BARE` 与 `MPEAK_FINAL_KIND=GIRDEREND_FINAL` 分列两种
+  弯矩口径，禁止互相相减冒充改善量。
+- 48 索真实斜拉桥实测（相对 `OPTIMIZE=0` 基线成桥态 `max|My|` 39.64 MN·m）：
+  `MINENERGY+OPTBALANCE=0` 收敛到 29.12 MN·m（降 26.5%），
+  `MINMAXM+OPTBALANCE=0` 到 21.67 MN·m（降 45.3%）；
+  `MINMAXM+OPTBALANCE=1` 因塔顶平衡与切比雪夫目标冲突被守卫拦下，
+  如实标注未采纳。塔顶平衡是软约束、与弯矩目标存在权衡，不是「越严越好」。
+- 段格式与错误码见 `input_format_3d.md` 的 `[OPT]` 专节，实现口径见
+  `USER_MANUAL.md §9.9`；前端唯一解析器 `BridgeStudio/cable_opt_3d.py`，
+  专项回归 `verify_cable_opt_3d.py` 82/82。
+
 ### 实现：P3-3b 完整形状敏感度 `K_shape`（默认路径仍为低秩）
 
 承接下方「取证」条目，本轮按 `USER_MANUAL.md §9.8` 的规格实现并通过四条

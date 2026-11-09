@@ -350,6 +350,51 @@ Newton    (I + G_full)·δ = -(ΔX + u)，G_full = du/dX
 需要更高闭合精度、或某算例低秩路径反复兜底时，再显式用
 `SENSITIVITY=FULL`。
 
+### 9.9 带约束成桥目标索力优化（`OPTIMIZE=1`）
+
+`METHOD=RIGID` 与 `METHOD=MINENERGY` 是「按一个固定准则直接算一组索力」；
+本节是「给定可行域，求一组更优的索力」。默认 `OPTIMIZE=0` **完全不进入
+这条路径**，既有算例的索力口径逐位不变。
+
+力学全部复用内核已有积木，不重跑非线性求解、不在 Python 侧另算一套
+索力分配：去掉待定索后的裸结构线性刚度 `K` → 单位索力对 `Ld` →
+`Factorization3D::solveMulti` 给 `U = K⁻¹Ld` 与恒载位移 `u0 = K⁻¹Fdl`
+→ 弯曲应变能柔度 `Fm = LdᵀU`、交叉项 `g = Ldᵀu0`，以及
+`beam3DLocalEndForces` + `beamEndForcesAt` 给出单位索力下的主梁弯矩
+影响矩阵 `A` 与恒载弯矩 `M0`。
+
+- **目标**：`MINENERGY`（`min ½TᵀFmT + gᵀT`）或 `MINMAXM`（`min max|M主梁|`，
+  IRLS 权重 `w ∝ |M|^(p−2)`，`p = 2,4,8,16` 逐轮压平峰值）。
+- **约束**：索力箱约束 `T ∈ [TMIN, TMAX]`；逐塔 `ΣT·cos = 0` 作为
+  **软约束罚项**并入二次型。不给 `TMAX` 时程序取
+  `1.5 × RIGID 起点最大索力`（`TMAXSRC=DEFAULT_1.5_RIGID`，属程序口径，
+  **不是规范限值**）——实测完全不限上界会把 48 索从 0.68~1.40 MN 推到
+  0.14~6.67 MN，工程上不可用。
+- **起点**：`*CABLE` 段把目标索力全给齐且都为正时从这组索力出发
+  （`START=GIVEN`），否则用刚性支承连续梁法解析解（`START=RIGID`）。
+
+**量纲必须归一**：弯矩项 ~(N·m)²、平衡项 ~N²、变量 ~1e6 N，直接拼进
+同一个二次型会差十几个数量级。实现用 `x = T/Tscale`、
+`Ã = (Tscale/Mscale)·A`、`m̃0 = M0/Mscale` 把目标与约束都缩到 O(1)，
+箱约束、步长、收敛判据全在 `x` 空间，输出时还原成 N。早期版本把平衡罚
+乘上弯矩项的尺度，罚项比弯矩项大几百倍，实测「二次型收敛了但主梁弯矩
+反而变大」；修正后 `balanceScale=0.1` 才是真正的相对权重。
+
+**两组弯矩峰值不是同一个量**：`MPEAK0`/`MPEAK` 是裸结构线性化影响矩阵
+口径的优化目标，`MPEAK_FINAL` 是本次成桥态 `[GIRDEREND]` 实际 `max|My|`
+（由 `cable_solver` 回填）。实测 `MINENERGY` 下二者方向一致、`MINMAXM`
+开塔顶平衡时可能反向。**不得互相相减当作改善量**；未优化基线需另跑
+`OPTIMIZE=0` 取 `[GIRDEREND] max|My|` 对拍。
+
+**守卫**：若线性化弯矩峰值不降反升，写
+`STATUS=objective_not_improved`、`APPLIED=0`，**不把 T\* 写回 `*CABLE`**，
+保留原索力口径；`T` 行只是过程量。未收敛也如实写
+`STATUS=not_converged`。塔顶平衡与切比雪夫弯矩目标存在实测权衡：
+48 索算例 `MINMAXM + OPTBALANCE=1` 会被守卫拦下，
+`MINENERGY + OPTBALANCE=0` 与 `MINMAXM + OPTBALANCE=0` 稳定收敛。
+优化轮数、收敛率、目标下降幅度都不构成规范意义上的设计合格判定。
+段格式、错误码与实测数值见 `input_format_3d.md` 的 `[OPT]` 专节。
+
 ## 10. 输出与可视化
 
 - 二维 `example_mixed`：写 `<模型名>.result`（节点位移、单元内力、单元应力、支座反力）。
@@ -357,6 +402,13 @@ Newton    (I + G_full)·δ = -(ΔX + u)，G_full = du/dX
 - 三维 `example_3d_grillage`：写 `*_summary.txt`（位移包络、梁内力包络、成桥态恒载/活载内力、施工阶段索力与预应力、冲击系数，以及 `modal` 段：前 8 阶自振频率/周期/参与质量/节点振型；质量全为零时写 `ERROR=no_mass`）。成桥态索承体系 `cable_solver` 的对应段是 `[MODAL]`（12 阶，成桥态一致切线刚度）。段格式见 `modal_output_3d.hpp`。
 - 线性屈曲：`example_3d_grillage` 另写 `buckling` 段（前 6 阶 `L <i> <λ> <Pcr_kN>`、`REF` 行的参考荷载与几何刚度诊断、`STATUS`）。参考荷载 = 成桥态构型 + 成桥态恒载合力（阶段增量累加），`Pcr = λ·Σ|Fi|`；`STATUS=no_compression` 表示参考荷载下无受压杆件、本就不存在压屈模态，不是求解失败。`cable_solver` 写 `[BUCKLING] ERROR=nonlinear_state_not_supported`：共转列式成桥态的切线刚度已含几何刚度，线弹性 λ 不适用，需另做非线性稳定全过程分析。段格式与口径见 `buckling_output_3d.hpp`。
 - **λ 不是规范稳定安全系数**：JTG 3362 没有 λ 的合格限值；线性屈曲不含初始缺陷、材料非线性与几何非线性，是真实稳定承载力的上限。构件稳定按 §5.3 的稳定系数 φ 另行验算。
+- 带约束成桥目标索力优化另写 `[OPT]` 段（`OPTIMIZE=1` 时）：
+  `OBJECTIVE/START/NCABLES/NMOMENTS/NBALANCE/IRLS/NITER/CONVERGED/CONVBY/
+  APPLIED/TMIN/TMAX/TMAXSRC` + `I`（逐轮）与 `T`（逐索）。`MPEAK_KIND=
+  LINEAR_BARE` 与 `MPEAK_FINAL_KIND=GIRDEREND_FINAL` 分列两种弯矩口径；
+  `APPLIED=0` 表示 T\* 未写回。默认 `OPTIMIZE=0` 写
+  `ERROR=no_optimization_requested`。段格式见 `cable_opt_3d.hpp` 与
+  `input_format_3d.md`。
 - 成桥态索承体系 `cable_solver` 另写 `[LENGTH]` 段：`KIND=cable_length`
   （MODE=TENSION 的索长迭代，`ERRKIND=tension_rel`，含完整 `NJ` + `J` 影响
   矩阵）或 `KIND=erection_geometry`（MODE=COMPLETION 的几何闭合，

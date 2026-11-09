@@ -399,6 +399,7 @@ support_v_sum_kN=... applied_v_kN=... balance_pct=...
 [BUCKLING] ERROR=nonlinear_state_not_supported（本内核不做线弹性屈曲，见 buckling_output_3d.hpp）
 [LENGTH]   KIND/STATUS/ERRKIND/.../I/E/NJ/J（外层索长迭代 / 几何闭合逐轮过程，见下）
 [NEWTON]   KIND/STATUS/STAGE/NSTEP/.../S（内层共转列式 Newton 逐迭代过程，见下）
+[OPT]      KIND/STATUS/OBJECTIVE/.../I/T（带约束成桥目标索力优化，见下）
 [END]
 ```
 
@@ -493,6 +494,57 @@ S 3 4 1 0.04180729204 6.325719466e-09 9178792.139 0 1
   `KIND=none STATUS=not_applicable` + `ERROR=no_newton_solution`，不摆空段。
 
 过程量只说明"数值怎么收敛"，规范没有 Newton 迭代轮数的合格限值。
+
+### 带约束成桥目标索力优化过程量（`[OPT]`）
+
+段格式与口径定义在 `cable_opt_3d.hpp`。`OPTIMIZE=1` 时内核先解一个带箱
+约束的二次型，得到目标索力 T\* 并写回 `*CABLE`，随后 `TENSION` /
+`COMPLETION` 仍走各自既有的「命中 T\*」路径。**优化只负责定目标，不另造
+闭环**。未请求优化时写 ERROR 段，既有索力口径逐位不变。
+
+```text
+[OPT]
+KIND=constrained_cable_force STATUS=ok
+OBJECTIVE=MINENERGY START=GIVEN OBJECTIVE_KIND=NORMALIZED
+NCABLES=48 NMOMENTS=128 NBALANCE=2 IRLS=0
+NITER=190 CONVERGED=1 CONVBY=projected_gradient APPLIED=1
+TMIN=28056.32906 TMAX=2104224.68 TMAXSRC=DEFAULT_1.5_RIGID
+MPEAK_KIND=LINEAR_BARE
+MPEAK0=35504728.63 MPEAK=29529833.82 BAL0=4383519.447 BAL=1606775.614
+MPEAK_FINAL_KIND=GIRDEREND_FINAL
+MPEAK_FINAL=29321912.76
+I 0 1 ...          ; <irls> <iter> <归一化目标> <max|M|(N·m)> <BAL(N)> <相对步长>
+T 1 ...            ; <序号> <T0(N)> <T*(N)> <lo(N)> <hi(N)>
+```
+
+- `OBJECTIVE=MINMAXM`（IRLS 逼近 min max|M主梁|）| `MINENERGY`（最小裸
+  结构弯曲应变能）；`START=GIVEN`（`*CABLE` 段全给了目标索力）|
+  `RIGID`（刚性支承连续梁法解析起点）。
+- **三组量分属不同口径，段里各写一行 KIND**：`MPEAK0`/`MPEAK` 是去掉
+  索后的裸结构线性化影响矩阵量，只用于优化目标；`MPEAK_FINAL` 由
+  `cable_solver` 从本次 `[GIRDEREND]` 回填，是成桥态实际 `max|My|`；
+  `I` 行的目标值是 `x = T/Tscale` 的**无量纲归一化值**。实测可能反向
+  变化，**不得互相相减当作"弯矩改善量"**，也不得拿线性化目标冒充成桥态
+  效应。未优化基线需另跑 `OPTIMIZE=0` 取 `[GIRDEREND] max|My|` 对拍。
+- `APPLIED=0` 表示 T\* **未写回** `*CABLE`（求解失败，或线性化目标不降
+  反升被守卫拦下）。此时 `T` 行只是过程量，不能当设计索力，
+  `MPEAK_FINAL_KIND=NOT_APPLICABLE`。`STATUS=objective_not_improved`
+  与 `not_converged` 都如实标注，不摆空表、不冒充通过。
+- `TMAX=0`（缺省）并不是"不限上界"：不给上界时优化器会把索力集中到
+  少数索上（48 索实测 0.68~1.40 MN 被推到 0.14~6.67 MN），工程上不可用。
+  程序默认取 `1.5 × RIGID 起点最大索力`，段里写
+  `TMAXSRC=DEFAULT_1.5_RIGID`；这是**程序口径不是规范限值**，可用
+  `TMAX=` 显式覆盖（`TMAXSRC=USER`）。
+- 塔顶水平力平衡 `NBALANCE` 条是**软约束罚项**，与弯矩目标存在权衡。
+  实测 48 索算例开启 `OPTBALANCE=1` 且用 `MINMAXM` 时，两者冲突会让
+  线性化弯矩峰值反而升高，此时守卫拒绝采纳；`MINENERGY` 与
+  `OPTBALANCE=0` 的组合已验证稳定收敛。
+- `ERROR` 段：`no_optimization_requested`（默认 `OPTIMIZE=0`）、
+  `not_applicable_suspension_formfinding`（悬索桥找形不适用）、
+  `no_cables` / `bare_structure_is_mechanism` / `no_girder_moments` 等。
+  旧内核无段由前端写 `no_opt_section`。
+
+优化轮数、收敛率、目标下降幅度都**不构成设计规范意义上的合格判定**。
 
 ### 活载梁内力包络（`[GIRDER_LIVE]`）
 
