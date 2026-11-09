@@ -16,6 +16,9 @@
 //     TOLT=1e-7                ; 索力相对容差
 //     METHOD=MINENERGY|RIGID   ; 自动定索力方法（仅 COMPLETION 且未全给索力时用）
 //     MINT=0.02                ; 保力下限 = 该比例 × 最大索力
+//     SENSITIVITY=LOWRANK      ; 仅 COMPLETION：LOWRANK(默认) | FULL | FIXEDPOINT
+//                              ; FULL = P3-3b 完整形状敏感度 K_shape（诊断/对拍用，
+//                              ; 默认路径不变）；FIXEDPOINT = 纯不动点对照
 //     VERBOSE=0
 //
 //     *CABLE
@@ -228,6 +231,8 @@ struct Cfg {
     double tol = 1e-8;
     double tolTension = 1e-7;
     bool minEnergy = true;          // false = 刚性支承连续梁法
+    // 仅 MODE=COMPLETION：几何闭合敏感度口径（默认 LOWRANK，既有算例不变）。
+    std::string sensitivity = "LOWRANK";   // LOWRANK | FULL | FIXEDPOINT
     double minTension = 0.0;
     double minTensionFraction = 0.02;
     double deckLoad = 0.0;          // 桥面恒载合计 N（仅用于校核报告，0=未知）
@@ -284,6 +289,7 @@ Cfg readCfg(const std::string& path) {
                     c.minEnergy = (upper(val) != "RIGID");
                 } else if (key == "MINT") c.minTensionFraction = std::stod(val);
                 else if (key == "MINABS") c.minTension = std::stod(val);
+                else if (key == "SENSITIVITY") c.sensitivity = upper(val);
                 else if (key == "DECKLOAD") c.deckLoad = std::stod(val);
                 else if (key == "VERBOSE") c.verbose = (std::stod(val) != 0.0);
                 else std::fprintf(stderr, "[警告] *CABLE_BRIDGE 未知关键字: %s\n", kv.c_str());
@@ -1122,6 +1128,15 @@ int main(int argc, char** argv) {
             co.minEnergy.minTension = cfg.minTension;
             co.minEnergy.minTensionFraction = cfg.minTensionFraction;
             co.minEnergy.verbose = cfg.verbose;
+            if (cfg.sensitivity == "FULL")
+                co.sensitivity = SensitivityMode3D::Full;
+            else if (cfg.sensitivity == "FIXEDPOINT")
+                co.sensitivity = SensitivityMode3D::FixedPoint;
+            else if (cfg.sensitivity == "LOWRANK")
+                co.sensitivity = SensitivityMode3D::LowRank;
+            else
+                throw std::runtime_error("未知 SENSITIVITY: " + cfg.sensitivity
+                    + "（应为 LOWRANK / FULL / FIXEDPOINT）");
             co.nl = nl;
             bool anyAuto = false, allAuto = true;
             for (const auto& c : cfg.cables) {

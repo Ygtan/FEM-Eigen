@@ -4,6 +4,47 @@
 
 ## 2026-11-09
 
+### 实现：P3-3b 完整形状敏感度 `K_shape`（默认路径仍为低秩）
+
+承接下方「取证」条目，本轮按 `USER_MANUAL.md §9.8` 的规格实现并通过四条
+验收 oracle，**但没有改默认数值路径**。
+
+- `fem_3d_nl.hpp` 新增 `ShapeSensitivityOptions3D` /
+  `ShapeSensitivityResult3D`、`crShapeResidual3D()`（固定 u 装配
+  `R = F_ext - F_int`）、`computeShapeSensitivity3D()`（中心差分装配
+  `K_shape`，收敛构形切线一次分解 + nt 次回代得到 `G_full`）。
+  只格式化 / 装配内核已有量，不在别处另算一遍力学。
+- `SensitivityMode3D {LowRank, Full, FixedPoint}` 加到
+  `ErectionGeometryOptions3D` / `CompletionStateOptions3D`：三条路径统一
+  `δ = -(I+G)⁻¹(ΔX+u)`，只换 G，线搜索与不动点兜底完全相同。
+  默认 `LowRank`，与既有算例逐位一致（`dat_byte_regression` 37/37 不变）。
+- `cable_solver.cpp` 的 `*CABLE_BRIDGE` 新增可选关键字
+  `SENSITIVITY=LOWRANK|FULL|FIXEDPOINT`（缺省 LOWRANK）；未知值明确报错，
+  不静默回退。BridgeStudio 前端不写该关键字。
+- **修正一个隐蔽口径错**：`K_shape` 的**列**只取 isT 平动自由度，但**行**
+  必须保留全部自由自由度（含转角、弹性支承），只有硬约束行清零。初版把
+  「非 isT 行」一起清零，等于假设转角不随 X 变；小模型差分对拍能过，
+  实桥上 Full 却只线性收敛、6 轮且比低秩慢。修正后实桥 4 轮、
+  `0.158 → 1.06e-3 → 5.15e-7 → 9.5e-12`，逐轮比值二次收敛。
+  `verbose` 现打印 `nt` / `|K_shape|max` / `|G_full|max` /
+  `σ(I+G)` 与 `cond`，便于诊断。
+- 新增 `test_shape_sensitivity_3d.cpp`（CTest 名 `shape_sensitivity_3d`，
+  44/44）：残差口径同源、非索锚点列与自由转角行非零、
+  `G_full·v` 与差分 `du/dX·v` 三档步长对拍、三条路径逐轮误差与终值一致、
+  默认路径逐位不变回归保护。数值见 §9.8。
+- **发现几何闭合的刚体规范自由度**：无端部固结时，参考构形作刚体平移
+  δ、位移取 -δ 不改变当前构形与索力，`(I+G)` 有零空间 ⇒ 制造线形是一族
+  解而物理量唯一。新增 `testGaugeFreedom` 把它固化成回归；实桥塔墩固结
+  天然打断，测试模型必须显式固结，否则「三路径 camber 一致」不成立。
+- **决策：默认保持 `LOWRANK`**。四条 oracle 全达标，但实桥
+  `FULL` 720 ms / 默认 317 ms（每轮 `2·nt` 装配 + `nt×nt` 稠密 LU，
+  大自由度按 `O(nt³)` 恶化），而默认已 6 轮零 FALLBACK 稳定收敛；
+  `FIXEDPOINT` 400 轮停滞在 1.98e-3 m，说明 Newton 步不可省。
+  `FULL` 作为 opt-in 高精度 / 诊断路径（闭合误差再小 150 倍）。
+
+验证：全量 `mingw32-make -j2` rc=0、`ctest` 7/7（新增该测试）、
+`dat_byte_regression` 37/37；真实斜拉桥三路径结果见 §9.8 表。
+
 ### 新增：内层共转列式 Newton 过程量输出（`[NEWTON]`，不改算法）
 
 以前 `solveModel3DNonlinear` 的荷载步 / 逐次 Newton 残差只在 `verbose`
@@ -40,6 +81,10 @@
 本次只改注释并写明「P3-2b 已实现」，不动算法。
 
 ### 取证：P3-3b（梁参考形状未计入敏感度 G）暂不改数值路径
+
+> 历史记录：本节的「本版未实现」已由本文件顶部「实现：P3-3b 完整形状
+> 敏感度」条目承接；下方「约 20%」是源码旧注释的估计，实测
+> `||G_full - G_low||/||G_full|| = 0.17%`，详见 `USER_MANUAL.md §9.8`。
 
 `fem_3d_nl.hpp` 的 `TODO(P3-3b)` 说低秩敏感度 G 只计索项、漏了梁参考
 形状，误差约 20%，会拖累 Newton 收敛率。用真实斜拉桥 `MODE=COMPLETION`

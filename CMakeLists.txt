@@ -124,9 +124,12 @@ enable_testing()
 fem_add_executable(test_2d test_2d.cpp)
 fem_add_executable(test_3d test_3d.cpp)
 fem_add_executable(test_3d_nl test_3d_nl.cpp)
+# P3-3b：完整形状敏感度 K_shape 的独立验收（差分对拍 + 三路径逐轮误差）。
+fem_add_executable(test_shape_sensitivity_3d test_shape_sensitivity_3d.cpp)
 add_test(NAME analytical_exact_solutions_2d COMMAND test_2d)
 add_test(NAME analytical_exact_solutions_3d COMMAND test_3d)
 add_test(NAME nonlinear_co_rotational_3d COMMAND test_3d_nl)
+add_test(NAME shape_sensitivity_3d COMMAND test_shape_sensitivity_3d)
 
 # .dat 逐字节回归比对：用当前构建重算 verify_*.dat，并与其黄金基线逐字节比对。
 # 依赖 Python3；未安装时仅跳过该测试，不影响编译与其它测试。

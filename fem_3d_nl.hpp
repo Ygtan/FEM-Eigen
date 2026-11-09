@@ -1144,6 +1144,193 @@ inline CableSensitivity3D cableSensitivity3D(const Model3D& m, const DofMap3D& d
     return s;
 }
 
+// ==================== 完整形状敏感度 K_shape（P3-3b） ====================
+//
+// 背景：cableSensitivity3D 给出的低秩 G = -K⁻¹B·Kc·Bᵀ 只计入
+//   「移动锚点 → 索弦长变 → 索力变 → 节点位移变」，
+// 漏掉了「梁的参考轴方向、无应力长度 L0、局部刚度 Kl12 随参考构形 X 变」
+// 以及「缆索自重外荷载随几何变」。这些项影响 Newton 的收敛率，但不影响
+// 最终解——闭合误差本身是精确的，线搜索按实际误差判据，不动点步保收敛。
+//
+// 完整口径（推导）：
+//     平衡      R(X,u) = F_ext(X) - F_int(X,u) = 0
+//     全微分    ∂R/∂X·dX - K_t·du = 0        （K_t = ∂F_int/∂u）
+//     ⇒         du/dX = K_t⁻¹·∂R/∂X = -K_t⁻¹·K_shape
+//     其中      K_shape = ∂(F_int - F_ext)/∂X |_{u fixed} = -∂R/∂X
+// 闭合残差 Fv = ΔX + u(X)，Newton 步 δ = -(I + G_full)⁻¹·Fv，
+// G_full = du/dX。K_shape 不再是 nc 秩 ⇒ **不能再用 Woodbury（nc×nc）**，
+// 只能在 isT 子空间显式组装并做一次 nt×nt 稠密求解。
+//
+// 实现纪律（与 solveModel3DNonlinear 的 Fext / assemble 逐项同源）：
+//  · **列**只取 isT 自由度（未被硬约束、弹性支承占用的平动 dof）：几何
+//    闭合的未知量只有节点坐标，转角不是未知量。
+//  · **行必须保留全部自由自由度**（含转角与弹性支承）：改变梁参考轴方向
+//    会改变端弯矩，转角平衡方程的右端项不为零。只对**硬约束**行清零
+//    （K_t 已施加 Dirichlet，行列清零、对角置 1）。早期实现把「非 isT 行」
+//    一起清零，等于假设转角不随 X 变，G_full 因此仍是近似的 —— 差分对拍
+//    在小模型上过关，但实桥上 Newton 只线性收敛，实测比低秩还慢。
+//  · 每列做中心差分，**保持全局 u 不变**，只重建受扰动节点相连的
+//    CRElemData（p1/p2、E0、L0、Kl12 都随之变）后装配 F_int。
+//    这是 2·|isT| 次**装配**，不是 2·|isT| 次非线性求解。
+//  · F_ext 中随 X 变化的部分（缆索自重用几何弦长时）每次重算，不缓存。
+//  · 最终只把 G_full 的 isT 行取出来组成 nt×nt 的闭合 Jacobian。
+//
+// 过程量与 oracle 见 USER_MANUAL.md §9.8 / test_shape_sensitivity_3d.cpp。
+// 本实现默认**不接入**生产路径，由 ErectionGeometryOptions3D::sensitivity
+// 显式选择；默认 LowRank 分支数值逐位不变。
+
+struct ShapeSensitivityOptions3D {
+    double fdStep = 1e-5;      // 中心差分步长（m）；对 10~1000 m 跨径都安全
+    bool verbose = false;
+};
+
+struct ShapeSensitivityResult3D {
+    Eigen::MatrixXd Kshape;     // nd×nt：∂(F_int-F_ext)/∂X（非 isT 行已清零）
+    Eigen::MatrixXd Gfull;      // nt×nt：isT 子空间的 du/dX = -K_t⁻¹·K_shape
+    std::vector<int> tdofs;     // isT 自由度在全局 dof 中的下标
+    int assemblies = 0;         // 装配次数（= 2·nt，诊断量）
+    double fdStep = 0.0;
+    double kShapeMax = 0.0;     // |K_shape| 最大元（N/m）
+    double gMax = 0.0;          // |G_full| 最大元（无量纲）
+};
+
+// 固定 u 装配平衡残差 R = F_ext - F_int。
+// 必须与 solveModel3DNonlinear 里的 Fext 构造和 assemble(Fint,...) 逐项一致：
+// 节点荷载、弹性支承 k·value、缆索自重 w·Lc/2、弹簧内力 k·u；初应变/收缩
+// 已由 crElementInternal 计入单元内力，不再单独进外荷载。
+// eds 必须是用**当前 m.nodes** 构建的 CRElemData（与 m.elements 同序）。
+inline Eigen::VectorXd crShapeResidual3D(const Model3D& m, const DofMap3D& dm,
+                                         const std::vector<CRElemData>& eds,
+                                         const Eigen::VectorXd& u) {
+    const int nd = dm.nDofs;
+    struct Spring { int dof; double k, val; };
+    std::vector<Spring> springs;
+    for (const auto& c : m.constraints) {
+        const int d = dm.safeDof(c.node, c.dof - 1);
+        if (d < 0) continue;
+        if (c.k > 0.0) springs.push_back({d, c.k, c.value});
+    }
+
+    Eigen::VectorXd Fext = Eigen::VectorXd::Zero(nd);
+    for (const auto& [node, dof, val] : m.loads) {
+        const int d = dm.safeDof(node, dof - 1);
+        if (d >= 0) Fext(d) += val;
+    }
+    for (const auto& s : springs) Fext(s.dof) += s.k * s.val;
+    for (const auto& e : m.elements) {
+        if (e.type != "CABLE" || e.w <= 0.0) continue;
+        // Lc 用几何弦长时随 X 变，必须每次重算（与 solveModel3DNonlinear 同源）。
+        const double Lc = (e.L0 > 0.0) ? e.L0
+                                       : (m.nodes.at(e.n2) - m.nodes.at(e.n1)).norm();
+        const double half = -0.5 * e.w * Lc;
+        const int d1 = dm.safeDof(e.n1, 2), d2 = dm.safeDof(e.n2, 2);
+        if (d1 >= 0) Fext(d1) += half;
+        if (d2 >= 0) Fext(d2) += half;
+    }
+
+    Eigen::VectorXd Fint = Eigen::VectorXd::Zero(nd);
+    Eigen::Matrix<double, 14, 1> ue, fe;
+    for (const auto& ed : eds) {
+        ue.setZero();
+        for (int k = 0; k < ed.n; ++k) ue[k] = u(ed.gdofs[k]);
+        fe.setZero();
+        crElementInternal(ed, ue, fe, false);
+        for (int k = 0; k < ed.n; ++k) Fint(ed.gdofs[k]) += fe[k];
+    }
+    for (const auto& s : springs) Fint(s.dof) += s.k * u(s.dof);
+    return Fext - Fint;
+}
+
+inline ShapeSensitivityResult3D computeShapeSensitivity3D(
+        const Model3D& m0, const DofMap3D& dm,
+        const std::vector<double>& uVec,
+        const std::vector<char>& isT,
+        const NLTangent3D& tan,
+        const ShapeSensitivityOptions3D& opt = {}) {
+    const int nd = dm.nDofs;
+    if (static_cast<int>(uVec.size()) != nd)
+        throw std::runtime_error("形状敏感度：位移向量长度与自由度数不符");
+    if (opt.fdStep <= 0.0)
+        throw std::runtime_error("形状敏感度：中心差分步长必须为正");
+
+    ShapeSensitivityResult3D out;
+    out.fdStep = opt.fdStep;
+    for (int d = 0; d < nd; ++d) if (isT[d]) out.tdofs.push_back(d);
+    const int nt = static_cast<int>(out.tdofs.size());
+    if (nt == 0) throw std::runtime_error("形状敏感度：没有可动平动自由度");
+
+    Eigen::VectorXd u = Eigen::VectorXd::Zero(nd);
+    for (int d = 0; d < nd; ++d) u(d) = uVec[d];
+
+    Model3D m = m0;
+    std::vector<CRElemData> eds;
+    eds.reserve(m.elements.size());
+    for (const auto& e : m.elements) eds.push_back(crMakeElemData(m, e, dm));
+
+    // dof → (节点在 dm.nodeIds 中的下标, 节点内分量 a)
+    auto locate = [&](int dof, int& nodeIdx, int& comp) {
+        for (std::size_t i = 0; i < dm.nodeIds.size(); ++i) {
+            if (dof >= dm.dofStart[i] && dof < dm.dofStart[i] + dm.dofCount[i]) {
+                nodeIdx = static_cast<int>(i);
+                comp = dof - dm.dofStart[i];
+                return true;
+            }
+        }
+        return false;
+    };
+
+    out.Kshape = Eigen::MatrixXd::Zero(nd, nt);
+    for (int j = 0; j < nt; ++j) {
+        const int dof = out.tdofs[j];
+        int ni = -1, a = -1;
+        if (!locate(dof, ni, a) || a > 2) continue;   // isT 只可能是平动 0..2
+        const int nid = dm.nodeIds[ni];
+        std::vector<std::size_t> affected;
+        for (std::size_t ei = 0; ei < m.elements.size(); ++ei)
+            if (m.elements[ei].n1 == nid || m.elements[ei].n2 == nid)
+                affected.push_back(ei);
+
+        // 只重建受影响单元；其余 CRElemData 沿用收敛构形的计算结果。
+        auto rebuild = [&](double dh) {
+            m.nodes[nid][a] += dh;
+            for (auto ei : affected) eds[ei] = crMakeElemData(m, m.elements[ei], dm);
+        };
+        rebuild(+opt.fdStep);
+        const Eigen::VectorXd Rp = crShapeResidual3D(m, dm, eds, u);
+        rebuild(-2.0 * opt.fdStep);
+        const Eigen::VectorXd Rm = crShapeResidual3D(m, dm, eds, u);
+        rebuild(+opt.fdStep);                         // 复原，供下一列使用
+        out.assemblies += 2;
+        // K_shape = -∂R/∂X
+        for (int d = 0; d < nd; ++d)
+            out.Kshape(d, j) = -(Rp(d) - Rm(d)) / (2.0 * opt.fdStep);
+    }
+    // 只清硬约束行（与 solveModel3DNonlinear 的 applyDirichlet 一致）。
+    // 转角行、弹性支承行必须保留：它们是自由自由度，X 扰动会通过梁的
+    // 参考方向改变其平衡方程右端项。
+    std::vector<char> isC(nd, 0);
+    for (const auto& c : m0.constraints) {
+        const int d = dm.safeDof(c.node, c.dof - 1);
+        if (d < 0 || c.k > 0.0) continue;
+        isC[d] = 1;
+    }
+    for (int d = 0; d < nd; ++d)
+        if (isC[d]) out.Kshape.row(d).setZero();
+    out.kShapeMax = out.Kshape.cwiseAbs().maxCoeff();
+
+    // 一次分解 + nt 次回代；约束行因 K_shape 清零而解出 0。
+    Factorization3D fac(tan.K);
+    const Eigen::MatrixXd Gcol = -fac.solveMulti(out.Kshape);   // nd×nt = du/dX
+    out.Gfull = Eigen::MatrixXd(nt, nt);
+    for (int i = 0; i < nt; ++i)
+        for (int j = 0; j < nt; ++j) out.Gfull(i, j) = Gcol(out.tdofs[i], j);
+    out.gMax = out.Gfull.cwiseAbs().maxCoeff();
+    if (opt.verbose)
+        std::printf("  [shape] nt=%d  装配=%d  |K_shape|max=%.4g N/m  |G_full|max=%.4g\n",
+                    nt, out.assemblies, out.kShapeMax, out.gMax);
+    return out;
+}
+
 // ==================== 成桥态：无应力索长迭代 ====================
 //
 // 成桥态的目标：在设计线形下恒载由索力平衡，各索达到目标索力 T*。
@@ -1808,6 +1995,14 @@ inline std::vector<double> cableTensionsMinBendingEnergy(const Model3D& m,
 }
 
 // ③ 制造线形（预抬高）迭代：解几何闭合 ΔX + u(X0 + ΔX) = 0。
+//
+// 敏感度口径（P3-3b）：三条路径统一写成 δ = -(I + G)⁻¹·(ΔX + u)，区别只在 G：
+//   LowRank    G = -K⁻¹B·Kc·Bᵀ（Woodbury，nc 秩）——**默认**，与既有算例逐位一致；
+//   Full       G = -K_t⁻¹·K_shape（完整形状敏感度，nt×nt 稠密，见上一节）；
+//   FixedPoint G = 0（纯不动点 ΔX ← -u，用作收敛率对照）。
+// 线搜索与不动点兜底三条路径完全相同，保证对比只反映 G 的差别。
+enum class SensitivityMode3D { LowRank, Full, FixedPoint };
+
 struct ErectionGeometryOptions3D {
     int maxIter = 20;
     double tolClosure = 1e-9;    // 几何闭合容差（m）
@@ -1817,6 +2012,8 @@ struct ErectionGeometryOptions3D {
     // 每轮刷新索敏感度（W=K⁻¹B 与 Kc）。关掉能省一次分解，但 W 被冻在误差最大
     // 的那一轮上，收敛会明显变慢（实测 8 轮 → 10 轮，且每轮收敛率更差）。
     bool refreshSensitivity = true;
+    SensitivityMode3D sensitivity = SensitivityMode3D::LowRank;
+    ShapeSensitivityOptions3D shape;   // 仅 Full 使用
     bool verbose = false;
     NonlinearOptions3D nl;
 };
@@ -1932,9 +2129,13 @@ inline ErectionGeometryResult3D iterateErectionGeometry(Model3D m,
     for (int it = 0; it < opt.maxIter; ++it) {
         const std::vector<double> dXprev = dX;   // 只用于过程留痕的步长统计
         NLTangent3D tan;
-        const bool needS = !haveS || opt.refreshSensitivity ||
-                       (it > 0 && errPrev > 0.0 && cur.err > 0.5 * errPrev);
-        cur = evalGeom(dX, needS ? &tan : nullptr);
+        const bool isLowRank = (opt.sensitivity == SensitivityMode3D::LowRank);
+        // LowRank 需要收敛构形切线建 W/M；Full 需要它解 K_t⁻¹·K_shape；
+        // FixedPoint 不需要任何切线，省掉一次装配。
+        const bool needS = isLowRank && (!haveS || opt.refreshSensitivity ||
+                       (it > 0 && errPrev > 0.0 && cur.err > 0.5 * errPrev));
+        const bool needTangent = needS || (opt.sensitivity == SensitivityMode3D::Full);
+        cur = evalGeom(dX, needTangent ? &tan : nullptr);
         out.lastNewton = cur.newton;   // 收敛轮（或末轮）的内层 Newton 过程
         out.iterations = it + 1;
         out.u = cur.u;
@@ -1972,11 +2173,53 @@ inline ErectionGeometryResult3D iterateErectionGeometry(Model3D m,
         }
         errPrev = cur.err;
 
-        // ---- 低秩 Newton（Woodbury）：共用索敏感度算子 ----
-        const Eigen::VectorXd y =
-            sens.M.fullPivLu().solve(sens.Kc.asDiagonal() * (sens.B.transpose() * cur.Fv));
-        Eigen::VectorXd delta = -cur.Fv - sens.W * y;
-        for (int d = 0; d < nd; ++d) if (!isT[d]) delta(d) = 0.0;
+        // ---- Newton 步：δ = -(I + G)⁻¹·Fv，三条路径只换 G ----
+        Eigen::VectorXd delta = Eigen::VectorXd::Zero(nd);
+        if (isLowRank) {
+            // 低秩 Woodbury：G = -W·Kc·Bᵀ，(I+G)⁻¹ = I + W·M⁻¹·Kc·Bᵀ。
+            // 这一分支保持与 P3-3b 之前逐位一致，不要改写运算顺序。
+            const Eigen::VectorXd y =
+                sens.M.fullPivLu().solve(sens.Kc.asDiagonal() * (sens.B.transpose() * cur.Fv));
+            delta = -cur.Fv - sens.W * y;
+            for (int d = 0; d < nd; ++d) if (!isT[d]) delta(d) = 0.0;
+        } else if (opt.sensitivity == SensitivityMode3D::Full) {
+            // 完整形状敏感度：G_full = -K_t⁻¹·K_shape，只在 isT 子空间求逆。
+            // K_shape 不再是 nc 秩 ⇒ 不能走 Woodbury，代价是 nt×nt 稠密 LU。
+            const ShapeSensitivityResult3D ss =
+                computeShapeSensitivity3D(m, dm, cur.u, isT, tan, opt.shape);
+            const int nt = static_cast<int>(ss.tdofs.size());
+            Eigen::VectorXd FvT(nt);
+            for (int i = 0; i < nt; ++i) FvT(i) = cur.Fv(ss.tdofs[i]);
+            const Eigen::MatrixXd A =
+                Eigen::MatrixXd::Identity(nt, nt) + ss.Gfull;
+            const Eigen::FullPivLU<Eigen::MatrixXd> lu(A);
+            if (!lu.isInvertible()) {
+                // 不静默兜底：矩阵奇异就退到不动点步，由线搜索按实际误差裁决。
+                // 成桥态若有近刚体规范自由度，稠密 (I+G_full) 会比低秩
+                // Woodbury（只作用在索子空间）更容易病态——这是 Full 路径
+                // 在实桥上并不比默认路径快的实测原因，见 §9.8。
+                if (opt.verbose)
+                    std::printf("      [shape] (I+G_full) 奇异 → 退到不动点步\n");
+                for (int i = 0; i < nt; ++i) delta(ss.tdofs[i]) = -FvT(i);
+            } else {
+                const Eigen::VectorXd dT = lu.solve(-FvT);
+                for (int i = 0; i < nt; ++i) delta(ss.tdofs[i]) = dT(i);
+            }
+            if (opt.verbose) {
+                const Eigen::JacobiSVD<Eigen::MatrixXd> svd(A);
+                std::printf("      [shape] nt=%d |K_shape|max=%.4g |G_full|max=%.4g "
+                            "σ(I+G)∈[%.3g,%.3g] cond=%.3g invertible=%d\n",
+                            nt, ss.kShapeMax, ss.gMax,
+                            svd.singularValues().tail<1>()(0),
+                            svd.singularValues()(0),
+                            svd.singularValues()(0) /
+                                std::max(svd.singularValues().tail<1>()(0), 1e-30),
+                            lu.isInvertible() ? 1 : 0);
+            }
+        } else {
+            // FixedPoint：G=0 ⇒ δ = -Fv，即 ΔX ← -u（对照用，非生产路径）。
+            for (int d = 0; d < nd; ++d) if (isT[d]) delta(d) = -cur.Fv(d);
+        }
 
         // ---- 回溯线搜索 ----
         // Newton 步在远离解时会严重超调：(I+G) 的最小特征值实测可达 0.03，
@@ -2016,17 +2259,15 @@ inline ErectionGeometryResult3D iterateErectionGeometry(Model3D m,
             step.alpha = 1.0;       // 不动点步是全量替换，不是带 α 的增量
             // Newton 方向失效时的兜底：退化为不动点步 ΔX ← -u。
             //
-            // 上面的 G 只计入了索（ΔX 只通过索的弦长产生不平衡力），而梁的
-            // 参考形状同样参与：移动锚点会改变梁的参考轴方向，在"空间增量
-            // 约定"下节点三元组跟着转、局部转角因此改变一阶量——实测扰动无
-            // 索节点也能引起位移变化，且量级与索项相当（斜拉桥算例里 G 的
-            // 误差约 20%）。完整计入需构造 K_shape = ∂F_int/∂X|_{u fixed}
-            // 并令 G_full = -K⁻¹K_shape；K_shape 是满秩 nd×nd 算子，
-            // 不能再走 Woodbury 低秩公式。实现规格与验收 oracle 见
-            // USER_MANUAL.md §9.8 / CHANGELOG 2026-11-09（TODO(P3-3b)）。
-            // 2026-11-09 用真实斜拉桥 COMPLETION 算例复核：6 轮闭合误差
-            // 0.158 → 1.4e-9 m、逐轮收敛比约 0.025，每轮都是 Newton 步
-            // 被线搜索接受、零次 FALLBACK，故暂不改默认数值路径。
+            // LowRank 的 G 只计入了索（ΔX 只通过索的弦长产生不平衡力），
+            // 梁的参考形状同样参与：移动锚点改变梁参考轴方向、无应力长度
+            // 与局部刚度，量级与索项相当。完整计入已由
+            // computeShapeSensitivity3D 实现（P3-3b 完成），通过
+            // SensitivityMode3D::Full 显式选用；默认仍走 LowRank，因为真实
+            // 斜拉桥 COMPLETION 算例 6 轮闭合误差 0.158 → 1.4e-9 m、
+            // 逐轮收敛比约 0.025、每轮 Newton 步均被线搜索接受、
+            // 零次 FALLBACK，近似 G 没有导致 Newton 失效。三条路径的
+            // 对拍与逐轮误差见 test_shape_sensitivity_3d.cpp / §9.8。
             //
             // 不动点步 ΔX ← -u 的收敛率 = |G| 的谱半径 < 1（结构稳定时），
             // 不需要任何敏感度，是这里唯一的收敛保证。
@@ -2071,6 +2312,9 @@ struct CompletionStateOptions3D {
     enum class CableForceMethod { MinBendingEnergy, RigidSupport };
     CableForceMethod cableForce = CableForceMethod::MinBendingEnergy;
     CableForceOptions3D minEnergy;      // 最小弯曲能量法的选项
+    // 几何闭合的敏感度口径（默认 LowRank，与既有算例逐位一致）。
+    SensitivityMode3D sensitivity = SensitivityMode3D::LowRank;
+    ShapeSensitivityOptions3D shape;
     NonlinearOptions3D nl;
 };
 
@@ -2153,6 +2397,8 @@ inline CompletionStateResult3D solveCompletionState3D(Model3D m,
     eo.tolClosure = opt.tolClosure;
     eo.stepCap = opt.stepCap;
     eo.verbose = opt.verbose;
+    eo.sensitivity = opt.sensitivity;
+    eo.shape = opt.shape;
     eo.nl = opt.nl;
     const ErectionGeometryResult3D eg = iterateErectionGeometry(m, ids, eo);
 

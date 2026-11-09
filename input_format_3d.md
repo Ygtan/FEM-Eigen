@@ -324,7 +324,13 @@ MODE=COMPLETION NLSTEPS=3 NEWTON=30 MAXITER=20 TOL=1e-8 TOLT=1e-7 METHOD=MINENER
 | `MINT` | `0.02` | 保力下限 = 该比例 × 最大索力 |
 | `MINABS` | `0.0` | 保力下限的绝对值（N），给定后优先于 `MINT` |
 | `DECKLOAD` | `0.0` | 桥面恒载合计（N），仅用于校核报告；0 = 未知 |
-| `VERBOSE` | `0` | 非 0 打印迭代细节 |
+| `SENSITIVITY` | `LOWRANK` | 仅 `COMPLETION`：几何闭合敏感度 `LOWRANK`（默认，低秩 Woodbury）/ `FULL`（P3-3b 完整形状敏感度 `K_shape`，二次收敛但更贵）/ `FIXEDPOINT`（纯不动点，仅供对照）。未知值报错，不静默回退 |
+| `VERBOSE` | `0` | 非 0 打印迭代细节；`FULL` 下另打印 `nt`、`|K_shape|max`、`|G_full|max`、`σ(I+G)` 与条件数 |
+
+`SENSITIVITY` 是内核级诊断开关，BridgeStudio 的 `.dat` 导出不写它，
+缺省即走既有路径，成桥态结果与之前逐位一致。三条路径只换 Newton 的
+敏感度矩阵 `G`，线搜索与不动点兜底相同；口径与实测对比见
+`USER_MANUAL.md §9.8`。
 
 ### 悬索桥：`*SUSP_BRIDGE` + `*MAINCABLE` + `*HANGER`
 
