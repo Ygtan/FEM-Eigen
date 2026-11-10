@@ -502,20 +502,33 @@ S 3 4 1 0.04180729204 6.325719466e-09 9178792.139 0 1
 `COMPLETION` 仍走各自既有的「命中 T\*」路径。**优化只负责定目标，不另造
 闭环**。未请求优化时写 ERROR 段，既有索力口径逐位不变。
 
+下面这份是 48 索算例 `OPTIMIZE=1 / OPTOBJ=MINENERGY / OPTBALANCE=0` 的
+**守卫拒绝**实测：优化数学上收敛，但体系判据未满足，内核没有写回 T\*。
+
 ```text
 [OPT]
-KIND=constrained_cable_force STATUS=ok
+KIND=constrained_cable_force STATUS=system_check_rejected
 OBJECTIVE=MINENERGY START=GIVEN OBJECTIVE_KIND=NORMALIZED
-NCABLES=48 NMOMENTS=128 NBALANCE=2 IRLS=0
-NITER=190 CONVERGED=1 CONVBY=projected_gradient APPLIED=1
+NCABLES=48 NMOMENTS=128 NBALANCE=0 IRLS=0
+NITER=196 CONVERGED=1 CONVBY=projected_gradient APPLIED=0
 TMIN=28056.32906 TMAX=2104224.68 TMAXSRC=DEFAULT_1.5_RIGID
 MPEAK_KIND=LINEAR_BARE
-MPEAK0=35504728.63 MPEAK=29529833.82 BAL0=4383519.447 BAL=1606775.614
-MPEAK_FINAL_KIND=GIRDEREND_FINAL
-MPEAK_FINAL=29321912.76
+MPEAK0=35504728.63 MPEAK=29328621.44 BAL0=0 BAL=0
+MPEAK_FINAL_KIND=NOT_APPLICABLE
+MPEAK_FINAL=0
+SYSCHECK=GUARDED AVAILABLE=1
+SYSCHECK_LIMITS DECKSHARE_MIN=90 DECKSHARE_MAX=100 ADJRATIO_MAX=1.5
+SYSCHECK_PRED DECKSHARE=89.04 SUPPORT_KN=3944.29 ADJRATIO=31.98 AT_X=261.25,267.5
+SYSCHECK_FINAL_KIND=ORIGINAL_TENSIONS
+SYSCHECK_FINAL DECKSHARE=99.31 SUPPORT_KN=250 ADJRATIO=1.08 AT_X=248.75,255
+SYSCHECK_PASS=0 REJECT=system_deck_share_low,system_adjacent_jump
 I 0 1 ...          ; <irls> <iter> <归一化目标> <max|M|(N·m)> <BAL(N)> <相对步长>
 T 1 ...            ; <序号> <T0(N)> <T*(N)> <lo(N)> <hi(N)>
 ```
+
+三条全过时则写 `STATUS=ok`（或 `not_converged`）、`APPLIED=1`、
+`SYSCHECK_PASS=1 REJECT=none`、`MPEAK_FINAL_KIND=GIRDEREND_FINAL`、
+`SYSCHECK_FINAL_KIND=OPTIMIZED_TENSIONS`。
 
 - `OBJECTIVE=MINMAXM`（IRLS 逼近 min max|M主梁|）| `MINENERGY`（最小裸
   结构弯曲应变能）；`START=GIVEN`（`*CABLE` 段全给了目标索力）|
@@ -526,10 +539,30 @@ T 1 ...            ; <序号> <T0(N)> <T*(N)> <lo(N)> <hi(N)>
   `I` 行的目标值是 `x = T/Tscale` 的**无量纲归一化值**。实测可能反向
   变化，**不得互相相减当作"弯矩改善量"**，也不得拿线性化目标冒充成桥态
   效应。未优化基线需另跑 `OPTIMIZE=0` 取 `[GIRDEREND] max|My|` 对拍。
-- `APPLIED=0` 表示 T\* **未写回** `*CABLE`（求解失败，或线性化目标不降
-  反升被守卫拦下）。此时 `T` 行只是过程量，不能当设计索力，
+- `APPLIED=0` 表示 T\* **未写回** `*CABLE`（求解失败、线性化目标不降
+  反升，或体系守卫拒绝）。此时 `T` 行只是过程量，不能当设计索力，
   `MPEAK_FINAL_KIND=NOT_APPLICABLE`。`STATUS=objective_not_improved`
-  与 `not_converged` 都如实标注，不摆空表、不冒充通过。
+  / `system_check_rejected` / `not_converged` 都如实标注，不摆空表、
+  不冒充通过。数学守卫 `objective_not_improved` 优先于体系守卫，但
+  `REJECT` 行仍如实列出体系判据的超限原因码。
+- **体系守卫 `SYSCHECK`（默认 `SYSGUARD=1`）**：优化目标只有弯矩、约束
+  只有索力箱，只盯目标会得到「数学收敛、体系不可用」的 T\*。内核在
+  **写回 T\* 之前**用与计算书工程校核表同一口径预估三条体系判据，
+  不合格就不写回：
+  - `DECKSHARE > DECKSHARE_MIN`（默认 90 %）：索承担桥面恒载比例，
+    `100·Σ(T·ez)/DECKLOAD`，严格大于才算通过；
+  - `DECKSHARE ≤ DECKSHARE_MAX`（默认 100 %）：超过即支座上拔；
+  - `ADJRATIO ≤ ADJRATIO_MAX`（默认 1.5）：按支座断面分跨、跨内按
+    锚点 x 排序取相邻 `max(Ti,Tj)/min(Ti,Tj)` 的最大值。
+  `SYSCHECK_PRED` 用 T\* 预估（守卫依据），`SYSCHECK_FINAL` 用**成桥态
+  实测索力**回填；`APPLIED=0` 时后者是原方案实测，故
+  `SYSCHECK_FINAL_KIND=ORIGINAL_TENSIONS`，不是 T 行过程量。
+  `REJECT` 原因码：`system_deck_share_low` / `system_support_uplift` /
+  `system_adjacent_jump`。`SYSGUARD=0` 仅供诊断，写 `SYSCHECK=OFF`、
+  `SYSCHECK_PASS=NA`，只记录不拦截；`DECKLOAD` 缺失或支座断面不足 2 个时
+  写 `SYSCHECK=NOT_AVAILABLE AVAILABLE=0`，不假判合格也不假判失败。
+  可用 `SYSDECKMIN` / `SYSDECKMAX` / `SYSADJMAX` 覆盖限值。
+  这三条是**体系合理性判据，不是规范条文**，也不构成设计合格判定。
 - `TMAX=0`（缺省）并不是"不限上界"：不给上界时优化器会把索力集中到
   少数索上（48 索实测 0.68~1.40 MN 被推到 0.14~6.67 MN），工程上不可用。
   程序默认取 `1.5 × RIGID 起点最大索力`，段里写

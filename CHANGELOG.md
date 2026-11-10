@@ -2,6 +2,38 @@
 
 本文件记录 FEM-Eigen 项目的新增功能和主要修改内容。
 
+## 2026-11-10
+
+### 实现：`[OPT]` 体系守卫（`SYSGUARD`，默认开启，OPTIMIZE=0 逐位不变）
+
+承接计算书工程校核表的两处不通过：`MINENERGY + OPTBALANCE=0` 数学上收敛
+（`NITER=196`、成桥态弯矩降 26.5 %），但把边跨索压到 `TMIN` 后索承担
+桥面恒载 99.31 % → 89.04 %、同跨相邻索力比 1.08 → 31.98。根因是优化
+目标只有弯矩、约束只有索力箱，采纳守卫只查「线性化目标不降反升」。
+本节把三条体系判据接进**写回 T\* 之前**的采纳守卫。
+
+- `cable_opt_3d.hpp` 新增 `CableOptSystemCheck3D` 与
+  `evaluateCableOptSystem3D()`：按与 `deck_share_pct` /
+  `_same_span_smoothness` 完全相同的口径算
+  `100·Σ(T·ez)/DECKLOAD`（> 90 %、≤ 100 % 不上拔）与按支座断面
+  （`node<2000` 且约束 dof=2/3）分跨的相邻索力比（≤ 1.5）。
+  支座约束在解析时已展开为逐 dof，无需另造分跨规则。
+- `cable_solver.cpp` 新增 `SYSGUARD/SYSDECKMIN/SYSDECKMAX/SYSADJMAX`；
+  守卫不合格写 `STATUS=system_check_rejected`、`APPLIED=0`、**不写回
+  T\***、`REJECT=<原因码>`，结果仍按原索力求解。成桥态求解后用实测
+  `T` 回填 `SYSCHECK_FINAL`（`ORIGINAL_TENSIONS` /
+  `OPTIMIZED_TENSIONS` 区分口径）。`SYSGUARD=0` 只记录不拦截；
+  `DECKLOAD` 缺失或支座断面不足写 `NOT_AVAILABLE`，不假判。
+- 数学守卫 `objective_not_improved` 优先于体系守卫，但 `REJECT` 行
+  始终如实列出体系判据原因码，避免 `PASS=0 / REJECT=none` 的自相矛盾。
+- 实测：默认守卫拦下原示例（原索力 99.31 % / 1.08，工程校核表两条
+  体系判据回到通过）；`SYSGUARD=0` 诊断模式仍如实标出两条；
+  `MINMAXM + MINT=0.30` 三条全过（97.92 % / 748 kN / 1.39）正常放行；
+  `MINT=0.40` 触发 `system_support_uplift`。内核全量编译 rc=0、
+  `ctest` 7/7、`dat_byte_regression` 37/37 未变。
+- 前端 `verify_cable_opt_3d.py` 离线 72 / live 119；新增 `[OPT]`
+  体系守卫表与 `SYSCHECK` 解析、原因码中文说明、8 类故障注入。
+
 ## 2026-11-09
 
 ### 实现：带约束成桥目标索力优化 `[OPT]`（默认 OPTIMIZE=0，数值口径不变）

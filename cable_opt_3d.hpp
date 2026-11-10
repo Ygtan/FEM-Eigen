@@ -56,6 +56,130 @@ struct CableOptOptions3D {
     bool verbose = false;
 };
 
+// ---------------------------------------------------------------------------
+// 成桥体系守卫：[OPT] 的采纳判据（体系合理性，不是规范条文）
+//
+// 优化目标里只有弯矩，约束只有索力箱；只盯目标会得到「数学上收敛、体系上
+// 不可用」的 T*：实测 48 索算例把边跨索压到 TMIN，索承担桥面恒载从
+// 99.31% 掉到 89.04%、同跨相邻索力比从 1.08 涨到 31.98，计算书工程
+// 校核表因此出现两处不通过。这里在**写回 T* 之前**用与计算书完全相同的
+// 口径预估三条判据，不合格就不采纳（APPLIED=0、保留原索力），不给报告
+// 留下「优化章说通过、工程校核表说不过」的自相矛盾。
+//
+// 三条判据（与 BridgeStudio/result_3d.py `_checks_cable` /
+// `_same_span_smoothness` 同源）：
+//   · 索承担桥面恒载 > 90%：100·Σ(T·ez)/DECKLOAD；
+//   · 支座不上拔：上面那个比例 ≤ 100%（DECKLOAD − Σ(T·ez) ≥ 0）；
+//   · 同跨相邻索力比 ≤ 1.5：按支座断面分跨，跨内按锚点 x 排序取
+//     max(Ti,Tj)/min(Ti,Tj)。支座断面取「梁节点(node<2000)被约束
+//     dof=2 或 3」的节点 x，与前端 support_x() 一致。
+//
+// 内核 `*BOUNDARY` 的「1-6」已在解析时展开成逐 dof 的 Constraint3D，
+// 所以这里直接判 dof，与前端「闭区间含 2 或 3」等价。
+// ---------------------------------------------------------------------------
+struct CableOptSystemCheck3D {
+    std::string mode = "NOT_AVAILABLE";  // GUARDED | OFF | NOT_AVAILABLE
+    bool available = false;              // DECKLOAD>0 且支座断面 >=2
+    bool guarded = false;
+    double deckShareMin = 90.0, deckShareMax = 100.0;
+    double adjacentRatioMax = 1.5;
+    double deckSharePct = 0.0;           // %
+    double supportShareKN = 0.0;         // kN，负 = 支座需向下压（上拔）
+    double adjacentRatio = 0.0;
+    double adjX0 = 0.0, adjX1 = 0.0;
+    bool deckShareOk = false, supportOk = false, adjacentOk = false;
+    bool pass = false;                   // GUARDED 且三条全过
+    bool passNA = true;                  // OFF / NOT_AVAILABLE，未判定
+    std::vector<std::string> reject;     // 不合格原因码，顺序固定
+};
+
+inline CableOptSystemCheck3D evaluateCableOptSystem3D(
+    const Model3D& m, const std::vector<CableAnchor3D>& cables,
+    const std::vector<double>& T, double deckLoad,
+    double deckShareMin, double deckShareMax, double adjacentRatioMax,
+    bool guarded) {
+    CableOptSystemCheck3D out;
+    out.deckShareMin = deckShareMin;
+    out.deckShareMax = deckShareMax;
+    out.adjacentRatioMax = adjacentRatioMax;
+    out.guarded = guarded;
+    const int nc = static_cast<int>(cables.size());
+    if (nc == 0 || static_cast<int>(T.size()) < nc || deckLoad <= 0.0)
+        return out;                       // NOT_AVAILABLE
+
+    // 支座断面 x：梁节点被约束竖向/横向自由度。
+    std::vector<double> sup;
+    for (const auto& c : m.constraints) {
+        if (c.node >= 2000 || (c.dof != 2 && c.dof != 3)) continue;
+        auto it = m.nodes.find(c.node);
+        if (it != m.nodes.end()) sup.push_back(it->second.x());
+    }
+    std::sort(sup.begin(), sup.end());
+    sup.erase(std::unique(sup.begin(), sup.end(), [](double a, double b) {
+                  return std::fabs(a - b) < 1e-6;
+              }), sup.end());
+    if (sup.size() < 2) return out;
+
+    // ΣT·ez 与 [CABLE] 段 sumV 同公式：逐索取「锚点 → 另一端」方向余弦。
+    double sumV = 0.0;
+    std::vector<double> ax(nc, 0.0);
+    for (int k = 0; k < nc; ++k) {
+        const Element3D* e = nullptr;
+        for (const auto& q : m.elements)
+            if (q.id == cables[k].elem) { e = &q; break; }
+        if (!e) return out;
+        const int A = cables[k].anchorNode;
+        const int B = (e->n1 == A) ? e->n2 : e->n1;
+        auto ia = m.nodes.find(A), ib = m.nodes.find(B);
+        if (ia == m.nodes.end() || ib == m.nodes.end()) return out;
+        const Vec3 d3 = ib->second - ia->second;
+        const double L = d3.norm();
+        if (L < 1e-12) return out;
+        sumV += T[k] * (d3.z() / L);
+        ax[k] = ia->second.x();
+    }
+    out.deckSharePct = 100.0 * sumV / deckLoad;
+    out.supportShareKN = (deckLoad - sumV) / 1000.0;
+
+    // 同跨相邻索力比：与前端 _same_span_smoothness 同样的分跨与排序。
+    for (std::size_t s = 0; s + 1 < sup.size(); ++s) {
+        std::vector<int> idx;
+        for (int k = 0; k < nc; ++k)
+            if (ax[k] >= sup[s] - 1e-9 && ax[k] <= sup[s + 1] + 1e-9)
+                idx.push_back(k);
+        std::sort(idx.begin(), idx.end(),
+                  [&](int a, int b) { return ax[a] < ax[b]; });
+        for (std::size_t j = 0; j + 1 < idx.size(); ++j) {
+            const double ta = T[idx[j]], tb = T[idx[j + 1]];
+            if (ta <= 0.0 || tb <= 0.0) continue;
+            const double r = std::max(ta, tb) / std::min(ta, tb);
+            if (r > out.adjacentRatio) {
+                out.adjacentRatio = r;
+                out.adjX0 = ax[idx[j]];
+                out.adjX1 = ax[idx[j + 1]];
+            }
+        }
+    }
+
+    out.available = true;
+    // 严格 > 与前端 `float(share) > 90.0` 一致，不把 90.00 判成通过。
+    out.deckShareOk = out.deckSharePct > deckShareMin;
+    out.supportOk = out.deckSharePct <= deckShareMax + 1e-9;
+    out.adjacentOk = out.adjacentRatio <= adjacentRatioMax;
+    if (!out.deckShareOk) out.reject.push_back("system_deck_share_low");
+    if (!out.supportOk) out.reject.push_back("system_support_uplift");
+    if (!out.adjacentOk) out.reject.push_back("system_adjacent_jump");
+    if (!guarded) {
+        out.mode = "OFF";                 // 诊断模式：只记录，不拦截
+        out.passNA = true;
+    } else {
+        out.mode = "GUARDED";
+        out.passNA = false;
+        out.pass = out.reject.empty();
+    }
+    return out;
+}
+
 struct CableOptStep3D {
     int irls = 0;                   // IRLS 轮次（1..）；MINENERGY 时为 0
     int iter = 0;                   // 该轮内投影梯度迭代
@@ -86,6 +210,13 @@ struct CableOptResult3D {
     double tMaxUsed = 0.0;
     std::string tMaxSource = "DEFAULT";
     std::vector<CableOptStep3D> steps;
+    // 体系守卫：sysPred 是写回 T* 之前的预估（采纳依据），sysFinal 是
+    // 成桥态求解后用实测索力回填的结果量。二者口径相同、输入 T 不同；
+    // APPLIED=0 时 sysFinal 是原方案实测，不是 T 行的过程量。
+    CableOptSystemCheck3D sysPred, sysFinal;
+    bool sysCheckEnabled = false;   // 只有 OPTIMIZE=1 才写 SYSCHECK 行
+    bool sysFinalFilled = false;
+    std::vector<std::string> rejectCodes;
 };
 
 namespace cable_opt_detail {
@@ -526,6 +657,17 @@ inline std::string cableOptStatus3D(const CableOptResult3D& r) {
     return r.status.empty() ? "ok" : r.status;
 }
 
+inline std::string cableOptSysLine3D(const char* tag,
+                                     const CableOptSystemCheck3D& s) {
+    std::ostringstream ss;
+    ss << std::setprecision(10);
+    ss << tag << " DECKSHARE=" << s.deckSharePct
+       << " SUPPORT_KN=" << s.supportShareKN
+       << " ADJRATIO=" << s.adjacentRatio
+       << " AT_X=" << s.adjX0 << "," << s.adjX1 << "\n";
+    return ss.str();
+}
+
 inline std::string formatCableOptSection3D(const CableOptResult3D& r,
                                            const char* header = "[OPT]",
                                            bool applied = false) {
@@ -562,6 +704,33 @@ inline std::string formatCableOptSection3D(const CableOptResult3D& r,
     ss << "MPEAK_FINAL_KIND="
        << (applied ? "GIRDEREND_FINAL" : "NOT_APPLICABLE") << "\n";
     ss << "MPEAK_FINAL=" << (applied ? r.momentPeakFinal : 0.0) << "\n";
+    // 体系守卫：写回 T* 前的三条判据预估 + 成桥态实测回填。不是规范条文，
+    // 只用来决定这组 T* 能不能采纳；SYSCHECK_PASS=NA 表示未判定（守卫关闭
+    // 或 DECKLOAD 缺失），绝不把 NA 写成 1 冒充合格。
+    if (r.sysCheckEnabled) {
+        ss << "SYSCHECK=" << r.sysPred.mode
+           << " AVAILABLE=" << (r.sysPred.available ? 1 : 0) << "\n";
+        ss << "SYSCHECK_LIMITS DECKSHARE_MIN=" << r.sysPred.deckShareMin
+           << " DECKSHARE_MAX=" << r.sysPred.deckShareMax
+           << " ADJRATIO_MAX=" << r.sysPred.adjacentRatioMax << "\n";
+        ss << "SYSCHECK_PASS="
+           << (r.sysPred.passNA ? "NA" : (r.sysPred.pass ? "1" : "0"))
+           << " REJECT=";
+        if (r.rejectCodes.empty()) ss << "none";
+        else for (std::size_t i = 0; i < r.rejectCodes.size(); ++i)
+            ss << (i ? "," : "") << r.rejectCodes[i];
+        ss << "\n";
+        if (r.sysPred.available) {
+            ss << cableOptSysLine3D("SYSCHECK_PRED", r.sysPred);
+            if (r.sysFinalFilled && r.sysFinal.available) {
+                // APPLIED=0 时实测列是原方案成桥态，不是 T 行过程量。
+                ss << "SYSCHECK_FINAL_KIND="
+                   << (applied ? "OPTIMIZED_TENSIONS" : "ORIGINAL_TENSIONS")
+                   << "\n";
+                ss << cableOptSysLine3D("SYSCHECK_FINAL", r.sysFinal);
+            }
+        }
+    }
     for (const auto& s : r.steps)
         ss << "I " << s.irls << " " << s.iter << " " << s.objective << " "
            << s.momentPeak << " " << s.balance << " " << s.step << "\n";

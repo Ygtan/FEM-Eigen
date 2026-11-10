@@ -247,6 +247,13 @@ struct Cfg {
     std::string optObjective = "MINMAXM";   // MINMAXM | MINENERGY
     bool optBalance = true;
     double optTMax = 0.0;            // 0 = 程序默认上界 1.5×RIGID
+    // 成桥体系守卫：优化目标只有弯矩、约束只有索力箱，不拦的话会把边跨索
+    // 压到下限，索承担恒载跌破 90%、相邻索力比暴涨。写回 T* 前用与计算书
+    // 工程校核表同一口径预估三条判据，不合格就 APPLIED=0、不写回。
+    bool sysGuard = true;            // 默认开启；SYSGUARD=0 仅用于诊断
+    double sysDeckMin = 90.0;        // 索承担桥面恒载下限 %（严格 >）
+    double sysDeckMax = 100.0;       // 上限 %（超过即支座上拔）
+    double sysAdjMax = 1.5;          // 同跨相邻索力比上限
     bool verbose = false;
     std::vector<CableReq> cables;
     // ---- 悬索桥（*SUSP_BRIDGE / *MAINCABLE / *HANGER）----
@@ -306,6 +313,10 @@ Cfg readCfg(const std::string& path) {
                 else if (key == "OPTOBJ") c.optObjective = upper(val);
                 else if (key == "OPTBALANCE") c.optBalance = (std::stod(val) != 0.0);
                 else if (key == "TMAX") c.optTMax = std::stod(val);
+                else if (key == "SYSGUARD") c.sysGuard = (std::stod(val) != 0.0);
+                else if (key == "SYSDECKMIN") c.sysDeckMin = std::stod(val);
+                else if (key == "SYSDECKMAX") c.sysDeckMax = std::stod(val);
+                else if (key == "SYSADJMAX") c.sysAdjMax = std::stod(val);
                 else if (key == "VERBOSE") c.verbose = (std::stod(val) != 0.0);
                 else std::fprintf(stderr, "[警告] *CABLE_BRIDGE 未知关键字: %s\n", kv.c_str());
             }
@@ -957,11 +968,13 @@ int main(int argc, char** argv) {
         // 拿一组半吊子的 T* 冒充优化结果。
         CableOptResult3D optResult;
         bool optRequested = cfg.optimize && !susp;
+        // anchors 提到块外：成桥态求解后回填 SYSCHECK_FINAL 还要用同一组
+        // 索几何与顺序，不能另造一份。
+        std::vector<CableAnchor3D> anchors;
         if (cfg.optimize && susp)
             std::fprintf(stderr,
                          "[警告] 悬索桥找形已定主缆/吊索索力，OPTIMIZE=1 不适用，已忽略。\n");
         if (optRequested) {
-            std::vector<CableAnchor3D> anchors;
             anchors.reserve(cfg.cables.size());
             std::vector<double> givenT;
             givenT.reserve(cfg.cables.size());
@@ -981,25 +994,55 @@ int main(int argc, char** argv) {
             // 用户把 *CABLE 段目标索力全给齐时，优化从这组索力出发
             // （START=GIVEN）；否则退回刚性支承连续梁法解析起点（START=RIGID）。
             optResult = optimizeCableTensions3D(m, anchors, oo, givenT);
+            optResult.sysCheckEnabled = true;
+            // 体系守卫：写回 T* **之前**，用与计算书工程校核表同一口径预估
+            // 三条体系判据（索承担恒载 / 支座不上拔 / 同跨相邻索力比）。
+            // 不合格就不写回，STATUS=system_check_rejected、APPLIED=0，
+            // 下游不得拿 T 行当设计索力。DECKLOAD 缺失或支座断面不足时
+            // sysPred.available=false，段里写 NOT_AVAILABLE，不假判合格。
+            optResult.sysPred = evaluateCableOptSystem3D(
+                m, anchors, optResult.T, cfg.deckLoad,
+                cfg.sysDeckMin, cfg.sysDeckMax, cfg.sysAdjMax, cfg.sysGuard);
+            // REJECT 行始终如实列出体系判据的原因码，与 STATUS 独立：数学
+            // 守卫 objective_not_improved 优先时 STATUS 不改成体系拒绝，但
+            // SYSCHECK_PASS=0 却没有原因码会让下游自检判定自相矛盾。
+            if (optResult.sysPred.available && !optResult.sysPred.pass)
+                optResult.rejectCodes = optResult.sysPred.reject;
+            if (optResult.error.empty()
+                && optResult.status != "objective_not_improved"
+                && optResult.sysPred.mode == "GUARDED"
+                && !optResult.sysPred.pass) {
+                optResult.status = "system_check_rejected";
+            }
             const bool ok = optResult.error.empty()
                 && optResult.status != "objective_not_improved"
+                && optResult.status != "system_check_rejected"
                 && optResult.T.size() == cfg.cables.size();
             if (ok) {
                 for (std::size_t k = 0; k < cfg.cables.size(); ++k)
                     cfg.cables[k].tension = optResult.T[k];
             } else {
-                // 不静默：优化失败或线性化目标反而变差就保留原索力，
-                // [OPT] 段写 APPLIED=0，下游不得拿 T 行当设计索力。
+                // 不静默：优化失败、线性化目标变差、体系判据不合格都保留
+                // 原索力，[OPT] 段写 APPLIED=0 并列明拒绝原因码。
+                std::string why;
+                if (!optResult.error.empty()) why = optResult.error;
+                else if (optResult.status == "objective_not_improved")
+                    why = "线性化目标未改善";
+                else if (optResult.status == "system_check_rejected") {
+                    why = "体系判据不合格：";
+                    for (std::size_t i = 0; i < optResult.rejectCodes.size(); ++i) {
+                        if (i) why += ",";
+                        why += optResult.rejectCodes[i];
+                    }
+                } else why = "结果长度不符";
                 std::fprintf(stderr,
                              "[警告] 成桥索力优化未采纳（%s），保留原索力口径。\n",
-                             !optResult.error.empty() ? optResult.error.c_str()
-                                 : (optResult.status == "objective_not_improved"
-                                        ? "线性化目标未改善"
-                                        : "结果长度不符"));
+                             why.c_str());
             }
         }
         const bool optApplied = optRequested && optResult.error.empty()
             && optResult.status != "objective_not_improved"
+            && optResult.status != "system_check_rejected"
             && optResult.T.size() == cfg.cables.size();
 
         const DofMap3D dm = buildDofMap3D(m);
@@ -1256,6 +1299,16 @@ int main(int argc, char** argv) {
                 hangerTmin = std::min(hangerTmin, T[k]);
                 hangerTmax = std::max(hangerTmax, T[k]);
             }
+        }
+
+        // 体系守卫实测回填：用**成桥态索力 T**（不是 T* 过程量）按同一口径
+        // 再算一次，写进 [OPT] 让计算书把「写回前的守卫预估」与「本次实际
+        // 成桥态」并排看到。APPLIED=0 时这里自然是原方案的实测值。
+        if (optRequested && !anchors.empty()) {
+            optResult.sysFinal = evaluateCableOptSystem3D(
+                m, anchors, T, cfg.deckLoad,
+                cfg.sysDeckMin, cfg.sysDeckMax, cfg.sysAdjMax, cfg.sysGuard);
+            optResult.sysFinalFilled = optResult.sysFinal.available;
         }
 
         // 全局竖向平衡

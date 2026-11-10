@@ -386,12 +386,32 @@ Newton    (I + G_full)·δ = -(ΔX + u)，G_full = du/dX
 开塔顶平衡时可能反向。**不得互相相减当作改善量**；未优化基线需另跑
 `OPTIMIZE=0` 取 `[GIRDEREND] max|My|` 对拍。
 
-**守卫**：若线性化弯矩峰值不降反升，写
+**数学守卫**：若线性化弯矩峰值不降反升，写
 `STATUS=objective_not_improved`、`APPLIED=0`，**不把 T\* 写回 `*CABLE`**，
 保留原索力口径；`T` 行只是过程量。未收敛也如实写
 `STATUS=not_converged`。塔顶平衡与切比雪夫弯矩目标存在实测权衡：
-48 索算例 `MINMAXM + OPTBALANCE=1` 会被守卫拦下，
-`MINENERGY + OPTBALANCE=0` 与 `MINMAXM + OPTBALANCE=0` 稳定收敛。
+48 索算例 `MINMAXM + OPTBALANCE=1` 会被守卫拦下。
+
+**体系守卫（`SYSGUARD=1`，默认开启）**：目标函数里只有弯矩、约束只有
+索力箱，只盯目标会得到「数学收敛、体系不可用」的 T\*——48 索算例
+`MINENERGY + OPTBALANCE=0` 把边跨索压到 `TMIN`，索承担桥面恒载从
+99.31 % 掉到 89.04 %、同跨相邻索力比从 1.08 涨到 31.98，计算书工程
+校核表出现两处不通过。内核在**写回 T\* 之前**用与计算书同一口径
+（`100·Σ(T·ez)/DECKLOAD` 与按支座断面分跨的相邻索力比）预估三条判据：
+`DECKSHARE > 90 %`、`DECKSHARE ≤ 100 %`（支座不上拔）、
+`ADJRATIO ≤ 1.5`。任一不满足就写
+`STATUS=system_check_rejected`、`APPLIED=0`、**不写回 T\***，
+`REJECT` 列出 `system_deck_share_low` / `system_support_uplift` /
+`system_adjacent_jump`；`SYSCHECK_PRED` 是 T\* 预估（守卫依据），
+`SYSCHECK_FINAL` 是成桥态实测回填，`APPLIED=0` 时后者标
+`ORIGINAL_TENSIONS`（原方案，不是过程量）。
+`SYSGUARD=0` 仅供诊断，只记录不拦截（`SYSCHECK=OFF`、`PASS=NA`）；
+`DECKLOAD` 缺失或支座断面不足两个时写 `NOT_AVAILABLE`，不假判。
+限值可用 `SYSDECKMIN` / `SYSDECKMAX` / `SYSADJMAX` 覆盖。
+这三条是体系合理性判据，**不是规范条文**，也不是设计合格判定。
+实测 `MINMAXM + MINT=0.30` 三条全过（97.92 % / 748 kN / 1.39），
+守卫正常放行，不会误杀可用方案。
+
 优化轮数、收敛率、目标下降幅度都不构成规范意义上的设计合格判定。
 段格式、错误码与实测数值见 `input_format_3d.md` 的 `[OPT]` 专节。
 
