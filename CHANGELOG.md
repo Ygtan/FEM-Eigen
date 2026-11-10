@@ -4,6 +4,32 @@
 
 ## 2026-11-10
 
+### 实现：3D 阶段预应力分项损失（JTG 3362-2018 §6.2）
+
+- **2D / 3D 同源**：把 `*PRESTRESS_LOSS` 的键名映射抽成
+  `prestress_loss.hpp::parsePrestressLossLine()`，`fem_2d.cpp` 与 `fem_3d.hpp`
+  共用；公式仍是 `computePrestressLosses()` 唯一来源。同一组参数在两个内核
+  必得同一个 `σpe/σcon`，不再由两份重复的 `KEY=VALUE` 映射各写一套。
+- `fem_3d.hpp`：新增 `Model3D::prestressLosses` 表、`Prestress3D::lossRef /
+  lossDetail / hasLossDetail`，以及 `resolvePrestressLosses3D()`（整份文件读完
+  后把 `σpe/σcon` 写回 `loss`，幂等）；`*STAGE` 的 `PRESTRESS=` 关键字模式
+  新增 `LOSSREF=<编号>`，与 `LOSS=` 互斥，位置模式不支持。引用不存在的编号、
+  `σpe/σcon` 不在 `(0,1]`、或没解析就直接求解，全部明确抛错，不静默退回
+  `loss=1.0`。等效荷载与结果段仍只认 `loss` 一个量。
+- `example_3d_grillage.cpp`：新增 `stage prestress loss` 段（σl1~σl6、σpe、
+  RATIO，12 位有效数字，写完立即恢复原精度），只在 LOSSREF 路径出现；
+  `stage prestress force` 段及其余段逐位不变。只给 `LOSS=` 的束不产生空段，
+  不拿一堆 0 冒充「各项损失为 0」。段头需登记进 `fem_eigen_3d.py::sections`，
+  否则 STAGE/P 行会被上一个 section 的正则收走。
+- `test_3d.cpp` 新增 `[27]` **27 项**断言：六项损失与独立闭式解逐项对拍、
+  表写在 `*STAGE` 前后两种顺序、默认 `LOSS=` 路径逐位不变、四类硬报错、
+  未 resolve 直接求解报错 + 解析后 `Pe=P·ratio`。`test_3d` 88 → 115/115。
+- 口径：`σpe` 后张 = `σcon−σl1−σl2−σl4`、先张 = `σcon−σl2`；
+  **σl3/σl5/σl6 是后期损失，不进 σpe，也不进 `Pe = P·(σpe/σcon)`**。
+  σl2 仍只按直线筋，εcs/φ 需查表输入，不含筋-混凝土协同与次内力。
+- 验证：全量编译 rc=0、`ctest` 7/7（含 `dat_byte_regression` 37/37；
+  基线 `.dat` 均不含 `*PRESTRESS_LOSS`，无需刷新）。
+
 ### 修复：`EQUIV` 预应力支持梁组两端轴向自由（逐跨张拉）
 
 - `fem_2d.cpp::processPrestress` 的 `EQUIV` 原先只允许「梁组恰好一端 `dof1` 固定」，其余情形一律抛错；连续梁**中间跨**两端 `dof1` 都自由，逐跨阶段张拉因此无法建模。现在该分支施加一对自平衡轴压力 `+Pe`（起点）/ `-Pe`（终点）：合力为零，只有本梁组受压，外围结构与桥台不承担附加轴力，正是「该阶段只张拉本跨」的等效荷载口径。两端都固定仍报错（`TENDON` 才能模拟弹性缩短）。

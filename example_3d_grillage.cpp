@@ -3,6 +3,7 @@
 #include "buckling_output_3d.hpp"
 
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 
 using namespace fem;
@@ -88,6 +89,38 @@ int main(int argc, char** argv) {
             for (const auto& sr : stages)
                 for (const auto& [id, Pe] : sr.prestressForces)
                     out << "STAGE" << sr.stage << " P" << id << " Pe=" << Pe << "\n";
+        }
+    }
+
+    // 分项预应力损失（JTG 3362-2018 §6.2）：只有 LOSSREF 路径才输出。
+    // 只给 LOSS= 或不写损失时内核根本没算分项，不输出一堆 0 冒充「各项为 0」。
+    // 段头必须登记进 Python 的 sections 元组，否则这些 STAGE/P 行会被上一个
+    // section 的正则收走，污染旧段。
+    {
+        bool any = false;
+        for (const auto& sr : stages)
+            if (!sr.prestressLossDetails.empty()) { any = true; break; }
+        if (any) {
+            out << "stage prestress loss\n";
+            // 只给本段提高精度：σ 与 RATIO 要供报告复算，6 位有效数字在
+            // 大张拉力下会让 P·RATIO 与另一段的 Pe 差出几十牛。写完立刻
+            // 恢复，既有段（含 stage prestress force）逐位不变。
+            const std::streamsize oldPrec = out.precision();
+            out << std::setprecision(12);
+            for (const auto& sr : stages)
+                for (const auto& [id, d, sc] : sr.prestressLossDetails)
+                    out << "STAGE" << sr.stage << " P" << id
+                        << " SIGMA_CON=" << sc
+                        << " SL1=" << d.sigmaL1
+                        << " SL2=" << d.sigmaL2
+                        << " SL3=" << d.sigmaL3
+                        << " SL4=" << d.sigmaL4
+                        << " SL5=" << d.sigmaL5
+                        << " SL6=" << d.sigmaL6
+                        << " SPE=" << d.sigmaPe
+                        << " RATIO=" << (sc > 0.0 ? d.sigmaPe / sc : 0.0)
+                        << "\n";
+            out.precision(oldPrec);
         }
     }
 

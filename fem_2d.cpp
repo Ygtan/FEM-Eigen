@@ -1186,41 +1186,9 @@ Model2D readModel2D(const std::string& path) {
             for (int elem : detail::parseRange(es))
                 m.elemTemps.push_back({elem, detail::toUpper(kind), dT});
         } else if (section == "*PRESTRESS_LOSS") {
-            int id = 0;
-            if (!(ss >> id))
-                throw std::runtime_error("PRESTRESS_LOSS 行格式错误: " + t);
-            std::string rest2;
-            std::getline(ss, rest2);
-            auto p = detail::parseKeyValues(rest2);
-            PrestressLossInput li;
-            auto g = [&](const char* key, double& dst) {
-                auto it = p.find(key);
-                if (it != p.end()) dst = std::stod(it->second);
-            };
-            g("SIGMA_CON", li.sigmaCon);
-            g("EP", li.Ep);
-            g("EC", li.Ec);
-            g("FPK", li.fpk);
-            g("MU", li.mu);
-            g("K", li.kappa);
-            g("THETA", li.theta);
-            g("X", li.x);
-            g("DELTA_L", li.sumDeltaL);
-            g("L", li.tendonLength);
-            g("T1", li.t1);
-            g("T2", li.t2);
-            g("SIGMA_PC4", li.sigmaPc4);
-            g("SIGMA_PC6", li.sigmaPc6);
-            g("PSI", li.psi);
-            g("ZETA", li.zeta);
-            g("ECS", li.epsCs);
-            g("PHI", li.phi);
-            g("RHO", li.rho);
-            g("RHOPS", li.rhoPs);
-            auto it = p.find("POST");
-            if (it != p.end()) li.postTensioned = (std::stod(it->second) != 0.0);
-            auto itRebar = p.find("REBAR");
-            if (itRebar != p.end()) li.threadedBar = (std::stod(itRebar->second) != 0.0);
+            // 键名映射与 3D 共用 prestress_loss.hpp 的 parsePrestressLossLine，
+            // 保证同一组参数在 2D / 3D 得到同一个有效预应力比。
+            const auto [id, li] = parsePrestressLossLine(t);
             m.prestressLosses[id] = li;
         } else if (section == "*PRESTRESS") {
             int id = 0;

@@ -3,6 +3,7 @@
 // 复用 fem.hpp 中的稀疏求解器与 Dirichlet 处理（applyDirichlet / solve）。
 #include "fem.hpp"
 #include "code_loads.hpp"
+#include "prestress_loss.hpp"
 #include "section.hpp"
 
 #include <Eigen/Dense>
@@ -299,7 +300,11 @@ struct Model3D {
     //   s   = 矢高 = 跨中偏心 − 端部偏心（m，向上为正）。s<0 → 跨中筋更低 →
     //         产生向上的均布力 → **上拱**；s=0 → 直线筋。曲线筋的抛物线定义
     //         在首尾锚固端连线上（矢高在弦中点），故要求链共线；
-    //   loss = 有效/张拉比（0<loss≤1，直接乘，不做分项损失）。
+    //   loss = 有效/张拉比（0<loss≤1）。两种给了法互斥：
+    //          LOSS=<比值> 是「总损失打包成一个数」的简化写法；
+    //          LOSSREF=<编号> 引用 *PRESTRESS_LOSS 表，按 JTG 3362-2018 §6.2
+    //          分项算 σl1~σl6 后由 σpe/σcon 得到有效比。解析完成后统一写回
+    //          loss，所以下面的等效荷载与结果段都只认 loss 这一个量。
     // 直线筋（s=0）**不产生上拱**——它只给轴压 + 端弯矩，跨内无反弯力。
     struct Prestress3D {
         int id = 0;
@@ -308,6 +313,10 @@ struct Model3D {
         double e = 0.0;
         double s = 0.0;              // 矢高（m，向上为正；0 = 直线筋）
         double loss = 1.0;
+        bool lossGiven = false;      // 是否显式写过 LOSS=（用于与 LOSSREF 互斥）
+        int lossRef = 0;             // >0：引用 m.prestressLosses[lossRef]
+        PrestressLossResult lossDetail;   // 分项明细（LOSSREF 路径才有）
+        bool hasLossDetail = false;
     };
 
     struct Stage3D {
@@ -337,6 +346,10 @@ struct Model3D {
         double time = 0.0;
     };
     std::vector<Stage3D> stages;
+    // *PRESTRESS_LOSS 表：编号 → JTG 3362-2018 §6.2 分项损失参数。
+    // 与 2D 共用 prestress_loss.hpp 的结构与公式；*STAGE 的 PRESTRESS= 用
+    // LOSSREF=<编号> 引用，同一张表可被多束复用。
+    std::map<int, PrestressLossInput> prestressLosses;
     double creepPhi = 0.0;
     double creepChi = 0.8;
     // 徐变曲线 φ = φ0·[(t−t0)/(βH+t−t0)]^power。φ0=0 表示不按龄期。
@@ -1138,6 +1151,10 @@ struct StageResult3D {
     // 本阶段张拉的预应力束的有效预加力（束号 → 有效力 N）。用于前端校核
     // "有效预应力 vs 张拉控制应力"，以及分阶段看"哪批束在哪阶段张拉"。
     std::vector<std::pair<int, double>> prestressForces;
+    // LOSSREF 路径的分项损失明细：(束号, σl1~σl6/σpe, σcon)。
+    // 只给 LOSS= 或不写损失时为空——那时内核根本没做分项计算，输出段也
+    // 不出现，不拿一堆 0 冒充「各项损失为 0」。
+    std::vector<std::tuple<int, PrestressLossResult, double>> prestressLossDetails;
     // 本阶段施加的徐变等效杆端力（局部坐标，12 分量）。
     // 位移里已经含徐变变形，再按 K·Δu 取内力会把同一批应力算第二遍。
     // 报告用的截面内力要扣掉这一项：静定、均匀 Δφ 时应力增量应为 0。
@@ -1342,6 +1359,10 @@ inline std::vector<StageResult3D> solveModel3DStages(const Model3D& m,
         std::vector<PsEquiv> psLoads;
         for (const auto& ps : st.prestresses) {
             const std::string ptag = stag + " 的 PRESTRESS= 束 " + std::to_string(ps.id);
+            if (ps.lossRef > 0 && !ps.hasLossDetail)
+                throw std::runtime_error(ptag
+                    + " 指定了 LOSSREF 却没解析分项损失：请用 readModel3D 读入 .dat，"
+                      "或直接构造模型时先调用 resolvePrestressLosses3D(m)");
             if (ps.elems.empty())
                 throw std::runtime_error(ptag + " 没有 ELEM 列表");
             if (ps.P <= 0.0)
@@ -1573,8 +1594,14 @@ inline std::vector<StageResult3D> solveModel3DStages(const Model3D& m,
             }
             sr.cables.push_back(cs);
         }
-        for (const auto& ps : st.prestresses)
+        for (const auto& ps : st.prestresses) {
             sr.prestressForces.push_back({ps.id, ps.P * ps.loss});
+            if (ps.hasLossDetail) {
+                const auto it = m.prestressLosses.find(ps.lossRef);
+                const double sc = (it != m.prestressLosses.end()) ? it->second.sigmaCon : 0.0;
+                sr.prestressLossDetails.push_back({ps.id, ps.lossDetail, sc});
+            }
+        }
         for (const auto& e : mc.elements) {
             if (e.type != "BEAM") continue;
             const Eigen::VectorXd fel = beam3DLocalEndForces(m, dm, e, U);
@@ -2651,6 +2678,40 @@ inline bool crEvalToken(const std::string& tok, const std::string& var,
     return true;
 }
 
+// 把 LOSSREF=<编号> 解析成有效/张拉比 loss，并记录 σl1~σl6 明细。
+//
+// 整份输入读完后才调用，因此 *PRESTRESS_LOSS 写在 *STAGE 前后都行。
+// 幂等：已解析过的束（hasLossDetail）直接跳过，重复调用不会二次改写。
+// 只给 LOSS= 或不写损失的束完全不进这条路径，数值逐位不变。
+inline void resolvePrestressLosses3D(Model3D& m) {
+    for (auto& st : m.stages) {
+        for (auto& ps : st.prestresses) {
+            if (ps.lossRef <= 0 || ps.hasLossDetail) continue;
+            const std::string ptag = "*STAGE 阶段 " + std::to_string(st.id)
+                                   + " 的 PRESTRESS 束 " + std::to_string(ps.id);
+            if (ps.lossGiven)
+                throw std::runtime_error(ptag + " 的 LOSS 与 LOSSREF 只能指定一个");
+            const auto it = m.prestressLosses.find(ps.lossRef);
+            if (it == m.prestressLosses.end())
+                throw std::runtime_error(ptag + " 的 LOSSREF="
+                    + std::to_string(ps.lossRef) + " 引用了不存在的 *PRESTRESS_LOSS 编号");
+            const PrestressLossInput& li = it->second;
+            if (li.sigmaCon <= 0.0)
+                throw std::runtime_error("*PRESTRESS_LOSS 编号 "
+                    + std::to_string(ps.lossRef) + " 的 SIGMA_CON 必须 > 0");
+            const PrestressLossResult d = computePrestressLosses(li);
+            const double ratio = d.sigmaPe / li.sigmaCon;
+            if (!(ratio > 0.0 && ratio <= 1.0))
+                throw std::runtime_error(ptag + " 分项算得 σpe/σcon="
+                    + std::to_string(ratio) + " 不在 (0,1]；检查 σl1/σl2/σl4 是否过大，"
+                    + "或该损失表是否适用于这束筋");
+            ps.loss = ratio;
+            ps.lossDetail = d;
+            ps.hasLossDetail = true;
+        }
+    }
+}
+
 inline Model3D readModel3D(const std::string& path) {
     std::ifstream in(path);
     if (!in) throw std::runtime_error("无法打开三维输入文件: " + path);
@@ -2829,6 +2890,11 @@ inline Model3D readModel3D(const std::string& path) {
                 }
                 continue;
             }
+            if (kw == "*PRESTRESS_LOSS") {
+                // 段头统一写成规范名，避免行尾带注释时 section 与比较串不等。
+                section = "*PRESTRESS_LOSS";
+                continue;
+            }
             if (kw == "*INFLUENCE_3D" || kw == "*LANE_3D" || kw == "*LANE_SURFACE_3D" || kw == "*ELEMENT_INFLUENCE_3D") {
                 section = line;
                 continue;
@@ -2900,6 +2966,10 @@ inline Model3D readModel3D(const std::string& path) {
             }
         } else if (section == "*CLOAD") {
             int node,dof; double val; if (ss >> node >> dof >> val) m.loads.push_back({node,dof,val});
+        } else if (section == "*PRESTRESS_LOSS") {
+            // 键名映射与 2D 共用 parsePrestressLossLine（唯一来源）。
+            const auto [id, li] = parsePrestressLossLine(line);
+            m.prestressLosses[id] = li;
         } else if (section == "*STAGE") {
             int id; if (ss >> id) {
                 Model3D::Stage3D st; st.id=id;
@@ -2943,7 +3013,9 @@ inline Model3D readModel3D(const std::string& path) {
                         //   位置模式（直线筋，向后兼容）：
                         //     PRESTRESS=<elems>:<P>:<e>[:<loss>]
                         //   关键字模式（曲线筋用；S 为矢高，S=0 亦退化为直线筋）：
-                        //     PRESTRESS=<elems>:P=<P>:E=<e>[:S=<矢高>][:LOSS=<loss>]
+                        //     PRESTRESS=<elems>:P=<P>:E=<e>[:S=<矢高>][:LOSS=<loss>|:LOSSREF=<编号>]
+                        //   LOSS= 与 LOSSREF= 互斥：前者把总损失打包成一个比值，
+                        //   后者引用 *PRESTRESS_LOSS 表按 JTG 3362-2018 §6.2 分项算。
                         //   elems：a-b 范围或逗号列表（连续梁单元，首尾即锚固端）
                         //   P：张拉控制力 N（正）；e：端部偏心 m（形心上方为正）
                         //   S：矢高 = 跨中偏心 − 端部偏心（向上为正；S<0 → 上拱）
@@ -2973,10 +3045,11 @@ inline Model3D readModel3D(const std::string& path) {
                             ps.P = std::stod(parts[0]);
                             ps.e = std::stod(parts[1]);
                             ps.loss = (parts.size() == 3) ? std::stod(parts[2]) : 1.0;
+                            ps.lossGiven = (parts.size() == 3);
                         } else {
-                            // 关键字模式：P=...:E=...[:S=...][:LOSS=...]
+                            // 关键字模式：P=...:E=...[:S=...][:LOSS=... | :LOSSREF=<编号>]
                             std::stringstream vs(valStr); std::string tok;
-                            bool hasP = false, hasE = false;
+                            bool hasP = false, hasE = false, hasLossRef = false;
                             while (std::getline(vs, tok, ':')) {
                                 if (tok.empty()) continue;
                                 const std::size_t eq = tok.find('=');
@@ -2985,18 +3058,31 @@ inline Model3D readModel3D(const std::string& path) {
                                         "三维 *STAGE 的 PRESTRESS= 关键字段需写成 "
                                         "KEY=VALUE，收到「" + tok + "」");
                                 const std::string key = tok.substr(0, eq);
-                                const double v = std::stod(tok.substr(eq + 1));
+                                const std::string val = tok.substr(eq + 1);
+                                if (key == "LOSSREF") {
+                                    ps.lossRef = std::stoi(val);
+                                    hasLossRef = true;
+                                    continue;
+                                }
+                                const double v = std::stod(val);
                                 if (key == "P")      { ps.P = v; hasP = true; }
                                 else if (key == "E") { ps.e = v; hasE = true; }
                                 else if (key == "S") { ps.s = v; }
-                                else if (key == "LOSS") { ps.loss = v; }
+                                else if (key == "LOSS") { ps.loss = v; ps.lossGiven = true; }
                                 else throw std::runtime_error(
                                     "三维 *STAGE 的 PRESTRESS= 未知关键字「" + key
-                                    + "」（支持 P/E/S/LOSS）");
+                                    + "」（支持 P/E/S/LOSS/LOSSREF）");
                             }
                             if (!hasP || !hasE)
                                 throw std::runtime_error(
                                     "三维 *STAGE 的 PRESTRESS= 关键字模式必须含 P= 与 E=");
+                            if (ps.lossGiven && hasLossRef)
+                                throw std::runtime_error(
+                                    "三维 *STAGE 的 PRESTRESS= 的 LOSS 与 LOSSREF "
+                                    "只能指定一个（前者是总损失比，后者是分项损失表编号）");
+                            if (hasLossRef && ps.lossRef <= 0)
+                                throw std::runtime_error(
+                                    "三维 *STAGE 的 PRESTRESS= 的 LOSSREF 必须为正整数");
                         }
                         std::stringstream es(elemsStr); std::string tok;
                         while (std::getline(es, tok, ',')) {
@@ -3067,6 +3153,9 @@ inline Model3D readModel3D(const std::string& path) {
             fill(xn,m.laneSurface.xNodes); fill(yn,m.laneSurface.yNodes);
         }
     }
+    // 整份文件读完后才把 LOSSREF 换成有效比，使 *PRESTRESS_LOSS 写在
+    // *STAGE 之前或之后都能引用。只给 LOSS= 的束不进这条路径。
+    resolvePrestressLosses3D(m);
     applyJtgD60LaneLoads(m);
     return m;
 }

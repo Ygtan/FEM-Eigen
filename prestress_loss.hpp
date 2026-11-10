@@ -1,7 +1,12 @@
 #pragma once
 
+#include <cctype>
 #include <cmath>
+#include <map>
+#include <sstream>
 #include <stdexcept>
+#include <string>
+#include <utility>
 
 namespace fem {
 
@@ -101,6 +106,58 @@ inline double effectivePrestressRatio(const PrestressLossInput& in) {
     if (in.sigmaCon <= 0.0)
         throw std::runtime_error("有效预应力比需要张拉控制应力 sigmaCon > 0");
     return computePrestressLosses(in).sigmaPe / in.sigmaCon;
+}
+
+// 解析一行 `<编号> KEY=VALUE …`。
+//
+// 2D 的 `*PRESTRESS_LOSS` 与 3D 的 `*PRESTRESS_LOSS` 共用这一份键名映射，
+// 避免两边各写一套后出现「同一组参数在 2D/3D 算出不同有效比」。键名大小写
+// 不敏感；POST/REBAR 用 0/1 表示布尔。行内不认识的键忽略（与 2D 原行为一致）。
+inline std::pair<int, PrestressLossInput> parsePrestressLossLine(const std::string& line) {
+    std::istringstream ss(line);
+    int id = 0;
+    if (!(ss >> id))
+        throw std::runtime_error("PRESTRESS_LOSS 行格式错误（缺编号）: " + line);
+    std::map<std::string, std::string> p;
+    std::string tok;
+    while (ss >> tok) {
+        const std::size_t eq = tok.find('=');
+        if (eq == std::string::npos) continue;
+        std::string key = tok.substr(0, eq);
+        for (char& c : key)
+            c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        p[key] = tok.substr(eq + 1);
+    }
+    PrestressLossInput li;
+    auto g = [&](const char* key, double& dst) {
+        auto it = p.find(key);
+        if (it != p.end()) dst = std::stod(it->second);
+    };
+    g("SIGMA_CON", li.sigmaCon);
+    g("EP", li.Ep);
+    g("EC", li.Ec);
+    g("FPK", li.fpk);
+    g("MU", li.mu);
+    g("K", li.kappa);
+    g("THETA", li.theta);
+    g("X", li.x);
+    g("DELTA_L", li.sumDeltaL);
+    g("L", li.tendonLength);
+    g("T1", li.t1);
+    g("T2", li.t2);
+    g("SIGMA_PC4", li.sigmaPc4);
+    g("SIGMA_PC6", li.sigmaPc6);
+    g("PSI", li.psi);
+    g("ZETA", li.zeta);
+    g("ECS", li.epsCs);
+    g("PHI", li.phi);
+    g("RHO", li.rho);
+    g("RHOPS", li.rhoPs);
+    auto itPost = p.find("POST");
+    if (itPost != p.end()) li.postTensioned = (std::stod(itPost->second) != 0.0);
+    auto itRebar = p.find("REBAR");
+    if (itRebar != p.end()) li.threadedBar = (std::stod(itRebar->second) != 0.0);
+    return {id, li};
 }
 
 } // namespace fem

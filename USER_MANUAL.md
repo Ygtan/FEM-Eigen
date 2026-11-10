@@ -239,6 +239,8 @@ NODES=1,2,3 DOF=2 CODE=JTG_D60
 - σl5 分两类：钢丝/钢绞线按 6.2.6-1（Ψ·ζ·(0.52σpe/fpk−0.26)σpe）；预应力螺纹钢筋按 6.2.6-2/3（一次张拉 0.05σcon、超张拉 0.035σcon），用 `*PRESTRESS_LOSS` 的 `REBAR=1` 选择。
 - 后张法 σpe=σcon−σl1−σl2−σl4，先张法 σpe=σcon−σl2，用 `POST=0/1` 选择。
 - 已对照正式条文核对 σl1~σl6 系数。仍为简化式的是：σl2 曲线筋按附录 G 的反摩擦影响未实现（仅直线筋 ΣΔl/l·Ep）；σl6 的 εcs、φ 需由用户按附录 C 计算后输入，程序不自动算收缩/徐变随龄期发展。
+- **2D / 3D 同源**：`parsePrestressLossLine()` 是两边共用的唯一键名映射，`computePrestressLosses()` 是唯一公式。2D 用 `*PRESTRESS ... LOSSREF=<编号>` 引用；3D 用 `*STAGE ... PRESTRESS=<elems>:P=...:E=...:LOSSREF=<编号>` 引用（只在关键字模式可用，与 `LOSS=` 互斥）。3D 侧 `resolvePrestressLosses3D()` 在整份文件读完后把 `σpe/σcon` 写回 `loss`，所以表写在 `*STAGE` 前后都行；没解析过就直接求解会报错，不静默用 1.0。格式与边界见 `input_format_3d.md`「阶段预应力分项损失」。
+- 只有引用了表的束才写 `stage prestress loss` 结果段（σl1~σl6、σpe、RATIO，12 位有效数字）；只给一个总损失比的束不产生这段。σl3/σl5/σl6 属后期损失，不进 σpe，也不进等效荷载的 `Pe = P·(σpe/σcon)`。
 
 ### 9.8 索长迭代与制造线形几何闭合（`cable_solver`）
 
@@ -419,7 +421,7 @@ Newton    (I + G_full)·δ = -(ΔX + u)，G_full = du/dX
 
 - 二维 `example_mixed`：写 `<模型名>.result`（节点位移、单元内力、单元应力、支座反力）。
 - 二维 `example_viz`：额外生成 `*_model.svg`、`*_disp.svg`、`*_moment.svg`、`*_shear.svg`、`*_stress_top/bottom.svg` 等矢量图。
-- 三维 `example_3d_grillage`：写 `*_summary.txt`（位移包络、梁内力包络、成桥态恒载/活载内力、施工阶段索力与预应力、冲击系数，以及 `modal` 段：前 8 阶自振频率/周期/参与质量/节点振型；质量全为零时写 `ERROR=no_mass`）。成桥态索承体系 `cable_solver` 的对应段是 `[MODAL]`（12 阶，成桥态一致切线刚度）。段格式见 `modal_output_3d.hpp`。
+- 三维 `example_3d_grillage`：写 `*_summary.txt`（位移包络、梁内力包络、成桥态恒载/活载内力、施工阶段索力与预应力、冲击系数，以及 `modal` 段：前 8 阶自振频率/周期/参与质量/节点振型；质量全为零时写 `ERROR=no_mass`）。`LOSSREF` 路径另写 `stage prestress loss` 段（JTG 3362-2018 §6.2 的 σl1~σl6 / σpe / 有效比），只给 `LOSS=` 的束不写。成桥态索承体系 `cable_solver` 的对应段是 `[MODAL]`（12 阶，成桥态一致切线刚度）。段格式见 `modal_output_3d.hpp`。
 - 线性屈曲：`example_3d_grillage` 另写 `buckling` 段（前 6 阶 `L <i> <λ> <Pcr_kN>`、`REF` 行的参考荷载与几何刚度诊断、`STATUS`）。参考荷载 = 成桥态构型 + 成桥态恒载合力（阶段增量累加），`Pcr = λ·Σ|Fi|`；`STATUS=no_compression` 表示参考荷载下无受压杆件、本就不存在压屈模态，不是求解失败。`cable_solver` 写 `[BUCKLING] ERROR=nonlinear_state_not_supported`：共转列式成桥态的切线刚度已含几何刚度，线弹性 λ 不适用，需另做非线性稳定全过程分析。段格式与口径见 `buckling_output_3d.hpp`。
 - **λ 不是规范稳定安全系数**：JTG 3362 没有 λ 的合格限值；线性屈曲不含初始缺陷、材料非线性与几何非线性，是真实稳定承载力的上限。构件稳定按 §5.3 的稳定系数 φ 另行验算。
 - 带约束成桥目标索力优化另写 `[OPT]` 段（`OPTIMIZE=1` 时）：

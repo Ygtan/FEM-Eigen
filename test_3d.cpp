@@ -1337,6 +1337,140 @@ void test3DStageCurvedPrestress() {
     }
 }
 
+// ---- 3D 分项预应力损失（JTG 3362-2018 §6.2，2D/3D 共用公式）----
+void test3DPrestressLossSection() {
+    std::printf("\n[27] 3D *PRESTRESS_LOSS / LOSSREF（分项损失）\n");
+    const double sigmaCon = 1395e6, Ep = 1.95e11, Ec = 3.45e10, fpk = 1860e6;
+    const double aEp = Ep / Ec;
+    // 独立 oracle：按 §6.2.2~6.2.7 手算，与 input_format.md §6.4 算例同参数。
+    const double sl1 = sigmaCon * (1.0 - std::exp(-(0.25 * 0.2 + 0.0015 * 10.0)));
+    const double sl2 = 0.006 / 10.0 * Ep;
+    const double sl3 = 2.0 * (35.0 - 15.0) * 1e6;
+    const double sl4 = aEp * 8e6;
+    const double spe = sigmaCon - sl1 - sl2 - sl4;      // 后张法传力锚固应力
+    const double sl5 = 1.0 * 0.3 * (0.52 * spe / fpk - 0.26) * spe;
+    const double sl6 = 0.9 * (Ep * 2e-4 + aEp * 8e6 * 2.0)
+                     / (1.0 + 15.0 * 0.005 * 1.0);
+    const double ratio = spe / sigmaCon;
+
+    const std::string lossLine =
+        "1 SIGMA_CON=1395e6 EP=1.95e11 EC=3.45e10 FPK=1860e6 MU=0.25 K=0.0015 "
+        "THETA=0.2 X=10 DELTA_L=0.006 L=10 T1=15 T2=35 SIGMA_PC4=8e6 SIGMA_PC6=8e6 "
+        "PSI=1.0 ZETA=0.3 ECS=2e-4 PHI=2.0 RHO=0.005 RHOPS=1.0 POST=1";
+    const std::string stageLine =
+        "1 ACTIVE=1 PRESTRESS=1:P=1000000:E=-0.5:LOSSREF=1";
+    auto writeDat = [](const std::string& body, const std::string& path) {
+        std::ofstream f(path);
+        f << "*NODE\n1 0 0 0\n2 10 0 0\n"
+          << "*ET\n1 BEAM\n"
+          << "*MP\n1 E=2e11\n"
+          << "*R\n1 A=0.01 IY=0.01 IZ=0.01 J=1e-4 G=8e10\n"
+          << "*TYPE,1\n*MAT,1\n*REAL,1\n*EN,1,1,2\n"
+          << "*BOUNDARY\n1 1-6 0\n"
+          << body << "\n*END\n";
+    };
+    auto badDat = [&](const std::string& body) {
+        const std::string p = "_tmp_loss3d_bad.dat";
+        writeDat(body, p);
+        bool threw = false;
+        try { Model3D mm = readModel3D(p); (void)mm; }
+        catch (const std::exception&) { threw = true; }
+        std::remove(p.c_str());
+        return threw;
+    };
+
+    // ---- 判据 1：共享解析器与独立 oracle 一致 ----
+    const auto [lid, li] = parsePrestressLossLine(lossLine);
+    check("共享解析器读出表编号", static_cast<double>(lid), 1.0);
+    check("共享解析器 σpe/σcon", effectivePrestressRatio(li), ratio, 1e-12);
+
+    // ---- 判据 2：.dat 解析（表在 *STAGE 前）----
+    {
+        const std::string p = "_tmp_loss3d.dat";
+        writeDat("*PRESTRESS_LOSS\n" + lossLine + "\n*STAGE\n" + stageLine, p);
+        Model3D m = readModel3D(p);
+        std::remove(p.c_str());
+        check("表条目数", static_cast<double>(m.prestressLosses.size()), 1.0);
+        const auto& ps = m.stages[0].prestresses[0];
+        check("LOSSREF 编号", static_cast<double>(ps.lossRef), 1.0);
+        check("已生成分项明细", ps.hasLossDetail ? 1.0 : 0.0, 1.0);
+        check("σpe/σcon 写回 loss", ps.loss, ratio, 1e-12);
+        check("σl1 摩擦", ps.lossDetail.sigmaL1, sl1, 1e-12);
+        check("σl2 锚具变形", ps.lossDetail.sigmaL2, sl2, 1e-12);
+        check("σl3 温差", ps.lossDetail.sigmaL3, sl3, 1e-12);
+        check("σl4 弹性压缩", ps.lossDetail.sigmaL4, sl4, 1e-12);
+        check("σl5 松弛", ps.lossDetail.sigmaL5, sl5, 1e-12);
+        check("σl6 收缩徐变", ps.lossDetail.sigmaL6, sl6, 1e-12);
+        check("σpe 传力锚固应力", ps.lossDetail.sigmaPe, spe, 1e-12);
+        auto sr = solveModel3DStages(m);
+        check("求解结果 Pe = P·σpe/σcon",
+              sr[0].prestressForces[0].second, 1.0e6 * ratio, 1e-12);
+        check("求解结果带分项明细",
+              static_cast<double>(sr[0].prestressLossDetails.size()), 1.0);
+    }
+
+    // ---- 判据 3：表写在 *STAGE 之后也能引用（整份读完才 resolve）----
+    {
+        const std::string p = "_tmp_loss3d_late.dat";
+        writeDat("*STAGE\n" + stageLine + "\n*PRESTRESS_LOSS\n" + lossLine, p);
+        Model3D m = readModel3D(p);
+        std::remove(p.c_str());
+        check("表在 *STAGE 之后仍生效",
+              m.stages[0].prestresses[0].loss, ratio, 1e-12);
+    }
+
+    // ---- 判据 4：只给 LOSS= 的默认路径逐位不变 ----
+    {
+        const std::string p = "_tmp_loss3d_plain.dat";
+        writeDat("*STAGE\n1 ACTIVE=1 PRESTRESS=1:P=1000000:E=-0.5:LOSS=0.85", p);
+        Model3D m = readModel3D(p);
+        std::remove(p.c_str());
+        const auto& ps = m.stages[0].prestresses[0];
+        check("仅 LOSS= 时 loss 原样", ps.loss, 0.85);
+        check("仅 LOSS= 时 lossRef=0", static_cast<double>(ps.lossRef), 0.0);
+        check("仅 LOSS= 时不生成分项明细", ps.hasLossDetail ? 0.0 : 1.0, 1.0);
+        auto sr = solveModel3DStages(m);
+        check("仅 LOSS= 时 Pe=P·loss", sr[0].prestressForces[0].second, 850000.0);
+        check("仅 LOSS= 时结果段无明细",
+              static_cast<double>(sr[0].prestressLossDetails.size()), 0.0);
+    }
+
+    // ---- 判据 5：硬报错，不静默兜底 ----
+    check("LOSS 与 LOSSREF 同时给 → 报错",
+          badDat("*PRESTRESS_LOSS\n" + lossLine + "\n*STAGE\n"
+                 + stageLine + ":LOSS=0.8") ? 1.0 : 0.0, 1.0);
+    check("LOSSREF 引用不存在编号 → 报错",
+          badDat("*PRESTRESS_LOSS\n" + lossLine + "\n*STAGE\n"
+                 "1 ACTIVE=1 PRESTRESS=1:P=1000000:E=-0.5:LOSSREF=9") ? 1.0 : 0.0, 1.0);
+    check("写了 LOSSREF 却没定义表 → 报错",
+          badDat("*STAGE\n" + stageLine) ? 1.0 : 0.0, 1.0);
+    const std::string badLoss =
+        "1 SIGMA_CON=1395e6 EP=1.95e11 EC=3.45e10 FPK=1860e6 "
+        "DELTA_L=0.6 L=1 POST=1";   // σl2 远大于 σcon → σpe/σcon < 0
+    check("σpe/σcon 越界 → 报错",
+          badDat("*PRESTRESS_LOSS\n" + badLoss + "\n*STAGE\n" + stageLine)
+              ? 1.0 : 0.0, 1.0);
+    {
+        // 直接构造模型、绕过 readModel3D 的 resolve：求解必须明确报错，
+        // 不能拿未解析的 loss=1.0 悄悄算一遍。
+        Model3D m = prestressBeam(true, -0.5);
+        Model3D::Stage3D st; st.id = 1; st.activate = {1};
+        Model3D::Prestress3D ps;
+        ps.id = 1; ps.elems = {1}; ps.P = 1.0e6; ps.e = -0.5; ps.lossRef = 1;
+        st.prestresses.push_back(ps);
+        m.stages = {st};
+        m.prestressLosses[1] = li;
+        bool threw = false;
+        try { solveModel3DStages(m); }
+        catch (const std::exception&) { threw = true; }
+        check("未 resolve 直接求解 → 报错", threw ? 1.0 : 0.0, 1.0);
+        resolvePrestressLosses3D(m);
+        auto sr = solveModel3DStages(m);
+        check("resolve 后 Pe = P·ratio",
+              sr[0].prestressForces[0].second, 1.0e6 * ratio, 1e-12);
+    }
+}
+
 int main() {
     setupConsoleUTF8();
     std::setvbuf(stdout, nullptr, _IONBF, 0);   // 崩溃时也能看到已输出的内容
@@ -1363,6 +1497,7 @@ int main() {
         test3DStageCableTension();
         test3DStagePrestress();
         test3DStageCurvedPrestress();
+        test3DPrestressLossSection();
     } catch (const std::exception& e) {
         std::printf("\n[ERROR] 异常: %s\n", e.what());
         ++g_fail;
