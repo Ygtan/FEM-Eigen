@@ -196,10 +196,14 @@ CondensedBeamGlobal condenseBeamGlobal(const Model2D::Element& e,
         for (int b = 0; b < 6; ++b)
             Tc(a, b) = T(rel.freeLocal[a], b);
     CondensedBeamGlobal out;
+    // Tc 是 nf×6（列 = 完整 6 个全局自由度），所以 Ke 是 6×6、feq 是 6 维，
+    // 行列对应**完整 6 个全局自由度**；被释放自由度对应的行列自然为零。
+    // 早期版本只散射 nf 个"局部自由自由度"编号：释放 j 端 θ 时恰好与全局
+    // 0..4 重合，但释放 i 端自由度就会错位（斜梁尤其明显）。这里统一按
+    // 完整 6 自由度散射，NONLINEAR 分支的凝聚也用同一约定。
     out.Ke = Tc.transpose() * rel.Kl * Tc;
     out.feq = Tc.transpose() * rel.Fq;
-    for (int d : rel.freeLocal)
-        out.gdofs.push_back(d < 3 ? 3 * i1 + d : 3 * i2 + (d - 3));
+    out.gdofs = elementGdofs2D(e.type, i1, i2);
     return out;
 }
 
@@ -1762,10 +1766,8 @@ ModelResult solveModel2DNonlinear(const Model2D& m,
                                          const std::vector<char>* active0,
                                          NonlinearDiag* diagOut,
                                          ReusableSolver* reuse) {
-    for (const auto& e : m.elements)
-        if (!e.releases.empty())
-            throw std::runtime_error("端部释放暂不支持 NONLINEAR 分析（单元 " +
-                                     std::to_string(e.id) + "）");
+    // 端部释放（*RELEASE）在方案 C 里同样支持：BEAM/RIGID 分支按局部切线
+    // 静态凝聚，释放端内力强制为 0。无释放单元走原来的装配代码，数值逐位不变。
     std::vector<int> ids;
     std::map<int, int> index;
     for (const auto& [id, c] : m.nodes) {
@@ -1871,26 +1873,63 @@ ModelResult solveModel2DNonlinear(const Model2D& m,
                 ug << Ucur(3 * i1 + 0), Ucur(3 * i1 + 1), Ucur(3 * i1 + 2),
                       Ucur(3 * i2 + 0), Ucur(3 * i2 + 1), Ucur(3 * i2 + 2);
                 const double Phi = beamShearParameter(e, (p2 - p1).norm());
-                const DenseMat Ke = be.stiffness(Phi);
                 DenseVec fext = elementExternalEquivalentLoad(m, e, p1, p2);
                 fext *= loadScale;
-                DenseMat Kt = Ke;
-                DenseVec fint = Ke * ug;
-                if (e.type == "BEAM") {
-                    // 一阶 P-Δ / 几何刚度：轴力 N 会软化（受压）或增强（受拉）弯曲刚度。
-                    // N 取当前构形下的物理轴力 = 机械轴力 + 局部等效轴力（含温度/自重轴向分量）。
+                if (!e.releases.empty()) {
+                    // ---- 端部释放 + 方案 C ----
+                    // 先在**局部坐标系**把一阶几何刚度并入切线，再做静态凝聚：
+                    // 释放自由度 r 满足 K_rf·u_f + K_rr·u_r − F_r = 0，解出 u_r 后
+                    // 得到 rel.Kl（凝聚刚度）与 rel.Fq（凝聚等效荷载）。
+                    // 全部 6 个全局自由度都参与投影（Tc 是 6 列），被释放自由度
+                    // 对应的行列自动为零；不能只取 nf 个自由度，斜梁会装配错位。
                     const DenseMat T = be.transformation();
-                    const Eigen::VectorXd ul = T * ug;
+                    const DenseMat Kl = be.localStiffness(Phi);
                     const double L = (p2 - p1).norm();
-                    const Eigen::VectorXd fel = T * fext;   // 已按 loadScale 缩放
-                    const double N = e.E * e.A / L * (ul(3) - ul(0)) + fel(0);
-                    const DenseMat Kgg = T.transpose() * beamGeometricStiffness2D(N, L) * T;
-                    Kt += Kgg;
-                    fint = Kt * ug;
+                    const Eigen::VectorXd ul = T * ug;
+                    const DenseVec fel = T * fext;   // 已按 loadScale 缩放
+                    DenseMat Ktl = Kl;
+                    if (e.type == "BEAM") {
+                        // 几何刚度用的轴力仍按凝聚前的物理轴力估计（一阶近似）。
+                        const double N = e.E * e.A / L * (ul(3) - ul(0)) + fel(0);
+                        Ktl += beamGeometricStiffness2D(N, L);
+                    }
+                    const BeamRelease2D rel = releaseBeam2D(Ktl, fel, e.releases);
+                    if (!rel.KrrInv.allFinite())
+                        throw std::runtime_error(
+                            "方案C：单元 " + std::to_string(e.id) +
+                            " 的端部释放自由度子矩阵奇异，无法静态凝聚");
+                    const int nf = static_cast<int>(rel.freeLocal.size());
+                    DenseMat Tc(nf, 6);
+                    for (int a = 0; a < nf; ++a)
+                        for (int b = 0; b < 6; ++b)
+                            Tc(a, b) = T(rel.freeLocal[a], b);
+                    const Eigen::VectorXd uf = Tc * ug;
+                    const DenseVec fint = Tc.transpose() * (rel.Kl * uf);
+                    const DenseVec fextCond = Tc.transpose() * rel.Fq;
+                    const DenseMat Kt = Tc.transpose() * rel.Kl * Tc;
+                    addElementLoad(g, fextCond, Fext);
+                    addElementLoad(g, fint, Fint);
+                    if (triplets) scatter(Kt, g, *triplets);
+                } else {
+                    const DenseMat Ke = be.stiffness(Phi);
+                    DenseMat Kt = Ke;
+                    DenseVec fint = Ke * ug;
+                    if (e.type == "BEAM") {
+                        // 一阶 P-Δ / 几何刚度：轴力 N 会软化（受压）或增强（受拉）弯曲刚度。
+                        // N 取当前构形下的物理轴力 = 机械轴力 + 局部等效轴力（含温度/自重轴向分量）。
+                        const DenseMat T = be.transformation();
+                        const Eigen::VectorXd ul = T * ug;
+                        const double L = (p2 - p1).norm();
+                        const Eigen::VectorXd fel = T * fext;   // 已按 loadScale 缩放
+                        const double N = e.E * e.A / L * (ul(3) - ul(0)) + fel(0);
+                        const DenseMat Kgg = T.transpose() * beamGeometricStiffness2D(N, L) * T;
+                        Kt += Kgg;
+                        fint = Kt * ug;
+                    }
+                    addElementLoad(g, fext, Fext);
+                    addElementLoad(g, fint, Fint);
+                    if (triplets) scatter(Kt, g, *triplets);
                 }
-                addElementLoad(g, fext, Fext);
-                addElementLoad(g, fint, Fint);
-                if (triplets) scatter(Kt, g, *triplets);
             } else {
                 throw std::runtime_error("未知单元类型: " + e.type);
             }

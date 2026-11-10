@@ -4,6 +4,13 @@
 
 ## 2026-11-10
 
+### 修复：2D 端部释放 + NONLINEAR（方案 C），以及凝聚散射自由度错位
+
+- `fem_2d.cpp::solveModel2DNonlinear` 去掉「端部释放暂不支持 NONLINEAR」的显式抛错。BEAM/RIGID 带 `*RELEASE` 时，在局部坐标系先算 `Kl + Kgg(N,L)`，再用 `releaseBeam2D()` 静态凝聚，按 `Tc`（nf×6）投影回**完整 6 个全局自由度**：`Fint = Tcᵀ(rel.Kl·Tc·u)`、`Fext = Tcᵀrel.Fq`、`Kt = Tcᵀrel.Kl·Tc`。释放端内力强制为 0，切线与内力共轭；几何刚度用的轴力仍按凝聚前物理轴力估计（一阶近似）。**无释放单元的装配代码原样保留，默认路径数值逐位不变**。
+- 顺带修同源缺陷：`condenseBeamGlobal()`（LINEAR 路径）原先只散射 nf 个「局部自由自由度」编号，而 `Ke` 是 6×6。释放 j 端 θ 时两者编号恰好重合，但释放 i 端自由度会错位（斜梁尤其明显）。现改为按 `elementGdofs2D()` 的完整 6 个自由度散射；被释放行列为零，既有水平梁结果不变。37 个 `dat_byte_regression` 基线 `.dat` 均不含 `*RELEASE`，基线无需刷新。
+- `test_2d.cpp` 新增 `[20b]` 16 项断言：水平/斜 30° 梁的旋转不变性、固定端 `|M1|=qL²/8`、铰端 `M2=0`、i 端释放 `M1=0`、LINEAR 与方案 C 一致性、Newton 收敛。验证：`test_2d` 124/124、`ctest` 7/7（含 `dat_byte_regression`）、全量编译 rc=0。
+- 文档：`input_format.md` §7.14、`USER_MANUAL.md` §6.1 同步去掉「暂不支持」的过期说明。
+
 ### 实现：`[OPT]` 体系守卫（`SYSGUARD`，默认开启，OPTIMIZE=0 逐位不变）
 
 承接计算书工程校核表的两处不通过：`MINENERGY + OPTBALANCE=0` 数学上收敛

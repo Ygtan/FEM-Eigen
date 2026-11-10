@@ -734,6 +734,86 @@ void testBeamEndRelease() {
     check("固支-铰支梁 铰端 M2=0", f.M2, 0.0, 1e-8);
 }
 
+void testBeamEndReleaseNonlinear() {
+    std::printf("\n[20b] 梁端部释放 + NONLINEAR（方案 C）\n");
+    // 旋转不变性 oracle：同一根固支-铰支梁，梁轴转 30°、荷载始终取局部
+    // 横向（DIR=LY），局部杆端力必须逐位不变。这能同时抓住两个错：
+    //   ① 方案 C 直接抛错「端部释放暂不支持 NONLINEAR」；
+    //   ② 凝聚后只按 nf 个自由度投影，斜梁会装配错位。
+    auto makeModel = [](double angle) {
+        Model2D m = straightBeam(L, 1, E, A, I);
+        m.nodes[2] = Eigen::Vector2d(L * std::cos(angle), L * std::sin(angle));
+        m.elements[0].releases.push_back(5);   // j 端 θ（铰）
+        m.constraints.push_back({1, 1, 0.0});
+        m.constraints.push_back({1, 2, 0.0});
+        m.constraints.push_back({1, 3, 0.0});
+        m.constraints.push_back({2, 1, 0.0});
+        m.constraints.push_back({2, 2, 0.0});
+        m.elemLoads.push_back({1, "LY", -q, -q});
+        return m;
+    };
+    auto nonlinear = [](const Model2D& base) {
+        Model2D m = base;
+        m.analysisType = "NONLINEAR";
+        m.nonlinearLoadSteps = 4;
+        return solveModel2D(m);
+    };
+
+    const Model2D mh = makeModel(0.0);
+    const ModelResult rh = solveModel2D(mh);
+    const ModelResult rnh = nonlinear(mh);
+    const auto fh = elementForces2D(mh, rh.U).front();
+    const auto fnh = elementForces2D(mh, rnh.U).front();
+    check("水平梁·方案C 固定端 |M1|=qL²/8", std::abs(fnh.M1), q * L * L / 8.0, 1e-6);
+    check("水平梁·方案C 铰端 M2=0", fnh.M2, 0.0, 1e-8);
+    check("水平梁·方案C 收敛", rnh.nonlinearConverged ? 1.0 : 0.0, 1.0);
+    check("水平梁·方案C 与 LINEAR 的 M1 一致", fnh.M1, fh.M1, 1e-6);
+    check("水平梁·方案C 与 LINEAR 的跨中位移一致",
+          nodalDisp(mh, rnh, 2, 2), nodalDisp(mh, rh, 2, 2), 1e-5);
+
+    const double ang = 30.0 * std::acos(-1.0) / 180.0;
+    const Model2D ms = makeModel(ang);
+    const ModelResult rs = solveModel2D(ms);
+    const ModelResult rns = nonlinear(ms);
+    const auto fs = elementForces2D(ms, rs.U).front();
+    const auto fns = elementForces2D(ms, rns.U).front();
+    check("斜梁·LINEAR 固定端 |M1| 旋转不变", std::abs(fs.M1), std::abs(fh.M1), 1e-6);
+    check("斜梁·方案C 固定端 |M1| 旋转不变", std::abs(fns.M1), std::abs(fh.M1), 1e-6);
+    check("斜梁·方案C 铰端 M2=0", fns.M2, 0.0, 1e-8);
+    check("斜梁·方案C 收敛", rns.nonlinearConverged ? 1.0 : 0.0, 1.0);
+    check("斜梁·方案C 与 LINEAR 的 M1 一致", fns.M1, fs.M1, 1e-6);
+
+    // 释放 i 端 θ（局部 dof 2）：线性凝聚若只散射 nf 个自由度，编号会与
+    // 全局 6 自由度错位，斜梁的 M2 必然偏离水平梁。两条路径都按完整
+    // 6 自由度投影后才满足旋转不变性。
+    auto makeIRelease = [](double angle) {
+        Model2D m = straightBeam(L, 1, E, A, I);
+        m.nodes[2] = Eigen::Vector2d(L * std::cos(angle), L * std::sin(angle));
+        m.elements[0].releases.push_back(2);   // i 端 θ
+        m.constraints.push_back({1, 1, 0.0});
+        m.constraints.push_back({1, 2, 0.0});
+        m.constraints.push_back({1, 3, 0.0});
+        m.constraints.push_back({2, 1, 0.0});
+        m.constraints.push_back({2, 2, 0.0});
+        m.elemLoads.push_back({1, "LY", -q, -q});
+        return m;
+    };
+    const Model2D ih = makeIRelease(0.0);
+    const Model2D is = makeIRelease(ang);
+    const auto fih = elementForces2D(ih, solveModel2D(ih).U).front();
+    const auto fis = elementForces2D(is, solveModel2D(is).U).front();
+    const ModelResult rinh = nonlinear(ih);
+    const ModelResult rins = nonlinear(is);
+    const auto finh = elementForces2D(ih, rinh.U).front();
+    const auto fins = elementForces2D(is, rins.U).front();
+    check("i端释放·LINEAR 释放端 M1=0", fih.M1, 0.0, 1e-8);
+    check("i端释放·LINEAR 水平/斜梁 M2 旋转不变", fis.M2, fih.M2, 1e-6);
+    check("i端释放·方案C 释放端 M1=0", finh.M1, 0.0, 1e-8);
+    check("i端释放·方案C 水平/斜梁 M2 旋转不变", fins.M2, finh.M2, 1e-6);
+    check("i端释放·方案C 与 LINEAR 的 M2 一致", finh.M2, fih.M2, 1e-6);
+    check("i端释放·方案C 收敛", rins.nonlinearConverged ? 1.0 : 0.0, 1.0);
+}
+
 void testBeamTimoshenko() {
     std::printf("\n[21] Timoshenko 梁（剪切变形）\n");
     const double Ld = 1.0;           // 短跨深梁
@@ -991,6 +1071,7 @@ int main() {
         testUDLSignConvention();
         testBeamPDelta();
         testBeamEndRelease();
+        testBeamEndReleaseNonlinear();
         testBeamTimoshenko();
         testNaturalFrequency();
         testBuckling();

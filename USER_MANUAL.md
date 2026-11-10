@@ -109,7 +109,7 @@ python tests/regression/compare_regression.py --freeze --bin build --src . --bas
 `*ANALYSIS TYPE=LINEAR`（默认）或 `*ANALYSIS TYPE=NONLINEAR TOL=1e-6 MAXITER=50`。
 
 - `LINEAR`（方案 A）：线弹性 + `CABLE`/`STRUT` 单向开关迭代。绝大多数常规结构用它。
-- `NONLINEAR`（方案 C）：Newton-Raphson 几何非线性（覆盖 `TRUSS`/`CABLE`/`STRUT`），适合大位移、索的几何刚度效应、非线性施工阶段。
+- `NONLINEAR`（方案 C）：Newton-Raphson 几何非线性（覆盖 `TRUSS`/`CABLE`/`STRUT`），适合大位移、索的几何刚度效应、非线性施工阶段；`BEAM` 用线性欧拉梁切线 + 一阶 P-Δ 几何刚度，**端部释放（`*RELEASE`）同样生效**（局部切线凝聚后装配，见 `input_format.md` §7.14）。
 
 判断依据：位移很小、索始终张紧时两者结果几乎一致，用 `LINEAR` 更快；存在大位移或索可能松弛时用 `NONLINEAR`。
 
