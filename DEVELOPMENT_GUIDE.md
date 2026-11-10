@@ -13,9 +13,9 @@
 ├── code_loads.hpp     # JTG D60 规范荷载库
 ├── prestress_loss.hpp # 预应力损失分项（JTG 3362-2018）
 ├── example_*.cpp      # 可执行示例（每个对应一种分析能力）
-├── test_2d.cpp        # 解析解断言测试（2D，108 项）
-├── test_3d.cpp        # 解析解断言测试（3D + 统一内核，47 项）
-├── tests/regression/  # 逐字节回归（31 个黄金基线 + 比对脚本）
+├── test_2d.cpp        # 解析解断言测试（2D，129 项）
+├── test_3d.cpp        # 解析解断言测试（3D + 统一内核，115 项）
+├── tests/regression/  # 逐字节回归（37 个黄金基线 + 比对脚本）
 ├── tests/benchmark/ansys/   # 100m 简支梁 ANSYS 对标
 ├── tests/benchmark/bridge/  # 80m 系杆拱 ANSYS 对标
 ├── external/          # 自带 Eigen3、AMGCL、Spectra 头文件
@@ -102,13 +102,14 @@ Newton-Raphson：`assembleState` 每步组装 `Fint/Fext` 与一致切线（轴�
 
 ### 6.1 解析解断言（`test_2d.cpp` / `test_3d.cpp`）
 
-用材料力学闭式解校验数值结果，当前 155 项（2D 108 项 + 3D/统一内核 47 项），拆成两个可执行，
-避免一个维度崩溃吞掉另一个维度的结果。公共断言辅助在 `test_common.hpp`。新增测试：写 `testXxx()`
-并在对应 `main()` 中调用。
+用材料力学闭式解校验数值结果，当前 **244 项**（`test_2d` 129 项 + `test_3d` 115 项），
+拆成两个可执行，避免一个维度崩溃吞掉另一个维度的结果；另有 `test_3d_nl` 79 项、
+`test_shape_sensitivity_3d` 44 项专项断言（计数以 `CHANGELOG.md` 为准）。
+公共断言辅助在 `test_common.hpp`。新增测试：写 `testXxx()` 并在对应 `main()` 中调用。
 
 ### 6.2 逐字节回归（`tests/regression/`）
 
-`compare_regression.py` 对 31 个 `verify_*.dat` 用当前构建重算，与黄金基线逐字节/数值比对。刷新基线：`python compare_regression.py --freeze ...`（先确认当前结果正确再刷新）。
+`compare_regression.py` 对 37 个 `verify_*.dat` 用当前构建重算，与黄金基线逐字节/数值比对。刷新基线：`python compare_regression.py --freeze ...`（先确认当前结果正确再刷新）。
 
 ### 6.3 ANSYS 对标（`tests/benchmark/`）
 
