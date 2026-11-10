@@ -814,6 +814,42 @@ void testBeamEndReleaseNonlinear() {
     check("i端释放·方案C 收敛", rins.nonlinearConverged ? 1.0 : 0.0, 1.0);
 }
 
+void testPrestressEquivFreeEnds() {
+    std::printf("\n[20c] EQUIV 预应力·两端轴向自由（逐跨张拉）\n");
+    // 连续梁的中间跨两端都不锁 dof1。旧实现直接抛错，逐跨张拉无法建模；
+    // 新实现施加一对自平衡轴压力，只有本梁组受压、外围结构不背附加轴力。
+    const double Ld = 10.0;
+    const double Pe = 1000.0e3;
+    Model2D m = straightBeam(Ld, 2, E, A, I);
+    m.constraints.push_back({1, 1, 0.0});   // 只有桥台锁轴向
+    m.constraints.push_back({1, 2, 0.0});
+    m.constraints.push_back({2, 2, 0.0});
+    m.constraints.push_back({3, 2, 0.0});
+    Model2D::Prestress ps;
+    ps.elems = {2};                         // 第 2 跨：node2→node3，两端 dof1 自由
+    ps.P = Pe;
+    ps.loss = 1.0;
+    ps.method = "EQUIV";
+    m.prestresses.push_back(ps);
+
+    processPrestress(m);
+    m.prestresses.clear();                  // 等效荷载已落进 m.loads，避免二次处理
+
+    double f2 = 0.0, f3 = 0.0;
+    for (const auto& l : m.loads) {
+        if (l.node == 2 && l.dof == 1) f2 += l.value;
+        if (l.node == 3 && l.dof == 1) f3 += l.value;
+    }
+    check("两端自由·生成 +Pe/-Pe 自平衡力对", f2, Pe, 1e-9);
+    check("两端自由·力对合力为零", f2 + f3, 0.0, 1e-9);
+
+    const ModelResult r = solveModel2D(m);
+    const auto fs = elementForces2D(m, r.U);
+    check("本跨受压 N=-Pe", fs[1].N1, -Pe, 1e-6 * Pe);
+    check("外围跨不承担附加轴力", fs[0].N1, 0.0, 1e-6 * Pe);
+    check("桥台轴向反力为零", nodalReaction(m, r, 1, 1), 0.0, 1e-6 * Pe);
+}
+
 void testBeamTimoshenko() {
     std::printf("\n[21] Timoshenko 梁（剪切变形）\n");
     const double Ld = 1.0;           // 短跨深梁
@@ -1072,6 +1108,7 @@ int main() {
         testBeamPDelta();
         testBeamEndRelease();
         testBeamEndReleaseNonlinear();
+        testPrestressEquivFreeEnds();
         testBeamTimoshenko();
         testNaturalFrequency();
         testBuckling();

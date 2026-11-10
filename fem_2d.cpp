@@ -581,8 +581,16 @@ void processPrestress(Model2D& m) {
                 m.loads.push_back({startNode, 1, Pe});
             else if (startAxialFixed && endAxialFixed)
                 throw std::runtime_error("*PRESTRESS EQUIV：两端 dof1 均固定时无法用外荷载模拟弹性缩短，请使用 METHOD=TENDON");
-            else
-                throw std::runtime_error("*PRESTRESS EQUIV：梁组至少需要一端约束 dof1");
+            else {
+                // 两端 dof1 均自由（连续梁的中间跨、悬臂施工的中间段）：
+                // 施加一对自平衡轴向压力 +Pe/-Pe。合力为零，外围结构不承担
+                // 附加轴力，只有本梁组受压——正是"该阶段只张拉本跨"的等效
+                // 荷载口径。原先直接抛错会让逐跨张拉的中间跨无法建模。
+                // 注意：EQUIV 只模拟轴向缩短与端部偏心，不是 TENDON 的
+                // 筋-混凝土协同，也不含摩阻/锚固/松弛分项损失。
+                m.loads.push_back({startNode, 1, Pe});
+                m.loads.push_back({endNode, 1, -Pe});
+            }
             continue;
         }
 

@@ -134,7 +134,7 @@ python tests/regression/compare_regression.py --freeze --bin build --src . --bas
 `*PRESTRESS` 的 `METHOD`：`AUTO`（默认）/`EQUIV`/`TENDON`。
 
 - `AUTO`：`LINEAR` 分析自动用 `EQUIV`，`NONLINEAR` 分析自动用 `TENDON`，推荐。
-- `EQUIV`：把有效预应力换算成等效荷载（横向均布 + 端部弯矩 + 轴力），只对 `BEAM`，要求梁组至少一端轴向可动。
+- `EQUIV`：把有效预应力换算成等效荷载（横向均布 + 端部弯矩 + 轴力），只对 `BEAM`。梁组只有一端 `dof1` 自由时在该端施加 `Pe`；两端都自由时施加自平衡力对 `+Pe/-Pe`（连续梁中间跨逐跨张拉走这条）；两端都固定时报错，改用 `TENDON`。不做筋-混凝土协同，也不含分项损失。
 - `TENDON`：自动生成 `CABLE` 筋单元 + `RIGID_PIN` 刚臂，保留真实筋几何，适合非线性。
 
 损失用 `LOSS` 系数一次性折减；若需按规范逐项计算（锚固、摩擦、弹性压缩、松弛、收缩徐变），用 `prestress_loss.hpp` 的 `computePrestressLosses`（见 §9.7）。
