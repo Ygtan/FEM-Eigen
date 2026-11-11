@@ -75,6 +75,11 @@ struct Model2D {
         double dens = 0.0;  // 材料密度（自动自重）
         double addmass = 0.0; // 附加质量 kg/m（自动自重）
         double istrn = 0.0; // 初应变（cable/strut/truss 预应力）
+        // opt-in 2D 索长闭合 [LENGTH2D]：独立的无应力下料长度（m）。
+        // 0 = 未指定，本构仍以几何初始弦长 L0 为参考长度，默认数值逐位不变；
+        // >0 时以本值为参考长度，N = EA·((L-Lu)/Lu + istrn)。
+        // 与 fem_2d.cpp:414 那个「局部几何弦长 L0」不是同一个量，不得混用。
+        double Lu = 0.0;
         double hTheory = 0.0; // 理论厚度 mm。0 表示没有。模型 creepH>0 时以模型值为准。
         double nu = 0.0;    // 泊松比（>0 时梁按 Timoshenko 考虑剪切变形）
         double K = 5.0 / 6.0; // 剪切修正系数（矩形默认 5/6）
@@ -84,6 +89,20 @@ struct Model2D {
         std::vector<int> releases;
     };
     std::vector<Element> elements;
+
+    // ---- opt-in 2D 平面索长闭合 [LENGTH2D] 输入契约 ----
+    // 只在 .dat 显式写 *CABLE_LENGTH2D 时生效；默认不写该段，readModel2D
+    // 不填这组字段，任何既有算例的 .dat / .result 逐位不变。
+    // 这是「首次真正新造 2D 力学」：2D 的 CABLE 原本只是「只受拉桁架 +
+    // 初应变」，没有可独立于几何弦长被指定的下料长度自由度。
+    struct LengthTarget {
+        int elem = 0;        // 单元号，必须是 CABLE（只受拉轴向单元）
+        double tension = 0.0; // 目标索力 T*（N，受拉为正，必须 > 0）
+    };
+    std::vector<LengthTarget> lengthTargets;
+    bool lengthEnabled = false;
+    double lengthTolT = 1e-6;   // 索力相对偏差 |N/T* - 1| 的收敛容差
+    int lengthMaxIter = 20;     // 最大外层迭代轮数
 
     struct Constraint {
         int node;
@@ -785,6 +804,57 @@ struct ModelResult {
     // opt-in 逐迭代过程量：线性分析时 steps 为空，不补零、不摆空表。
     NewtonTrace2D newtonTrace;
 };
+
+// ==================== opt-in 2D 平面索长闭合 [LENGTH2D] ====================
+//
+// 与 3D 的 [LENGTH] 段「同名不同实」，字段按 2D 事实取舍，不把 3D 的列
+// 照抄成 0：
+//   * 2D 无垂度 / 无索自重线密度 w / 无 Ernst 等效弹模，故不写 sag / Eeff；
+//   * 2D 用中心有限差分 Jacobian + LM 阻尼最小二乘，不是 3D 的闭式影响
+//     矩阵 J = M·D，故不写 SENS / JAVAIL / NJ / J 行，写 JMETHOD；
+//   * 2D 没有三维制造线形 ΔX+u，唯一控制误差是「索力相对偏差」，故
+//     ERRKIND 只有 tension_rel，不写 geomErr / closure_m；
+//   * 2D 主算例没有阶段维度，不设 STAGE 占位。
+// 过程量只说明数值如何收敛，不是规范意义上的设计合格判定。
+struct LengthStep2D {
+    int iter = 0;           // 外层迭代序号，从 1 起
+    double errMax = 0.0;    // max |N/T* - 1|（无量纲）
+    double errNorm = 0.0;   // 残差向量 2-范数
+    double stepMax = 0.0;   // 本轮 max |ΔLu|（m）
+    double alpha = 1.0;     // 步长系数（未做回溯折减时为 1）
+};
+
+struct LengthCable2D {
+    int elem = 0;
+    double target = 0.0;    // T*（N）
+    double finalT = 0.0;    // 最后一轮的索力 N（N）
+    double Lu0 = 0.0;       // 闭式初值 L*/(1+T*/EA)（m）
+    double Lu = 0.0;        // 最后一轮下料长度（m）；未收敛时为「未采纳值」
+    double Lgeom = 0.0;     // 几何初始弦长 L*（m）
+    double EA = 0.0;        // E·A（N）
+};
+
+struct LengthIterationResult2D {
+    std::string status = "not_applicable"; // ok / not_converged / no_request / not_applicable
+    std::string analysis;                  // LINEAR / NONLINEAR
+    std::string error;                     // 无请求 / 非法契约时的原因码
+    std::string failureReason;             // 求解异常 / 松弛的中文事实描述
+    bool enabled = false;
+    int ncables = 0;
+    int iterations = 0;
+    int maxIter = 20;
+    double tolT = 1e-6;
+    bool converged = false;
+    double errFirst = 0.0;
+    double errLast = 0.0;
+    std::vector<LengthStep2D> steps;
+    std::vector<LengthCable2D> cables;
+};
+
+// 唯一力学入口：按 *CABLE_LENGTH2D 的目标索力 T* 迭代每根索的无应力下料
+// 长度 Lu，使成桥态索力 N 命中 T*。默认不带该段时返回 no_request，不求解、
+// 不写零行冒充收敛。实现在 fem_2d.cpp，段格式化在 cable_length_output_2d.hpp。
+LengthIterationResult2D iterateCableLength2D(const Model2D& m, SolverType type);
 
 // ==================== 方案C Newton 的诊断信息 ====================
 //

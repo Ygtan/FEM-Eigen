@@ -1,0 +1,30 @@
+# 2D 平面索长闭合 [LENGTH2D] 闭式 + 迭代 oracle
+# 两端固定 → 位移恒 0、L=L*=10m，N = EA·((L*-Lu)/Lu + istrn)。
+# 闭式初值 Lu0=L*/(1+T*/EA) 刻意不含 istrn，故首轮 N=T*+EA*istrn ≠ T*，
+# 必须靠中心有限差分 Jacobian + LM 阻尼最小二乘迭代到
+# Lu = L*/(1 + T*/EA - istrn)，才能命中 T*。用来证明段里是真实力学，
+# 不是把初值或零行写成「已收敛」。
+# 本用例只用 --length-detail[-only] 显式调用，不进 compare_regression.py 的
+# 默认 CASES，黄金基线不刷新。
+*TITLE
+2D cable length closure closed-form and iteration oracle
+*NODE
+1 0.0 0.0
+2 10.0 0.0
+*ET
+1 CABLE
+*MP
+1 E=2.0e11
+*R
+1 A=0.001 ISTRN=0.0002
+*TYPE,1
+*MAT,1
+*REAL,1
+*EN,1,1,2
+*BOUNDARY
+1 1-3 0.0
+2 1-3 0.0
+*CABLE_LENGTH2D
+LENGTH2D=1 TOLT=1e-9 MAXLENITER=20
+1 1000000.0
+*END

@@ -86,6 +86,7 @@ python tests/regression/compare_regression.py --freeze --bin build --src . --bas
 | 材料 | `*MP`（`E`/`ALPX`/`DENS`） | `*MP`（`E`/`DENS`） |
 | 实常数 | `*R`（`A`/`I`/`WT`/`WB`/`H` 等） | `*R`（`A`/`IY`/`IZ`/`J`/`G`/`WT`/`WB`/`WY`/`WTORS`/`IW`/`ADDMASS` 等） |
 | 自由度 | 每节点 3 个：u、v、θ | 每节点 6 个：u、v、w、θx、θy、θz（`BEAM7` 为 7 个，多一个翘曲率 φ） |
+| 索长 / 目标索力 opt-in 段 | `*CABLE_LENGTH2D` → `[LENGTH2D]`（2D 平面索长闭合，无垂度线性杆；`[OPT]` 仍没有对应力学） | `*CABLE_BRIDGE` 的 `OPTIMIZE=` / `MODE=TENSION` 或 `MODE=COMPLETION` → `[OPT]` / `[LENGTH]` |
 
 预处理宏（二维）：`*FILL a b`（等分生成节点）、`*DO … *ENDDO`（循环）。
 
@@ -262,11 +263,15 @@ NODES=1,2,3 DOF=2 CODE=JTG_D60
   只对 `*ANALYSIS TYPE=NONLINEAR` 的模型产生过程量；线性模型写
   `ERROR=no_newton_solution`，不摆空表、不输出零行冒充收敛。两个开关都不改
   `.result` / 控制台，默认输出逐位不变、回归黄金基线不刷新。
-  **2D 内核没有 `[LENGTH]` 索长 / 几何闭合迭代与 `[OPT]` 带约束成桥索力优化
-  两层力学**（连输入契约都没有），本段只覆盖内层 Newton，不等于 3D 的
-  `[OPT]` → `[LENGTH]` → `[NEWTON]` 三层迭代已移植到 2D；过程量只说明数值
-  如何收敛，规范没有 Newton 迭代轮数的合格限值，**不是规范合格判定**。
-  BridgeStudio 侧 `newton_2d.py` 只解析、不重算 `K·ΔU=R`、不补零。
+  **第十三次起，2D 已有 opt-in 的 `[LENGTH2D]` 平面索长闭合一层力学**
+  （`*CABLE_LENGTH2D` 契约、无垂度线性杆、中心有限差分 Jacobian + LM 阻尼
+  最小二乘，见 §9.8 末的二维子节）；**`[OPT]` 带约束成桥索力优化仍没有
+  对应力学、不造占位**。本段只覆盖内层 Newton，2D 的 `[LENGTH2D]` 也
+  **不等于 3D 的 `[OPT]` → `[LENGTH]` → `[NEWTON]` 三层迭代已移植到 2D**
+  （2D 没有 3D 的垂度 / Ernst 等效模量 / 共转成桥态 / 闭式影响矩阵
+  `J=M·D`）；过程量只说明数值如何收敛，规范没有 Newton 迭代轮数的
+  合格限值，**不是规范合格判定**。BridgeStudio 侧 `newton_2d.py` 只解析、
+  不重算 `K·ΔU=R`、不补零。
 
 ### 9.8 索长迭代与制造线形几何闭合（`cable_solver`）
 
@@ -378,7 +383,50 @@ Newton    (I + G_full)·δ = -(ΔX + u)，G_full = du/dX
 需要更高闭合精度、或某算例低秩路径反复兜底时，再显式用
 `SENSITIVITY=FULL`。
 
+#### 二维 opt-in `[LENGTH2D]`：平面索长闭合（第十三次，3D 专属口径之外）
+
+> 上面 §9.8 正文全部是 **3D 专属**（共转列式几何非线性内核
+> `fem_3d_nl.hpp`、影响矩阵 `J=M·D`、垂度 / Ernst 等效模量、
+> `MODE=COMPLETION` 制造线形）。第十三次起 2D 另有一套**独立、opt-in**
+> 的平面索长闭合，物理与算法都不等于 3D，只做 `[LENGTH2D]` **一层**。
+
+- **输入契约**：`*CABLE_LENGTH2D`
+  ```text
+  *CABLE_LENGTH2D
+  LENGTH2D=1 TOLT=1e-6 MAXLENITER=20
+  <CABLE单元号> <目标索力T*_N>
+  ```
+  参数行 `LENGTH2D=1` 开启、`TOLT>0` 为唯一判据容差、
+  `MAXLENITER>=1` 为最大迭代轮数；目标行逐行给单元号与目标索力 `T*`
+  （单位 N，`T*>0`），单元必须存在且为 `CABLE`。**默认不写该段**，
+  不写时 `[LENGTH2D]` 段输出 `KIND=none STATUS=not_applicable` +
+  `ERROR=no_length_request`，不摆空表。
+- **`Lu` 与 `ISTRN`**：`Model2D::Element::Lu` 是独立于几何弦长的
+  无应力下料长度（m），与初应变 `ISTRN` **不是同一个量**。
+  `Lu<=0`（未指定）时本构逐位不变（`N = E·A/L·ΔL + E·A·ISTRN`）；
+  给定 `Lu>0` 时用无垂度线性杆本构 `N = EA·((L-Lu)/Lu + istrn)`。
+- **求解**：`fem_2d.cpp::iterateCableLength2D()` 取闭式初值
+  `Lu0 = L*/(1+T*/EA)`，用**中心有限差分 Jacobian + LM 阻尼最小二乘**
+  迭代求各索 `Lu`（不是 3D 的闭式影响矩阵 `J=M·D`）；唯一判据
+  `max|N/T*-1| <= TOLT`，`ERRKIND=tension_rel`（无量纲），
+  没有线形闭合 / `geomErr` 判据。
+- **CLI 与输出**：`example_mixed.exe <dat> --length-detail` 写
+  `<stem>.length.txt` 的 `[LENGTH2D]` 段；`--length-detail-only`
+  求解后返回、**不写 `.result`**。段字段按 2D 事实取舍，**不写**
+  sag / Ernst / SENS / NJ / J / geomErr / STAGE 占位；`[LENGTH2D]`
+  段只写 2D 真实量（索号、`Lu` / 弦长 `L` / 索力 `N` / 目标 `T*` /
+  相对偏差、逐轮收敛量，长度单位 m、力单位 N、`tension_rel` 无量纲）。
+  默认不带开关时 `.result` / 控制台 / 37 个黄金基线逐位不变、不刷新。
+- **与 3D 的物理差异**：2D 是平面无垂度线性杆，没有 3D 的垂度 /
+  Ernst 等效模量 / 共转成桥态 / 制造线形预抬高 / 闭式影响矩阵 /
+  `[OPT]`→`[LENGTH]`→`[NEWTON]` 三层迭代；`[OPT]` 在 2D 仍没有
+  对应力学。过程量只说明数值如何收敛，**不是规范合格判定**。
+  BridgeStudio 侧 `length_2d.py` 只解析、不重算、不补零。
+
 ### 9.9 带约束成桥目标索力优化（`OPTIMIZE=1`）
+
+**本节是 3D 专属**：2D `[OPT]` 带约束成桥目标索力优化仍没有对应力学、
+不造占位（2D 只有 §9.8 末的 opt-in `[LENGTH2D]` 平面索长闭合一层）。
 
 `METHOD=RIGID` 与 `METHOD=MINENERGY` 是「按一个固定准则直接算一组索力」；
 本节是「给定可行域，求一组更优的索力」。默认 `OPTIMIZE=0` **完全不进入

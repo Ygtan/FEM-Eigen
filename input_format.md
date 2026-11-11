@@ -296,6 +296,42 @@ w  = 8·Pe·F/L²
 反摩擦长度尚未实现；σl6 的 `εcs` 与 `φ` 需要用户按规范曲线查表后填入，
 程序不自动按龄期计算。
 
+### 6.5 `*CABLE_LENGTH2D` —— 2D 平面索长闭合（opt-in，第十三次）
+
+按 opt-in 给若干 `CABLE` 单元指定目标索力 `T*`，由 2D 内核迭代反求各索的
+**无应力下料长度** `Lu`（m），命中目标索力。默认**不写该段**；不写时走
+原有本构、`.result` 与控制台逐位不变，结果文件写
+`KIND=none STATUS=not_applicable` + `ERROR=no_length_request`，不摆空表。
+
+```text
+*CABLE_LENGTH2D
+LENGTH2D=1 TOLT=1e-6 MAXLENITER=20
+<CABLE单元号> <目标索力T*_N>
+```
+
+- 参数行（段内第一行）：`LENGTH2D=1` 开启本段；`TOLT` 是唯一收敛判据
+  `max|N/T*-1| <= TOLT` 的容差（无量纲，`>0`）；`MAXLENITER` 是最大
+  迭代轮数（`>=1`）。
+- 目标行：每行 `<CABLE单元号> <目标索力T*_N>`，单元号必须是已定义的
+  `CABLE` 单元，`T*` 单位 N 且 `T*>0`；可按需要逐行列出多根索。
+- `Element::Lu` 是**独立于几何弦长的无应力下料长度**（m），与
+  `*R` / `*EN` 上的初应变 `ISTRN` **不是同一个量**：`ISTRN` 是初始
+  应变，`Lu` 是无应力参考长度。`Lu<=0`（未指定）时本构逐位不变
+  （`N = E·A/L·ΔL + E·A·ISTRN`）；给定 `Lu>0` 时用无垂度线性杆
+  本构 `N = EA·((L-Lu)/Lu + istrn)`。
+- 闭式初值 `Lu0 = L*/(1+T*/EA)`，中心有限差分 Jacobian + LM 阻尼
+  最小二乘迭代；唯一判据 `max|N/T*-1| <= TOLT`
+  （`ERRKIND=tension_rel`，无量纲），不掺线形闭合 / `geomErr` 判据。
+- **这是 2D 一层平面索长闭合，不等于 3D 的 `[OPT]` → `[LENGTH]` →
+  `[NEWTON]` 三层迭代**：没有垂度 / Ernst 等效模量 / 共转成桥态 /
+  闭式影响矩阵 `J=M·D` / 制造线形预抬高；`[OPT]` 带约束目标索力优化
+  在 2D 仍没有对应力学、不造占位。
+- 结果由 `example_mixed.exe <dat> --length-detail[-only]` 写入
+  `<stem>.length.txt` 的 `[LENGTH2D]` 段（`--length-detail-only`
+  求解后返回、不写 `.result`）；段字段按 2D 事实取舍，不写
+  sag / Ernst / SENS / NJ / J / geomErr / STAGE 占位。详见
+  `USER_MANUAL.md` §9.8 末的二维子节。
+
 ## 7. 约束与荷载（编号支持 `a-b` 区间）
 
 以下各段里，节点号、单元号、自由度号都可以写成单个编号，也可以写成区间 `a-b`（包含两端）。
@@ -813,6 +849,7 @@ TYPE=STRESS   单元应力目标
 - `*FILL`：`a < b`，且端点节点必须已定义。
 - `*DO`：`step ≠ 0`，方向一致，且必须有匹配的 `*ENDDO`。
 - `*ANALYSIS`：`TYPE` 只能为 `LINEAR` 或 `NONLINEAR`；`TOL > 0`；`MAXITER ≥ 1`。
+- `*CABLE_LENGTH2D`（`LENGTH2D=1` 时）：`TOLT > 0`、`MAXLENITER ≥ 1`；每条目标行引用的单元必须已定义且类型为 `CABLE`，其 `EA > 0`（材料 `E` 与实常数 `A` 均为正）、几何弦长 `L > 0`、目标索力 `T* > 0`（单位 N）；`Lu` 由内核迭代求出，不要求输入。未开启或缺段时不校验、不摆空表。
 - `*PRESTRESS`：`P > 0`、`LOSS > 0`、`EPS > 0`；`ELEM` 必须按顺序连续且均为 `BEAM`；
   `METHOD=TENDON` 或 `AUTO` 在非线性分析下还需要 `APS/AP > 0`。
 - `*INFLUENCE`：`DISP/REACTION` 需要 `node dof`；`FORCE/STRESS` 需要 `elem component end`。

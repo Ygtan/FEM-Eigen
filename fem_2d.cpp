@@ -11,6 +11,21 @@ bool isRigid(const std::string& type) {
     return type == "RIGID" || type == "RIGID_PIN";
 }
 
+// opt-in 2D 索长闭合 [LENGTH2D]：无应力下料长度 Lu 的参考长度与等效初应变。
+// Lu<=0（默认）时严格返回几何初始弦长与原 istrn，使既有本构表达式、等效
+// 节点力与切线刚度逐位不变；Lu>0 时：
+//   * 非线性内力 N = EA·((L-Lu)/Lu + istrn)，L 为当前弦长；
+//   * 线性内力 N = EA/Lu·dL + EA·eps0，eps0 为下料长度偏差 + 原初应变；
+//   * 等效节点力 P = EA·eps0，eps0 = istrn + (Lgeom-Lu)/Lu。
+// 三者都来自同一个 Lu，不是拿 ISTRN 冒充下料长度。
+inline double axialRefLength2D(const Model2D::Element& e, double Lgeom) {
+    return (e.Lu > 0.0) ? e.Lu : Lgeom;
+}
+inline double axialInitialStrain2D(const Model2D::Element& e, double Lgeom) {
+    if (e.Lu <= 0.0) return e.istrn;
+    return e.istrn + (Lgeom - e.Lu) / e.Lu;
+}
+
 DenseMat rigidPinStiffness(const Eigen::Vector2d& p1, const Eigen::Vector2d& p2,
                                   double penalty) {
     const Eigen::Vector2d r = p2 - p1; // 梁节点 -> 筋节点
@@ -34,7 +49,10 @@ double axialForce(const Model2D::Element& e, const DenseVec& U,
     const Eigen::Vector2d u1(U(3 * i1 + 0), U(3 * i1 + 1));
     const Eigen::Vector2d u2(U(3 * i2 + 0), U(3 * i2 + 1));
     const double dL = (u2 - u1).dot(c);
-    return e.E * e.A / L * dL + e.E * e.A * e.istrn;
+    const double Lref = axialRefLength2D(e, L);
+    const double eps0 = axialInitialStrain2D(e, L);
+    // Lu<=0 时 Lref==L、eps0==e.istrn，与既有表达式逐位相同。
+    return e.E * e.A / Lref * dL + e.E * e.A * eps0;
 }
 
 std::vector<int> elementGdofs2D(const std::string& type, int i1, int i2) {
@@ -396,11 +414,14 @@ DenseVec elementEquivalentLoad(const Model2D& m, const Model2D::Element& e,
     }
 
     // 初应变 ISTRN（cable/strut/truss 预应力）：等效节点力 ±EA·ISTRN 沿杆轴。
-    if (e.istrn != 0.0 && isAxial(e.type)) {
+    // opt-in 下料长度 Lu>0 时把 (Lgeom-Lu)/Lu 一并计入等效初应变；Lu<=0 时
+    // epsPre 恒等于 e.istrn，本段与既有实现逐位一致。
+    const double epsPre = axialInitialStrain2D(e, (p2 - p1).norm());
+    if (epsPre != 0.0 && isAxial(e.type)) {
         const Eigen::Vector2d d = p2 - p1;
         const double L = d.norm();
         const Eigen::Vector2d c = d / L;
-        const double P = e.E * e.A * e.istrn;
+        const double P = e.E * e.A * epsPre;
         fe(0) +=  P * c(0); fe(1) +=  P * c(1);   // 节点 i 沿 +c 方向
         fe(2) += -P * c(0); fe(3) += -P * c(1);   // 节点 j 沿 -c 方向
     }
@@ -413,12 +434,14 @@ double axialForceNonlinear(const Model2D::Element& e, const DenseVec& U,
     const Eigen::Vector2d d0 = p2 - p1;
     const double L0 = d0.norm();
     if (L0 <= 0.0) throw std::runtime_error("轴向单元初始长度为零");
+    // opt-in [LENGTH2D]：Lu<=0 时 Lref 恒等于几何弦长 L0，下式逐位不变。
+    const double Lref = axialRefLength2D(e, L0);
     const Eigen::Vector2d u1(U(3 * i1 + 0), U(3 * i1 + 1));
     const Eigen::Vector2d u2(U(3 * i2 + 0), U(3 * i2 + 1));
     const Eigen::Vector2d d = d0 + u2 - u1;
     const double L = d.norm();
     if (L <= 0.0) throw std::runtime_error("轴向单元当前长度为零");
-    return e.E * e.A * ((L - L0) / L0 + e.istrn);
+    return e.E * e.A * ((L - Lref) / Lref + e.istrn);
 }
 
 DenseVec axialInternalForceNonlinear(const Model2D::Element& e, const DenseVec& U,
@@ -427,13 +450,15 @@ DenseVec axialInternalForceNonlinear(const Model2D::Element& e, const DenseVec& 
     const Eigen::Vector2d d0 = p2 - p1;
     const double L0 = d0.norm();
     if (L0 <= 0.0) throw std::runtime_error("轴向单元初始长度为零");
+    // opt-in [LENGTH2D]：Lu<=0 时 Lref 恒等于几何弦长 L0，下式逐位不变。
+    const double Lref = axialRefLength2D(e, L0);
     const Eigen::Vector2d u1(U(3 * i1 + 0), U(3 * i1 + 1));
     const Eigen::Vector2d u2(U(3 * i2 + 0), U(3 * i2 + 1));
     const Eigen::Vector2d d = d0 + u2 - u1;
     const double L = d.norm();
     if (L <= 0.0) throw std::runtime_error("轴向单元当前长度为零");
     const Eigen::Vector2d c = d / L;
-    const double N = e.E * e.A * ((L - L0) / L0 + e.istrn);
+    const double N = e.E * e.A * ((L - Lref) / Lref + e.istrn);
 
     DenseVec fe(4);
     fe << -N * c(0), -N * c(1), N * c(0), N * c(1);
@@ -446,15 +471,17 @@ DenseMat axialTangentNonlinear(const Model2D::Element& e, const DenseVec& U,
     const Eigen::Vector2d d0 = p2 - p1;
     const double L0 = d0.norm();
     if (L0 <= 0.0) throw std::runtime_error("轴向单元初始长度为零");
+    // opt-in [LENGTH2D]：Lu<=0 时 Lref 恒等于几何弦长 L0，下式逐位不变。
+    const double Lref = axialRefLength2D(e, L0);
     const Eigen::Vector2d u1(U(3 * i1 + 0), U(3 * i1 + 1));
     const Eigen::Vector2d u2(U(3 * i2 + 0), U(3 * i2 + 1));
     const Eigen::Vector2d d = d0 + u2 - u1;
     const double L = d.norm();
     if (L <= 0.0) throw std::runtime_error("轴向单元当前长度为零");
     const Eigen::Vector2d c = d / L;
-    const double N = e.E * e.A * ((L - L0) / L0 + e.istrn);
+    const double N = e.E * e.A * ((L - Lref) / Lref + e.istrn);
 
-    const double kMat = e.E * e.A / L0;
+    const double kMat = e.E * e.A / Lref;
     const double kGeo = N / L;
     const Eigen::Matrix2d A =
         (kMat - kGeo) * (c * c.transpose()) + kGeo * Eigen::Matrix2d::Identity();
@@ -470,12 +497,13 @@ DenseMat axialTangentNonlinear(const Model2D::Element& e, const DenseVec& U,
 DenseVec elementExternalEquivalentLoad(const Model2D& m, const Model2D::Element& e,
                                               const Eigen::Vector2d& p1, const Eigen::Vector2d& p2) {
     DenseVec fe = elementEquivalentLoad(m, e, p1, p2);
-    if (e.istrn != 0.0 && isAxial(e.type)) {
+    const double epsPre = axialInitialStrain2D(e, (p2 - p1).norm());
+    if (epsPre != 0.0 && isAxial(e.type)) {
         const Eigen::Vector2d d = p2 - p1;
         const double L = d.norm();
         if (L <= 0.0) throw std::runtime_error("轴向单元初始长度为零");
         const Eigen::Vector2d c = d / L;
-        const double P = e.E * e.A * e.istrn;
+        const double P = e.E * e.A * epsPre;
         fe(0) -= P * c(0);
         fe(1) -= P * c(1);
         fe(2) += P * c(0);
@@ -1231,6 +1259,48 @@ Model2D readModel2D(const std::string& path) {
             if (ps.method != "AUTO" && ps.method != "EQUIV" && ps.method != "TENDON")
                 throw std::runtime_error("*PRESTRESS 未知 METHOD: " + ps.method);
             m.prestresses.push_back(ps);
+        } else if (section == "*CABLE_LENGTH2D") {
+            // opt-in 2D 平面索长闭合输入契约。段内两种行：
+            //   LENGTH2D=1 TOLT=1e-6 MAXLENITER=20   （参数行）
+            //   <elem> <T*_N>                        （逐索目标索力，N，受拉为正）
+            // 不写该段时 readModel2D 完全不进入这里，默认 .dat / .result
+            // 与既有黄金基线逐位不变。这里只解析契约，不做任何力学。
+            const std::string first = detail::toUpper(
+                t.substr(0, t.find_first_of(" \t=,")));
+            if (first == "LENGTH2D" || first == "TOLT" || first == "MAXLENITER") {
+                std::string args = t;
+                std::replace(args.begin(), args.end(), ',', ' ');
+                auto p = detail::parseKeyValues(args);
+                auto it = p.find("LENGTH2D");
+                if (it != p.end()) {
+                    const std::string s = detail::toUpper(it->second);
+                    if (s == "ON" || s == "1" || s == "TRUE" || s == "YES")
+                        m.lengthEnabled = true;
+                    else if (s == "OFF" || s == "0" || s == "FALSE" || s == "NO")
+                        m.lengthEnabled = false;
+                    else
+                        throw std::runtime_error("*CABLE_LENGTH2D LENGTH2D 只能为 0/1");
+                } else {
+                    m.lengthEnabled = true; // 写了参数行即显式启用
+                }
+                it = p.find("TOLT");
+                if (it != p.end()) m.lengthTolT = std::stod(it->second);
+                it = p.find("MAXLENITER");
+                if (it != p.end()) m.lengthMaxIter = std::stoi(it->second);
+                if (m.lengthTolT <= 0.0)
+                    throw std::runtime_error("*CABLE_LENGTH2D TOLT 必须大于 0");
+                if (m.lengthMaxIter < 1)
+                    throw std::runtime_error("*CABLE_LENGTH2D MAXLENITER 必须至少为 1");
+            } else {
+                int elem = 0;
+                double target = 0.0;
+                if (!(ss >> elem >> target))
+                    throw std::runtime_error("*CABLE_LENGTH2D 行格式错误: " + t);
+                if (target <= 0.0)
+                    throw std::runtime_error("*CABLE_LENGTH2D 目标索力 T* 必须大于 0");
+                m.lengthEnabled = true;
+                m.lengthTargets.push_back({elem, target});
+            }
         } else if (section == "*INFLUENCE") {
             int id = 0;
             std::string kind;
@@ -2772,7 +2842,10 @@ std::vector<ElementForce> elementForces2D(const Model2D& m, const DenseVec& U) {
                 const Eigen::Vector2d c = d / L;
                 const Eigen::Vector2d u1(U(3 * i1 + 0), U(3 * i1 + 1));
                 const Eigen::Vector2d u2(U(3 * i2 + 0), U(3 * i2 + 1));
-                const double Nrestore = (e.E * e.A / L) * (u2 - u1).dot(c); // 恢复力（受拉）
+                // opt-in [LENGTH2D]：Lu>0 时恢复力参考长度改用下料长度；
+                // Lu<=0 时 Lref==L，与既有表达式逐位相同。
+                const double Nrestore =
+                    (e.E * e.A / axialRefLength2D(e, L)) * (u2 - u1).dot(c); // 恢复力（受拉）
                 const DenseVec fe = elementEquivalentLoad(m, e, p1, p2); // [i,j] 全局
                 const double fe_i = fe(0) * c(0) + fe(1) * c(1);
                 const double fe_j = fe(2) * c(0) + fe(3) * c(1);
@@ -3134,6 +3207,185 @@ std::vector<CamberResult> computeCamber(const Model2D& m,
         const double orig = (c.dof == 1) ? coord(0) : (c.dof == 2) ? coord(1) : 0.0;
         const double camber = c.value - disp;
         out.push_back({c.node, c.dof, camber, disp, orig, orig + camber});
+    }
+    return out;
+}
+
+// ==================== opt-in 2D 平面索长闭合 [LENGTH2D] ====================
+//
+// 首次真正新造 2D 力学：按 *CABLE_LENGTH2D 的目标索力 T* 迭代每根 CABLE
+// 的**无应力下料长度 Lu**，使成桥态索力 N 命中 T*。
+//   * 本构：无垂度线性杆 N = EA·((L-Lu)/Lu + istrn)；闭式初值
+//     Lu0 = L*/(1 + T*/EA)，L* 为几何初始弦长（无 3D 的垂度缩短 s(T)）。
+//   * 求解：中心有限差分 Jacobian + LM 阻尼最小二乘（复用 iterateCamber 的
+//     骨架），**不是** 3D 的闭式影响矩阵 J = M·D。
+//   * 唯一判据：max |N/T* - 1| <= TOLT（ERRKIND=tension_rel，无量纲）。
+//   * 不写 geomErr / SENS / NJ / J 行：2D 没有三维制造线形与闭式影响矩阵；
+//     不写阶段占位：2D 主算例没有阶段维度。
+// 默认不带契约时返回 no_request、不求解、不写零行冒充收敛；过程量只说明
+// 数值如何收敛，不是规范意义上的设计合格判定。
+LengthIterationResult2D iterateCableLength2D(const Model2D& m, SolverType type) {
+    LengthIterationResult2D out;
+    out.maxIter = m.lengthMaxIter;
+    out.tolT = m.lengthTolT;
+    out.analysis = m.analysisType;
+    if (!m.lengthEnabled || m.lengthTargets.empty()) {
+        out.status = "not_applicable";
+        out.error = "no_length_request";
+        return out;
+    }
+    out.enabled = true;
+    out.ncables = static_cast<int>(m.lengthTargets.size());
+
+    // 契约校验：目标单元必须真实存在、是 CABLE（只受拉轴向单元）、EA>0、
+    // 弦长>0。做不到就显式报错，不静默跳过、不补零、不拿 TRUSS 冒充索。
+    std::vector<int> elemIndex(out.ncables, -1);
+    std::vector<double> Lgeom(out.ncables, 0.0), EA(out.ncables, 0.0);
+    for (int k = 0; k < out.ncables; ++k) {
+        const int eid = m.lengthTargets[k].elem;
+        for (int i = 0; i < static_cast<int>(m.elements.size()); ++i) {
+            if (m.elements[i].id == eid) { elemIndex[k] = i; break; }
+        }
+        if (elemIndex[k] < 0)
+            throw std::runtime_error("*CABLE_LENGTH2D 目标单元不存在: " + std::to_string(eid));
+        const Model2D::Element& e = m.elements[elemIndex[k]];
+        if (e.type != "CABLE")
+            throw std::runtime_error("*CABLE_LENGTH2D 目标单元必须是 CABLE: " + std::to_string(eid));
+        if (e.E <= 0.0 || e.A <= 0.0)
+            throw std::runtime_error("*CABLE_LENGTH2D 目标单元 E/A 必须大于 0: " + std::to_string(eid));
+        Lgeom[k] = (m.nodes.at(e.conn[1]) - m.nodes.at(e.conn[0])).norm();
+        if (Lgeom[k] <= 0.0)
+            throw std::runtime_error("*CABLE_LENGTH2D 目标单元几何弦长为零: " + std::to_string(eid));
+        EA[k] = e.E * e.A;
+    }
+
+    // 闭式初值（无垂度线性杆）：Lu0 = L*/(1 + T*/EA)。
+    DenseVec x(out.ncables);
+    for (int k = 0; k < out.ncables; ++k)
+        x(k) = Lgeom[k] / (1.0 + m.lengthTargets[k].tension / EA[k]);
+
+    DenseVec lastN = DenseVec::Zero(out.ncables);
+    bool slack = false;
+    std::string solveError;
+
+    // 每轮 eval 都完整重跑一次 2D 求解；只用内核算出的单元轴力，不重算
+    // K·ΔU=R、不由位移反推索力、不补零。
+    auto eval = [&](const DenseVec& Lu) -> DenseVec {
+        Model2D mc = m;
+        for (int k = 0; k < out.ncables; ++k) {
+            if (!(Lu(k) > 0.0))
+                throw std::runtime_error("*CABLE_LENGTH2D 下料长度必须大于 0");
+            mc.elements[elemIndex[k]].Lu = Lu(k);
+        }
+        const ModelResult r = solveModel2D(mc, type);
+        const std::vector<ElementForce> fs = elementForces2D(mc, r.U);
+        DenseVec N(out.ncables);
+        for (int k = 0; k < out.ncables; ++k) {
+            const int eid = m.lengthTargets[k].elem;
+            const auto it = std::find_if(fs.begin(), fs.end(),
+                [&](const ElementForce& f) { return f.id == eid; });
+            if (it == fs.end())
+                throw std::runtime_error("*CABLE_LENGTH2D 求解结果缺单元内力: " + std::to_string(eid));
+            N(k) = it->N1; // 轴向单元 N1/N2 同一轴力，取端 1，不做平均加工
+        }
+        return N;
+    };
+
+    for (int iter = 0; iter < m.lengthMaxIter; ++iter) {
+        DenseVec N(out.ncables);
+        try {
+            N = eval(x);
+        } catch (const std::exception& ex) {
+            solveError = ex.what();
+            break;
+        }
+        lastN = N;
+        DenseVec r(out.ncables);
+        double errMax = 0.0;
+        for (int k = 0; k < out.ncables; ++k) {
+            r(k) = N(k) / m.lengthTargets[k].tension - 1.0;
+            errMax = std::max(errMax, std::abs(r(k)));
+            if (N(k) <= 0.0) slack = true; // CABLE 松弛：只受拉，N 归零是事实
+        }
+        if (iter == 0) out.errFirst = errMax;
+        out.errLast = errMax;
+
+        LengthStep2D st;
+        st.iter = iter + 1;
+        st.errMax = errMax;
+        st.errNorm = r.norm();
+        out.steps.push_back(st);
+        out.iterations = iter + 1;
+
+        if (errMax <= m.lengthTolT) {
+            out.converged = true;
+            out.status = "ok";
+            break;
+        }
+        if (slack) {
+            out.error = "cable_slack";
+            out.failureReason = "至少一根 CABLE 在成桥态松弛（N=0），"
+                                "目标索力无法命中；不把 0 当收敛、不补零。";
+            break;
+        }
+
+        // 中心有限差分 Jacobian：J_ij = ∂(N_i/T*_i)/∂Lu_j（1/m）。
+        Eigen::MatrixXd J(out.ncables, out.ncables);
+        bool jfail = false;
+        for (int j = 0; j < out.ncables; ++j) {
+            const double h = 1e-6 * std::max(1.0, std::abs(x(j)));
+            DenseVec xp = x, xm = x;
+            xp(j) += h;
+            xm(j) -= h;
+            try {
+                const DenseVec Np = eval(xp), Nm = eval(xm);
+                for (int i = 0; i < out.ncables; ++i)
+                    J(i, j) = (Np(i) - Nm(i)) / (2.0 * h * m.lengthTargets[i].tension);
+            } catch (const std::exception& ex) {
+                solveError = ex.what();
+                jfail = true;
+                break;
+            }
+        }
+        if (jfail) break;
+
+        // LM 阻尼最小二乘：ΔLu = -(JᵀJ + λ·diag)⁻¹ Jᵀ r
+        const double lambda = 1e-8;
+        Eigen::MatrixXd A = J.transpose() * J;
+        for (int j = 0; j < out.ncables; ++j)
+            A(j, j) += lambda * std::max(1.0, A(j, j));
+        const DenseVec dx = A.fullPivLu().solve(-(J.transpose() * r));
+        if (!dx.allFinite()) {
+            out.error = "linear_solve_failed";
+            break;
+        }
+        double stepMax = 0.0;
+        for (int k = 0; k < out.ncables; ++k)
+            stepMax = std::max(stepMax, std::abs(dx(k)));
+        out.steps.back().stepMax = stepMax; // 收敛轮为 0：本轮未解增量，是事实值
+        x += dx;
+    }
+
+    if (!out.converged) {
+        out.status = "not_converged";
+        if (out.error.empty()) {
+            out.error = solveError.empty() ? "max_iterations" : "solve_failed";
+            if (!solveError.empty()) out.failureReason = solveError;
+        }
+    }
+
+    // E 行：Lu 是最后一轮的下料长度；未收敛时它是「未采纳值」，NOTE 明写，
+    // 不当作成桥下料长度冒充闭环。
+    for (int k = 0; k < out.ncables; ++k) {
+        LengthCable2D c;
+        c.elem = m.lengthTargets[k].elem;
+        c.target = m.lengthTargets[k].tension;
+        c.finalT = lastN(k);
+        c.Lu0 = Lgeom[k] / (1.0 + c.target / EA[k]);
+        c.Lu = x(k);
+        c.Lgeom = Lgeom[k];
+        c.EA = EA[k];
+        out.cables.push_back(c);
     }
     return out;
 }

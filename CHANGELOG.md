@@ -4,6 +4,49 @@
 
 ## 2026-11-11
 
+### 新增：2D 平面索长闭合 [LENGTH2D] 段（`--length-detail` / `--length-detail-only`，opt-in）
+
+- 第十三次（B2「2D 平面索长闭合 [LENGTH2D] 一层」）是**首次真正新造
+  2D 力学**：此前 2D 连索长输入契约都没有，不是第九 / 十 / 十一次那种
+  「内核已算、只补留痕 / 补段」。第十一次「本轮不新造力学」是历史条目，
+  一字不改、仍为当时的事实记录。用户拍板只做 `[LENGTH2D]` **一层**，
+  `[OPT]` 带约束目标索力优化在 2D **仍不做、仍标 `2D=N`、不造占位**。
+- 新增输入段 `*CABLE_LENGTH2D`：参数行
+  `LENGTH2D=1 TOLT=... MAXLENITER=...` + 逐行
+  `<CABLE单元号> <目标索力T*_N>`（T*>0、单元必须为 CABLE）；
+  `Model2D` 增 `Element::Lu`（无应力下料长度 m，独立于几何弦长，与
+  `ISTRN` 不是同一个量）、`LengthTarget` / `lengthTargets` /
+  `lengthEnabled` / `lengthTolT` / `lengthMaxIter` /
+  `LengthStep2D` / `LengthCable2D` / `LengthIterationResult2D`。
+  **`Lu<=0`（未指定）时本构逐位不变**：仍是原线性杆
+  `N = E·A/L·ΔL + E·A·ISTRN`；只有给定 `Lu>0` 才切到
+  `N = EA·((L-Lu)/Lu + istrn)` 的无垂度线性杆本构。
+- `fem_2d.cpp::iterateCableLength2D()`：闭式初值 `Lu0 = L*/(1+T*/EA)`，
+  **中心有限差分 Jacobian + LM 阻尼最小二乘**求根（不是 3D 的闭式影响
+  矩阵 `J = M·D`）；唯一判据 `max|N/T*-1| <= TOLT`，
+  `ERRKIND=tension_rel`（无量纲），不掺几何闭合误差 / 线形判据。
+  无垂度、无 Ernst 等效模量、无共转成桥态，不等于 3D 的
+  `[OPT]` → `[LENGTH]` → `[NEWTON]` 三层迭代。
+- 新增 `cable_length_output_2d.hpp::formatCableLengthSection2D()` 写
+  `[LENGTH2D]` 段，字段按 2D 事实取舍：**不写 sag / Ernst / SENS /
+  NJ / J / geomErr / STAGE 占位**；无契约时写
+  `KIND=none STATUS=not_applicable` + `ERROR=no_length_request`，
+  **不摆空表**。`example_mixed.exe model.dat --length-detail` 把该段
+  写进独立 `<stem>.length.txt`；`--length-detail-only` 求解后直接返回，
+  **不写 `.result`**、不打印结果明细。默认用例不带开关，`.result` /
+  控制台 / 37 个黄金基线**逐位不变**；
+  `tests/regression/compare_regression.py` 的 CASES 不加该算例、基线不刷新。
+- 验证：`mingw32-make -C build -j4` rc=0；`ctest` 7/7（含
+  `dat_byte_regression` 37/37）。新算例 `verify_length_2d.dat`
+  （两端固定单根 CABLE + 非零 `ISTRN`，使闭式初值不直接命中）以
+  `Lu = 10/(1+T*/EA−istrn)` 为**闭式解 oracle**：首轮残差
+  `0.04 = EA·istrn/T*`，真实迭代 3 轮收敛到 `3.83e-13`，
+  `Lu = 9.952229299 m`、`N = T* = 1e6 N`。
+- 口径：过程量只说明数值如何收敛、不是规范意义上的设计合格判定；
+  2D `[LENGTH2D]` 不等于 3D 三层迭代已移植，`[OPT]` 在 2D 仍没有
+  对应力学、不造占位。BridgeStudio 侧 `length_2d.py` 只解析、不重算、
+  不补零，下料长度由内核迭代求出。
+
 ### 新增：2D 内层 Newton 逐迭代过程量段（`--newton-detail` / `--newton-detail-only`，opt-in）
 
 - 第十一次（B2「三层迭代过程量」）**只闭环内层 Newton 一层**。只读调研

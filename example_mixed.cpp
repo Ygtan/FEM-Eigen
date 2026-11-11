@@ -1,6 +1,7 @@
 #include "fem_2d.hpp"
 #include "prestress_loss_output_2d.hpp"
 #include "newton_output_2d.hpp"
+#include "cable_length_output_2d.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -59,6 +60,8 @@ static int runMixed(int argc, char** argv) {
     bool lossDetailOnly = false;
     bool newtonDetail = false;
     bool newtonDetailOnly = false;
+    bool lengthDetail = false;
+    bool lengthDetailOnly = false;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--solver") {
@@ -74,6 +77,10 @@ static int runMixed(int argc, char** argv) {
             newtonDetail = true;
         } else if (a == "--newton-detail-only") {
             newtonDetailOnly = true;
+        } else if (a == "--length-detail") {
+            lengthDetail = true;
+        } else if (a == "--length-detail-only") {
+            lengthDetailOnly = true;
         } else {
             path = a;
         }
@@ -127,6 +134,24 @@ static int runMixed(int argc, char** argv) {
 
     double solveMs = 0.0;
     const ModelResult r = timedSolve(model, solverType, solveMs);
+
+    // opt-in：单独写一份 2D 平面索长闭合过程量 [LENGTH2D]，不碰 .result /
+    // 控制台 / 默认黄金基线。迭代函数用 model 的副本逐轮改 Lu 并重跑求解，
+    // 不改变本次主求解 r；段里的 Lu 只是诊断产物，不写回主结果、不改 .dat。
+    // --length-detail-only 求解后直接返回：不写 .result、不打印结果明细，
+    // 供前处理在已有主结果（含施工阶段 example_stage.exe）之外单独调用，
+    // 避免覆盖主求解的 .result。
+    if (lengthDetail || lengthDetailOnly) {
+        const LengthIterationResult2D lr = iterateCableLength2D(model, solverType);
+        std::string lgPath = path;
+        const std::size_t q = lgPath.rfind(".dat");
+        if (q != std::string::npos && q + 4 == lgPath.size())
+            lgPath = lgPath.substr(0, q);
+        lgPath += ".length.txt";
+        std::ofstream lgOut(lgPath);
+        lgOut << formatCableLengthSection2D(lr);
+    }
+    if (lengthDetailOnly) return 0;
 
     // opt-in：单独写一份逐迭代 Newton 过程量，不碰 .result / 控制台 /
     // 默认黄金基线。过程量必须求解后才有，故放在 timedSolve 之后；
