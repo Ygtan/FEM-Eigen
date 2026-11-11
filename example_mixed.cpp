@@ -1,5 +1,6 @@
 #include "fem_2d.hpp"
 #include "prestress_loss_output_2d.hpp"
+#include "newton_output_2d.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -56,6 +57,8 @@ static int runMixed(int argc, char** argv) {
     bool compare = false;
     bool lossDetail = false;
     bool lossDetailOnly = false;
+    bool newtonDetail = false;
+    bool newtonDetailOnly = false;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--solver") {
@@ -67,6 +70,10 @@ static int runMixed(int argc, char** argv) {
             lossDetail = true;
         } else if (a == "--loss-detail-only") {
             lossDetailOnly = true;
+        } else if (a == "--newton-detail") {
+            newtonDetail = true;
+        } else if (a == "--newton-detail-only") {
+            newtonDetailOnly = true;
         } else {
             path = a;
         }
@@ -120,6 +127,23 @@ static int runMixed(int argc, char** argv) {
 
     double solveMs = 0.0;
     const ModelResult r = timedSolve(model, solverType, solveMs);
+
+    // opt-in：单独写一份逐迭代 Newton 过程量，不碰 .result / 控制台 /
+    // 默认黄金基线。过程量必须求解后才有，故放在 timedSolve 之后；
+    // --newton-detail-only 求解后直接返回：不写 .result、不打印结果明细，
+    // 供前处理在已有主结果（含施工阶段 example_stage.exe）之外单独调用，
+    // 避免覆盖主求解的 .result。
+    if (newtonDetail || newtonDetailOnly) {
+        std::string ntPath = path;
+        const std::size_t q = ntPath.rfind(".dat");
+        if (q != std::string::npos && q + 4 == ntPath.size())
+            ntPath = ntPath.substr(0, q);
+        ntPath += ".newton.txt";
+        std::ofstream ntOut(ntPath);
+        ntOut << formatNewtonSection2D(r.newtonTrace);
+    }
+    if (newtonDetailOnly) return 0;
+
     const std::vector<ElementForce> forces = elementForces2D(model, r.U);
     std::vector<ElementStress> stresses;
     bool hasStress = true;

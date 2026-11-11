@@ -244,6 +244,30 @@ NODES=1,2,3 DOF=2 CODE=JTG_D60
 - 只有引用了表的束才写 `stage prestress loss` 结果段（σl1~σl6、σpe、RATIO，12 位有效数字）；只给一个总损失比的束不产生这段。σl3/σl5/σl6 属后期损失，不进 σpe，也不进等效荷载的 `Pe = P·(σpe/σcon)`。
 - 二维分项损失明细（**opt-in，默认关闭**，第十次）：`example_mixed.exe model.dat --loss-detail` 把 `[PRESTRESSLOSS2D]` 段写进 `<stem>.loss.txt`，字段 `NPRESTRESS=<n> BASIS=2d_global` 与 `P<id> SIGMA_CON= SL1=..SL6= SPE= RATIO=` 同 3D 段、12 位有效数字；实现见 `prestress_loss_output_2d.hpp::formatPrestressLossSection2D`，只读 `Model2D::prestressLossDetails`，公式唯一来源仍是 `computePrestressLosses()`，不重算。`--loss-detail-only` **只取明细、不求解、不写 `.result`**，供已有施工阶段结果的主路径之外单独调用（避免覆盖 `.result`）。2D 非阶段束不属于任何施工阶段，段里**不设 `STAGE` 占位、不造阶段号**，`P<id>` 是输入行首的显式束号；不等于 3D 的阶段分项损失。没有 `LOSSREF` 束时写 `ERROR=no_lossref_prestress`，不摆空表、不补零。两个开关都不改 `.result` / 控制台，默认输出逐位不变、回归黄金基线不刷新；BridgeStudio 侧 `prestress_loss_2d.py` 只解析、不现算、不反算。
 
+- 二维内层 Newton 逐迭代过程量（**opt-in，默认关闭**，第十一次）：
+  `example_mixed.exe model.dat --newton-detail` 把 `[NEWTON2D]` 段写进
+  `<stem>.newton.txt`，`--newton-detail-only` 求解后只写明细、不写 `.result`
+  （过程量必须求解后才有，与 `--loss-detail-only` 的「不求解只取明细」不同），
+  供已有施工阶段主结果之外单独调用。段格式见
+  `newton_output_2d.hpp::formatNewtonSection2D()`：
+  `BASIS=2d_global`、`KIND/STATUS`、头部 `NSTEP NITER MAXITER TOL CONVERGED
+  RESFIRST RESLAST LINECUTS STEPREFINE LOADRATIO`、逐迭代
+  `S <loadStep> <iter> <lambda> <|R|> <|du|> <|Fext|> <alpha> <lineCuts>
+  <converged>`，`setprecision(10)` 与 3D `[NEWTON]` 段同源。实现只在
+  `fem_2d.cpp::solveModel2DNonlinear` 的循环里 `push_back` **已经算出**的量，
+  残差判据、位移增量判据、线搜索、收敛与荷载步细分计算一字未改；2D 用
+  直接求解故**不写 `REFACT`**（无符号分解重建），只有一个 tol 同时管残差与
+  位移增量故**写 `TOL` 不拆 `TOLF`/`TOLD`**，没有阶段维度故**不设阶段占位**。
+  `|du|=0` 表示该次迭代残差已达标、未求解增量，是事实值不是补零。
+  只对 `*ANALYSIS TYPE=NONLINEAR` 的模型产生过程量；线性模型写
+  `ERROR=no_newton_solution`，不摆空表、不输出零行冒充收敛。两个开关都不改
+  `.result` / 控制台，默认输出逐位不变、回归黄金基线不刷新。
+  **2D 内核没有 `[LENGTH]` 索长 / 几何闭合迭代与 `[OPT]` 带约束成桥索力优化
+  两层力学**（连输入契约都没有），本段只覆盖内层 Newton，不等于 3D 的
+  `[OPT]` → `[LENGTH]` → `[NEWTON]` 三层迭代已移植到 2D；过程量只说明数值
+  如何收敛，规范没有 Newton 迭代轮数的合格限值，**不是规范合格判定**。
+  BridgeStudio 侧 `newton_2d.py` 只解析、不重算 `K·ΔU=R`、不补零。
+
 ### 9.8 索长迭代与制造线形几何闭合（`cable_solver`）
 
 成桥态索承体系有两条**互不等价**的外层迭代，由 `.dat` 的 `MODE=` 选择，

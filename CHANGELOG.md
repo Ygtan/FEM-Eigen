@@ -4,6 +4,47 @@
 
 ## 2026-11-11
 
+### 新增：2D 内层 Newton 逐迭代过程量段（`--newton-detail` / `--newton-detail-only`，opt-in）
+
+- 第十一次（B2「三层迭代过程量」）**只闭环内层 Newton 一层**。只读调研
+  确认：2D 内核有 `*ANALYSIS TYPE=NONLINEAR` 的方案C Newton-Raphson
+  （`fem_2d.cpp::solveModel2DNonlinear`），但逐迭代的 `dU` / `alpha` /
+  `lamTarget` / `Fint` / `Fext` 全是局部变量用完即丢，`writeResult()` 只写
+  5 个纯文本段；`[LENGTH]` 索长 / 几何闭合迭代与 `[OPT]` 带约束成桥索力
+  优化在 2D **连输入契约都没有、内核根本没算**（无 `OPTIMIZE=` / `L0=`
+  迭代 / 影响矩阵 / 体系守卫）。本轮**不新造力学、不写不适用段占位**：
+  两格能力边界继续如实标 `2D=N`，Python 侧也不得从位移反推过程量。
+- `fem_2d.hpp` 新增 `NewtonStep2D` / `NewtonTrace2D`，`ModelResult` 挂
+  `newtonTrace` 字段；`fem_2d.cpp` 的 Newton 循环里只做 `push_back` 留痕，
+  **判据 `resRef = tol*max(1,|Fext|)`、`duOk`、`alpha` 线搜索、收敛与荷载
+  步细分计算一字未改**，三个求解入口签名都不动。残差已达标、本步未求解
+  增量时 `|du|=0` 是事实值，不是补零冒充。
+- 新增 `newton_output_2d.hpp::formatNewtonSection2D()` 写独立 `[NEWTON2D]`
+  段：`BASIS=2d_global`、`KIND/STATUS`、头部 `NSTEP NITER MAXITER TOL
+  CONVERGED RESFIRST RESLAST LINECUTS STEPREFINE LOADRATIO`、逐迭代
+  `S <loadStep> <iter> <lambda> <|R|> <|du|> <|Fext|> <alpha> <lineCuts>
+  <converged>`，`setprecision(10)` 与 3D `[NEWTON]` 同源。字段按 2D 事实
+  取舍：2D 用直接求解、**不写 `REFACT`**（无符号分解重建）；只有一个 tol
+  同时管残差与位移增量、**写 `TOL` 不拆 `TOLF`/`TOLD`**；主算例没有阶段
+  维度、**不设阶段占位、不造阶段号**。无 Newton 迭代时写
+  `ERROR=no_newton_solution`，不摆空表、不输出零行冒充收敛。
+- `example_mixed.exe model.dat --newton-detail` 把该段写进独立
+  `<stem>.newton.txt`，`.result` / 控制台 / 默认黄金基线**逐位不变**；
+  `--newton-detail-only` 求解后直接返回，不写 `.result`、不打印结果明细，
+  供前处理在 `example_stage.exe` 主路径之外单独调用（避免覆盖主结果）。
+  过程量必须求解后才有，与 `--loss-detail-only` 的「不求解只取明细」不同。
+  `tests/regression/compare_regression.py` 的默认用例不带新开关、基线不刷新。
+- 口径：**过程量只说明数值如何收敛，不是规范意义上的设计合格判定**
+  （规范没有 Newton 迭代轮数的合格限值）；本段只覆盖内层 Newton，
+  **不等于 3D 的 `[OPT]` → `[LENGTH]` → `[NEWTON]` 三层迭代已移植到 2D**。
+  BridgeStudio 侧 `newton_2d.py` 只解析、不重算 `K·ΔU=R`。
+- 验证：`mingw32-make -C build -j4` rc=0；`ctest` 7/7（含
+  `dat_byte_regression`）；`verify_cable_nonlinear.dat` 默认 / opt-in
+  `.result` 逐位一致，`[NEWTON2D]` 出 3 条 `S` 行（|R| 2000 →
+  0.2497499531 → 1.180023901e-08，末行收敛），`--newton-detail-only`
+  不写 `.result`；线性算例 `verify_prestress_loss.dat` 如实写
+  `ERROR=no_newton_solution`。
+
 ### 新增：2D 分项预应力损失明细段（`--loss-detail` / `--loss-detail-only`，opt-in）
 
 - 第十次（B2）：`prestress_loss.hpp::computePrestressLosses()` 的六项公式本来

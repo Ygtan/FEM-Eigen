@@ -739,6 +739,41 @@ void processTimeEffects(Model2D& m,
 //   2) 旧风格（*ELEMENT, TYPE=..., E=..., A=... 内联模板），保持兼容。
 Model2D readModel2D(const std::string& path) ;
 
+// ==================== 方案C Newton 逐迭代过程量（opt-in 留痕） ====================
+//
+// 只记录 solveModel2DNonlinear 循环里已经算出的量，**不参与任何判据 / 步长 /
+// 线搜索 / 收敛计算**；与 3D 的 NewtonStep3D / NewtonTrace3D 同构，但字段按
+// 2D 事实取舍，不把 3D 的列照抄成 0：
+//   * 2D 用稠密/直接求解，没有「符号分解重建」概念，故不设 refactor；
+//   * 2D 只有一个容差 tol（同时管残差判据与位移增量判据），故不拆 TOLF/TOLD；
+//   * 2D 主算例没有阶段维度，故不设 STAGE 占位、不凭空造阶段号。
+// 默认不带 opt-in 开关时这些容器只占内存，写出的 .result 逐位不变。
+struct NewtonStep2D {
+    int loadStep = 0;        // 荷载分级步序号，从 1 起
+    int iter = 0;            // 步内 Newton 迭代序号，从 1 起
+    double lambda = 0.0;     // 本步目标荷载比例 lamTarget
+    double residual = 0.0;   // |R|（自由自由度残差范数，力 N）
+    double du = 0.0;         // 本次施加的 |alpha*dU|（m）；残差已达标、未解增量时为 0
+    double ref = 0.0;        // |Fext|（自由自由度外力范数，力 N）
+    double alpha = 1.0;      // 线搜索最终步长；未启用/未折减为 1
+    int lineSearchCuts = 0;  // 本次迭代线搜索折半次数
+    bool converged = false;  // 本迭代后该荷载步收敛并退出
+};
+
+struct NewtonTrace2D {
+    int loadSteps = 0;
+    int maxIter = 0;
+    double tol = 0.0;
+    bool converged = false;
+    double initialResidual = 0.0;
+    double lastResidual = 0.0;
+    double loadRatio = 0.0;
+    int lineSearchCuts = 0;
+    int stepRefinements = 0;
+    std::string failureReason;
+    std::vector<NewtonStep2D> steps;
+};
+
 struct ModelResult {
     DenseVec U;                        // 位移（按 [u,v,θ] 每节点排列）
     DenseVec R;                        // 反力 = K0*U - F0
@@ -747,6 +782,8 @@ struct ModelResult {
     int nonlinearIterations = 0;       // 方案C Newton 迭代次数（线性分析为 0）
     double nonlinearResidual = 0.0;    // 方案C 收敛时自由残差范数（线性分析为 0）
     bool nonlinearConverged = true;    // 方案C 是否收敛（关闭 throwOnFailure 时可能为 false）
+    // opt-in 逐迭代过程量：线性分析时 steps 为空，不补零、不摆空表。
+    NewtonTrace2D newtonTrace;
 };
 
 // ==================== 方案C Newton 的诊断信息 ====================

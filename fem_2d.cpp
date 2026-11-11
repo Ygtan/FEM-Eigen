@@ -1993,6 +1993,10 @@ ModelResult solveModel2DNonlinear(const Model2D& m,
         }
     }
 
+    // opt-in 过程量留痕：循环里只 push_back 已经算出的量，不参与任何判据 /
+    // 步长 / 线搜索 / 收敛计算；不带 --newton-detail 时 .result 逐位不变。
+    NewtonTrace2D trace;
+
     // ---- 外层：荷载分级；内层：Newton-Raphson ----
     const int nSteps = std::max(1, m.nonlinearLoadSteps);
     double lam = 0.0;                           // 已成功施加的荷载比例
@@ -2016,6 +2020,8 @@ ModelResult solveModel2DNonlinear(const Model2D& m,
         int stepIter = 0;
 
         for (int iter = 0; iter <= maxIter; ++iter) {
+            NewtonStep2D step;
+            const int cutsBefore = diag.lineSearchCuts;
             std::vector<Eigen::Triplet<double>> triplets;
             assembleState(active, U, Fint, Fext, &triplets);
             if (!m.ces.empty()) {
@@ -2048,6 +2054,11 @@ ModelResult solveModel2DNonlinear(const Model2D& m,
             const double fFree = std::sqrt(fFree2);
             const double resRef = tol * std::max(1.0, fFree);
             stepIter = iter + 1;
+            step.loadStep = diag.loadSteps + 1;
+            step.iter = iter + 1;
+            step.lambda = lamTarget;
+            step.residual = rFree;
+            step.ref = fFree;
 
             diag.residualHistory.push_back(rFree);
             diag.lastResidual = rFree;
@@ -2073,7 +2084,13 @@ ModelResult solveModel2DNonlinear(const Model2D& m,
             }
 
             // 残差判据：当前构形已平衡，无需再解增量。
-            if (rFree <= resRef) { stepOk = true; break; }
+            if (rFree <= resRef) {
+                // 残差已达标：本步没有求解增量，|du|=0 是事实，不是补零冒充。
+                step.converged = true;
+                trace.steps.push_back(step);
+                stepOk = true;
+                break;
+            }
 
             // 求解增量：Kt·ΔU = Fext - Fint。
             // Newton 迭代中切线矩阵的**非零结构恒定**，只有数值在变，
@@ -2089,6 +2106,7 @@ ModelResult solveModel2DNonlinear(const Model2D& m,
             }
             if (!dU.allFinite()) {
                 diag.failureReason = "切线方程解出非有限增量 ΔU（矩阵奇异或严重病态）";
+                trace.steps.push_back(step);
                 break;
             }
 
@@ -2110,6 +2128,10 @@ ModelResult solveModel2DNonlinear(const Model2D& m,
                 }
             }
 
+            step.alpha = alpha;
+            step.lineSearchCuts = diag.lineSearchCuts - cutsBefore;
+            step.du = alpha * dU.norm();
+
             U = Ubest;
 
             // 依据新构形更新 cable/strut 激活状态。
@@ -2124,10 +2146,18 @@ ModelResult solveModel2DNonlinear(const Model2D& m,
             if (!U.allFinite() ||
                 (diag.initialResidual > 0.0 && rBest > 1e8 * diag.initialResidual)) {
                 diag.failureReason = "残差发散（超过初始残差的 1e8 倍）";
+                trace.steps.push_back(step);
                 break;
             }
 
-            if (!statusChanged && duOk && resOk) { stepOk = true; break; }
+            if (!statusChanged && duOk && resOk) {
+                step.converged = true;
+                trace.steps.push_back(step);
+                stepOk = true;
+                break;
+            }
+            // 本迭代未退出：如实留痕（converged=0）。上面每个 break 都已单独记录。
+            trace.steps.push_back(step);
         }
 
         finalIter += stepIter;
@@ -2181,6 +2211,17 @@ ModelResult solveModel2DNonlinear(const Model2D& m,
     result.nonlinearIterations = finalIter;
     result.nonlinearResidual = finalResidual;
     result.nonlinearConverged = converged;
+    trace.loadSteps = diag.loadSteps;
+    trace.maxIter = maxIter;
+    trace.tol = tol;
+    trace.converged = converged;
+    trace.initialResidual = diag.initialResidual;
+    trace.lastResidual = finalResidual;
+    trace.loadRatio = lam;
+    trace.lineSearchCuts = diag.lineSearchCuts;
+    trace.stepRefinements = diag.stepRefinements;
+    trace.failureReason = diag.failureReason;
+    result.newtonTrace = trace;
     if (diagOut) *diagOut = diag;
     return result;
 }
