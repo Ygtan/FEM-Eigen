@@ -242,6 +242,7 @@ NODES=1,2,3 DOF=2 CODE=JTG_D60
 - 已对照正式条文核对 σl1~σl6 系数。仍为简化式的是：σl2 曲线筋按附录 G 的反摩擦影响未实现（仅直线筋 ΣΔl/l·Ep）；σl6 的 εcs、φ 需由用户按附录 C 计算后输入，程序不自动算收缩/徐变随龄期发展。
 - **2D / 3D 同源**：`parsePrestressLossLine()` 是两边共用的唯一键名映射，`computePrestressLosses()` 是唯一公式。2D 用 `*PRESTRESS ... LOSSREF=<编号>` 引用；3D 用 `*STAGE ... PRESTRESS=<elems>:P=...:E=...:LOSSREF=<编号>` 引用（只在关键字模式可用，与 `LOSS=` 互斥）。3D 侧 `resolvePrestressLosses3D()` 在整份文件读完后把 `σpe/σcon` 写回 `loss`，所以表写在 `*STAGE` 前后都行；没解析过就直接求解会报错，不静默用 1.0。格式与边界见 `input_format_3d.md`「阶段预应力分项损失」。
 - 只有引用了表的束才写 `stage prestress loss` 结果段（σl1~σl6、σpe、RATIO，12 位有效数字）；只给一个总损失比的束不产生这段。σl3/σl5/σl6 属后期损失，不进 σpe，也不进等效荷载的 `Pe = P·(σpe/σcon)`。
+- 二维分项损失明细（**opt-in，默认关闭**，第十次）：`example_mixed.exe model.dat --loss-detail` 把 `[PRESTRESSLOSS2D]` 段写进 `<stem>.loss.txt`，字段 `NPRESTRESS=<n> BASIS=2d_global` 与 `P<id> SIGMA_CON= SL1=..SL6= SPE= RATIO=` 同 3D 段、12 位有效数字；实现见 `prestress_loss_output_2d.hpp::formatPrestressLossSection2D`，只读 `Model2D::prestressLossDetails`，公式唯一来源仍是 `computePrestressLosses()`，不重算。`--loss-detail-only` **只取明细、不求解、不写 `.result`**，供已有施工阶段结果的主路径之外单独调用（避免覆盖 `.result`）。2D 非阶段束不属于任何施工阶段，段里**不设 `STAGE` 占位、不造阶段号**，`P<id>` 是输入行首的显式束号；不等于 3D 的阶段分项损失。没有 `LOSSREF` 束时写 `ERROR=no_lossref_prestress`，不摆空表、不补零。两个开关都不改 `.result` / 控制台，默认输出逐位不变、回归黄金基线不刷新；BridgeStudio 侧 `prestress_loss_2d.py` 只解析、不现算、不反算。
 
 ### 9.8 索长迭代与制造线形几何闭合（`cable_solver`）
 

@@ -1,8 +1,10 @@
 #include "fem_2d.hpp"
+#include "prestress_loss_output_2d.hpp"
 
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <string>
@@ -52,6 +54,8 @@ static int runMixed(int argc, char** argv) {
     std::string path = "mixed_truss_beam.dat";
     SolverType solverType = SolverType::SimplicialLDLT;
     bool compare = false;
+    bool lossDetail = false;
+    bool lossDetailOnly = false;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--solver") {
@@ -59,6 +63,10 @@ static int runMixed(int argc, char** argv) {
             solverType = parseSolver(argv[++i]);
         } else if (a == "--compare") {
             compare = true;
+        } else if (a == "--loss-detail") {
+            lossDetail = true;
+        } else if (a == "--loss-detail-only") {
+            lossDetailOnly = true;
         } else {
             path = a;
         }
@@ -66,6 +74,21 @@ static int runMixed(int argc, char** argv) {
 
     const Model2D model = readModel2D(path);
     const std::string title = model.title.empty() ? path : model.title;
+
+    // opt-in：单独写一份分项损失明细，不碰 .result / 控制台 / 默认黄金基线。
+    // 明细只读 readModel2D 的 LOSSREF 结果，不依赖求解，故放在求解之前。
+    // --loss-detail-only 只取明细、不求解也不写 .result，供前处理在已有
+    // 施工阶段结果之外单独调用，避免覆盖主求解的 .result。
+    if (lossDetail || lossDetailOnly) {
+        std::string lossPath = path;
+        const std::size_t q = lossPath.rfind(".dat");
+        if (q != std::string::npos && q + 4 == lossPath.size())
+            lossPath = lossPath.substr(0, q);
+        lossPath += ".loss.txt";
+        std::ofstream lossOut(lossPath);
+        lossOut << formatPrestressLossSection2D(model);
+    }
+    if (lossDetailOnly) return 0;
 
     if (compare) {
         const SolverType solvers[] = {

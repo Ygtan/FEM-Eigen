@@ -15,6 +15,7 @@
 #include <map>
 #include <sstream>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -141,6 +142,10 @@ struct Model2D {
     };
     std::vector<Prestress> prestresses;
     std::map<int, PrestressLossInput> prestressLosses;   // *PRESTRESS_LOSS 表
+    // opt-in 分项损失明细：(束号, σl1~σl6/σpe, σcon)。只由 LOSSREF 路径填充，
+    // 与 effectivePrestressRatio 共用 computePrestressLosses 唯一公式；
+    // 求解数值路径一字不改，明细仅供 --loss-detail 结果段写出。
+    std::vector<std::tuple<int, PrestressLossResult, double>> prestressLossDetails;
 
     struct InfluenceRequest {
         int id = 0;

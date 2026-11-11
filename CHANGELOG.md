@@ -4,6 +4,38 @@
 
 ## 2026-11-11
 
+### 新增：2D 分项预应力损失明细段（`--loss-detail` / `--loss-detail-only`，opt-in）
+
+- 第十次（B2）：`prestress_loss.hpp::computePrestressLosses()` 的六项公式本来
+  就被 2D 调用，但 `fem_2d.cpp::processPrestress` 只取
+  `effectivePrestressRatio()` 标量，`PrestressLossResult` 当场丢弃，2D 状态层
+  没有可写的明细容器。本轮在 `Model2D` 增加 `prestressLossDetails`（每次
+  `processPrestress` 先清空、再按 `LOSSREF` 束重建），
+  `loss = effectivePrestressRatio(...)` 一行一字不动——明细是**另取一份
+  同源结果**，不改任何数值路径。
+- 新增 `prestress_loss_output_2d.hpp::formatPrestressLossSection2D()` 写
+  `[PRESTRESSLOSS2D]` 段：`NPRESTRESS=<n> BASIS=2d_global`、`NOTE=`、
+  `P<id> SIGMA_CON= SL1=..SL6= SPE= RATIO=`，字段 / 顺序 / 单位（Pa，
+  RATIO 无量纲）/ 12 位有效数字与 3D `stage prestress loss` 段同源。
+  **2D 没有阶段维度**：不设 `STAGE` 占位、不凭空造阶段号；只收录
+  `LOSSREF` 束，只给 `LOSS=` 的束不输出一堆 0 冒充「各项损失为 0」；
+  没有引用时写 `ERROR=no_lossref_prestress`，不摆空表。
+- `example_mixed.exe model.dat --loss-detail` 把该段写进 `<stem>.loss.txt`；
+  `--loss-detail-only` 在求解前 return，**不求解、不写 `.result`**，供前处理
+  在 `example_stage.exe` 主路径之外单独取明细。两个开关都不改 `.result` /
+  控制台输出，`tests/regression/compare_regression.py` 的
+  `verify_prestress_loss.dat` 默认用例不带开关、黄金基线不刷新；默认输出
+  **逐位不变**。函数只读 `m.prestressLossDetails`，不重算力学量。
+- 口径：σpe 后张 = σcon−σl1−σl2−σl4、先张 = σcon−σl2；σl3/σl5/σl6 是
+  后期损失，不进 σpe 也不进等效荷载 `Pe = P·(σpe/σcon)`；σl2 只按直线筋，
+  σl6 的 εcs / φ 需按附录 C 查表输入。Python 侧只解析、不现算、不补零
+  （见 BridgeStudio `prestress_loss_2d.py`）。
+- 验证：`cmake --build build --target example_mixed` rc=0；`ctest` 7/7
+  （含 `dat_byte_regression` 37/37）；默认 `.result` 与黄金基线规范化后
+  逐位一致；opt-in 段与 3D 官方示例数值逐位一致
+  （`SL1=87790888.5885 … RATIO=0.820782595059`）；`--loss-detail-only`
+  不写 `.result` 且与 `--loss-detail` 的明细逐位一致。
+
 ### 新增：2D 模态明细段（`--modal-detail`，opt-in）
 
 - `modal_output_2d.hpp::formatModalSection2D(model, modal)` 把内核**已经算出**的

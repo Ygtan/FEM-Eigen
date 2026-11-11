@@ -485,6 +485,8 @@ DenseVec elementExternalEquivalentLoad(const Model2D& m, const Model2D::Element&
 }
 
 void processPrestress(Model2D& m) {
+    // 每次重建：readModel2D 与阶段求解都会调用本函数，不能累加出重复明细。
+    m.prestressLossDetails.clear();
     if (m.prestresses.empty()) return;
 
     // 预建单元索引，避免 getElem 的 O(n) 线性扫描。
@@ -525,6 +527,12 @@ void processPrestress(Model2D& m) {
                 throw std::runtime_error("*PRESTRESS LOSSREF 引用了不存在的 *PRESTRESS_LOSS: "
                                          + std::to_string(ps.lossRef));
             loss = effectivePrestressRatio(lit->second);
+            // 分项明细：与上面的有效比同一次公式（computePrestressLosses），
+            // 只把 effectivePrestressRatio 丢掉的中间量留下来。loss 行与 Pe
+            // 一字不改；明细不参与任何求解，只供 --loss-detail 结果段写出。
+            const PrestressLossResult detail = computePrestressLosses(lit->second);
+            m.prestressLossDetails.push_back(
+                std::make_tuple(ps.id, detail, lit->second.sigmaCon));
         }
         const double Pe = ps.P * loss;
 
