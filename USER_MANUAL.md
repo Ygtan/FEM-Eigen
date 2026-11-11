@@ -225,6 +225,7 @@ NODES=1,2,3 DOF=2 CODE=JTG_D60
 ### 9.5 自振频率 / 屈曲 / 冲击系数
 
 - 二维：`example_modal.exe model.dat`（`computeNaturalFrequencies2D`、`computeBucklingFactors2D`、`impactCoefficientFromFrequency`）。
+- 二维模态明细（**opt-in，默认关闭**）：`example_modal.exe model.dat --modal-detail` 在 `<stem>.modal.txt` 末尾追加 `[MODAL2D]` 段，给出各阶周期 `T=1/f`、X/Y 两向有效参与质量 `Γ_d²/(φᵀMφ)`、各节点三自由度振型分量。实现见 `modal_output_2d.hpp`，与 3D `modal_output_3d.hpp` 同构、不求解新特征值。方向口径为 `BASIS=xy`：2D 每节点 3 dof（1=u 水平、2=v 竖向、3=θz 转角），**没有出平面自由度，故不设 Z 向参与质量（不是 0）**；θz 只作振型展示、不设参与质量。不加开关时 `.modal.txt` 与控制台输出逐字节不变，回归黄金基线无需刷新；`NMODES=0`、振型缺失或维度不符写 `ERROR=`，不摆空表、不补零。
 - 三维：`example_3d_modal.exe model.dat`（`computeNaturalFrequencies3D`、`computeBucklingFactors3D`）。质量矩阵需在 `*MP` 给 `DENS`（或 `*R` 给 `ADDMASS`）。
 - 自振频率默认走稀疏 shift-invert 特征求解、屈曲走稀疏 Lanczos（`A=L⁻¹KgL⁻ᵀ` 的最大 |μ|，μ<0 对应屈曲模态，λ=-1/μ），均基于 `external/spectra/` 头文件库，大模型从稠密的 O(n³) 降为近似 O(n·k)，几千自由度可秒级完成；若稀疏求解未收敛或分解失败会自动回退稠密求解，结果一致。
 

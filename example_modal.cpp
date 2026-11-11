@@ -1,4 +1,5 @@
 #include "fem_2d.hpp"
+#include "modal_output_2d.hpp"
 
 #include <fstream>
 #include <iomanip>
@@ -12,6 +13,12 @@ int main(int argc, char** argv) {
     try {
         std::string path = "verify_modal.dat";
         if (argc > 1) path = argv[1];
+        // opt-in：只有显式带 --modal-detail 才在 .modal.txt 末尾追加
+        // [MODAL2D] 明细段。不带开关时文件与控制台输出逐字节不变，
+        // compare_regression.py 的 verify_modal.modal.txt 黄金基线不刷新。
+        bool detail = false;
+        for (int a = 2; a < argc; ++a)
+            if (std::string(argv[a]) == "--modal-detail") detail = true;
         const Model2D model = readModel2D(path);
 
         const ModalResult2D modal = computeNaturalFrequencies2D(model, 6);
@@ -37,6 +44,7 @@ int main(int argc, char** argv) {
         emit(std::cout);
         std::ofstream out(path.substr(0, path.rfind(".dat")) + ".modal.txt");
         emit(out);
+        if (detail) out << formatModalSection2D(model, modal);
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "错误: " << e.what() << "\n";

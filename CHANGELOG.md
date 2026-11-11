@@ -2,6 +2,32 @@
 
 本文件记录 FEM-Eigen 项目的新增功能和主要修改内容。
 
+## 2026-11-11
+
+### 新增：2D 模态明细段（`--modal-detail`，opt-in）
+
+- `modal_output_2d.hpp::formatModalSection2D(model, modal)` 把内核**已经算出**的
+  `ModalResult2D.modes` 与 `assembleMassMatrix2D()` 重建的同一份 M 写成
+  `[MODAL2D]` 段：`NMODES/NDOF/BASIS=xy`、`NOTE`、`MASS X/Y`、
+  `F <i> <f_Hz> <T_s> <mx> <my> <mnorm>`、`S <i> <node> <ux> <uy> <theta>`。
+  公式 `Γ_d = φᵀMr_d`、`eff_d = Γ_d²/(φᵀMφ)`、`mtot_d = r_dᵀMr_d` 与
+  `modal_output_3d.hpp::formatModalSection3D` 逐项同构；**不求解新特征值**，
+  不重算 K/M，不改 `.dat` 解析，不动静力 / 活载数值路径。
+- 方向口径按用户拍板 `BASIS=xy`：2D 每节点 3 dof（1=u 水平、2=v 竖向、
+  3=θz 转角），刚体平动只有 X/Y 两向；2D 无出平面自由度，**不设 Z 向
+  参与质量（不存在，不是 0，不写 mz、不补零）**；θz 只作振型分量展示，
+  不设参与质量。周期 `T=1/f` 由内核写出，BridgeStudio 侧只解析、不得现算。
+- `example_modal.exe model.dat --modal-detail` 才在 `<stem>.modal.txt` 末尾
+  追加该段；**不带开关时文件与控制台输出逐字节不变**，
+  `tests/regression/baselines/verify_modal.modal.txt` 黄金基线不刷新。
+  段头以 `[` 开头、置于既有两个 `==` 段之后，既有 2D 解析器零污染。
+- 不静默：`nm==0` / 缺振型向量 / 振型维度与 `NDOF` 不符，写 `ERROR=`
+  而不摆空表或补零。
+- 验证：`cmake --build build --target example_modal` rc=0；
+  `ctest --output-on-failure` 7/7（含 `dat_byte_regression`）；
+  opt-in 段冒烟实测 6 阶 / 11 节点 / 66 行振型、`T=1/f`、`mnorm≈1`、
+  Σmx/MASS X≈94.9%、Σmy/MASS Y≈81.1%（6 阶截断判据，如实写出）。
+
 ## 2026-11-10
 
 ### 实现：3D 阶段预应力分项损失（JTG 3362-2018 §6.2）
