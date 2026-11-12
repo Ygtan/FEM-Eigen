@@ -86,7 +86,7 @@ python tests/regression/compare_regression.py --freeze --bin build --src . --bas
 | 材料 | `*MP`（`E`/`ALPX`/`DENS`） | `*MP`（`E`/`DENS`） |
 | 实常数 | `*R`（`A`/`I`/`WT`/`WB`/`H` 等） | `*R`（`A`/`IY`/`IZ`/`J`/`G`/`WT`/`WB`/`WY`/`WTORS`/`IW`/`ADDMASS` 等） |
 | 自由度 | 每节点 3 个：u、v、θ | 每节点 6 个：u、v、w、θx、θy、θz（`BEAM7` 为 7 个，多一个翘曲率 φ） |
-| 索长 / 目标索力 opt-in 段 | `*CABLE_LENGTH2D` → `[LENGTH2D]`（2D 平面索长闭合，无垂度线性杆；`[OPT]` 仍没有对应力学） | `*CABLE_BRIDGE` 的 `OPTIMIZE=` / `MODE=TENSION` 或 `MODE=COMPLETION` → `[OPT]` / `[LENGTH]` |
+| 索长 / 目标索力 opt-in 段 | `*CABLE_LENGTH2D` → `[LENGTH2D]`（2D 平面索长闭合，无垂度线性杆）；`*CABLE_OPT2D` → `[OPT2D]`（平面索力优化，MINMAXM + 显式索力箱，仍不等于 3D `[OPT]`） | `*CABLE_BRIDGE` 的 `OPTIMIZE=` / `MODE=TENSION` 或 `MODE=COMPLETION` → `[OPT]` / `[LENGTH]` |
 
 预处理宏（二维）：`*FILL a b`（等分生成节点）、`*DO … *ENDDO`（循环）。
 
@@ -265,8 +265,10 @@ NODES=1,2,3 DOF=2 CODE=JTG_D60
   `.result` / 控制台，默认输出逐位不变、回归黄金基线不刷新。
   **第十三次起，2D 已有 opt-in 的 `[LENGTH2D]` 平面索长闭合一层力学**
   （`*CABLE_LENGTH2D` 契约、无垂度线性杆、中心有限差分 Jacobian + LM 阻尼
-  最小二乘，见 §9.8 末的二维子节）；**`[OPT]` 带约束成桥索力优化仍没有
-  对应力学、不造占位**。本段只覆盖内层 Newton，2D 的 `[LENGTH2D]` 也
+  最小二乘，见 §9.8 末的二维子节）；**第十四次起再有 opt-in 的
+  `[OPT2D]` 平面索力优化一层力学**（`*CABLE_OPT2D` 契约、只 `MINMAXM`
+  + 显式索力箱、仍 `P ≠ Y` 且不等于 3D `[OPT]`，见 §9.8 末二维子节）。
+  本段只覆盖内层 Newton，2D 的 `[LENGTH2D]` / `[OPT2D]` 两层也
   **不等于 3D 的 `[OPT]` → `[LENGTH]` → `[NEWTON]` 三层迭代已移植到 2D**
   （2D 没有 3D 的垂度 / Ernst 等效模量 / 共转成桥态 / 闭式影响矩阵
   `J=M·D`）；过程量只说明数值如何收敛，规范没有 Newton 迭代轮数的
@@ -419,14 +421,74 @@ Newton    (I + G_full)·δ = -(ΔX + u)，G_full = du/dX
   默认不带开关时 `.result` / 控制台 / 37 个黄金基线逐位不变、不刷新。
 - **与 3D 的物理差异**：2D 是平面无垂度线性杆，没有 3D 的垂度 /
   Ernst 等效模量 / 共转成桥态 / 制造线形预抬高 / 闭式影响矩阵 /
-  `[OPT]`→`[LENGTH]`→`[NEWTON]` 三层迭代；`[OPT]` 在 2D 仍没有
-  对应力学。过程量只说明数值如何收敛，**不是规范合格判定**。
-  BridgeStudio 侧 `length_2d.py` 只解析、不重算、不补零。
+  `[OPT]`→`[LENGTH]`→`[NEWTON]` 三层迭代。第十四次起 2D 另有 opt-in
+  `[OPT2D]` 平面索力优化一层（见下节），但 2D 仍无 `SYSGUARD` /
+  `MINENERGY` / `J=M·D` 闭式影响矩阵，仍不等于 3D `[OPT]`。过程量只
+  说明数值如何收敛，**不是规范合格判定**。BridgeStudio 侧
+  `length_2d.py` 只解析、不重算、不补零。
+
+#### 二维 opt-in `[OPT2D]`：平面索力优化（第十四次）
+
+> 上面 §9.8 正文与 §9.9 全部是 **3D 专属**（影响矩阵 `J=M·D`、
+> `SYSGUARD` 三判据、`MODE=COMPLETION` 制造线形、垂度 / Ernst 等效
+> 模量）。第十四次起 2D 在 `[LENGTH2D]` 之外再有一套**独立、opt-in**
+> 的平面索力优化，物理与算法都不等于 3D，只做 `[OPT2D]` **一层**。
+
+- **输入契约**：`*CABLE_OPT2D`
+  ```text
+  *CABLE_OPT2D
+  OPT2D=1 TMIN=200000 TMAX=1500000 TOL=1e-7 MAXITER=120 IRLS=4 ROUNDTOL=1e-5
+  2 1000000
+  M 1 1
+  ```
+  参数行 `OPT2D=1` 开启、`TMIN` / `TMAX` 是**必填显式索力箱**
+  （`0<TMIN<TMAX`、`BND_SRC=USER`，缺一写
+  `ERROR=missing_tension_bounds`、`APPLIED=0`），**绝不猜 3D 的
+  `1.5×RIGID`**；`TOL>0` / `MAXITER>=1` / `IRLS` / `ROUNDTOL>0`
+  控制求解。索行 `<CABLE单元号> <T0_N>`（`T0>0`、必须为 `CABLE`），
+  弯矩行 `M <BEAM单元号> <end=1|2>`（必须为 `BEAM`）。**默认不写该段**，
+  不写时 `[OPT2D]` 段输出 `KIND=none STATUS=not_applicable` +
+  `ERROR=no_opt_request`，不摆空表。
+- **力学口径（用户拍板四项）**：
+  1. 目标只做 `MINMAXM`，最小化**用户显式登记的 `BEAM` 单元端弯矩
+     集合**的 `max|M|`；内核不自动识别「主梁」、不补零；**不做
+     `MINENERGY`**（2D 无裸结构弯曲应变能柔度 `Fm` / 影响矩阵）。
+  2. 约束只做显式索力箱 `TMIN` / `TMAX`；2D 无 `DECKLOAD` / 塔顶
+     `ΣT·cos` / `SYSGUARD` 三判据，**不造占位**。
+  3. 变量 `x=T/Tscale`，经 `Lu(x)=Lgeom/(1+Tscale·x/EA−istrn)` 落到
+     `[LENGTH2D]` 的无垂度线性杆本构；**中心有限差分 Jacobian +
+     IRLS(p=2/4/8/16) + 投影梯度**，明写「**不是 3D 的 `J=M·D`
+     闭式影响矩阵**」，也**不等于 3D `[OPT]`→`[LENGTH]`→`[NEWTON]`
+     三层迭代**。
+  4. `APPLIED=1` 只表示建议 `T*` 被采纳，命中 `T*` 属 `[LENGTH2D]`
+     职责；`[OPT2D]` 只定目标、**不写回 `.dat` / `.result`**；`T` 行
+     只是过程量不能当设计索力；峰值不降写 `objective_not_improved` /
+     `APPLIED=0`；结构柔性使 `Nfinal ≠ T*`。
+- **CLI 与输出**：`example_mixed.exe <dat> --opt-detail` 写
+  `<stem>.opt.txt` 的 `[OPT2D]` 段；`--opt-detail-only` 求解后返回、
+  **不写 `.result`**。段字段按 2D 事实取舍：`I` 行（逐 IRLS 轮 `p` /
+  `max|M|` / 投影梯度步）、`T` 行（每索 `T` / `TMIN` / `TMAX` /
+  `BND_SRC`）、`M` 行（每个登记梁端 `M`），及 `STATUS` / `CONVERGED` /
+  `CONVBY` / `APPLIED` / `REJECT` 摘要字段；不写 sag / Ernst / SENS /
+  NJ / J / geomErr / STAGE 占位。
+- **验证与零污染**：`ctest` 7/7（含 `dat_byte_regression` 37/37），
+  编译 rc=0。正例 `verify_opt_2d.dat`：`T*=TMIN=200000`、
+  `MPEAK0=1304347.826`、`MPEAK=260869.5652`、`APPLIED=1`、
+  `CONVERGED=1`；负例 `verify_opt_2d_negative.dat`：
+  `objective_not_improved` / `APPLIED=0`。默认 `.dat` / 默认
+  `.result` / 默认 HTML 逐位不变、12 格 `DEFAULT_DAT_SHA` 不刷新、
+  37 个黄金基线不刷新，双层 opt-in 默认全关。
+- **能力边界**：该格 `2D=P` 仍 `P ≠ Y`，2D 缺 `SYSGUARD` /
+  `MINENERGY` / 影响矩阵 / 垂度 / Ernst / 共转成桥态 / 三维制造线形，
+  **不等于 3D `[OPT]`**；BridgeStudio 侧 `opt_2d.py` 只解析、不重算、
+  不补零，`verify_opt_2d.py` 守卫由用户另行编写。
 
 ### 9.9 带约束成桥目标索力优化（`OPTIMIZE=1`）
 
-**本节是 3D 专属**：2D `[OPT]` 带约束成桥目标索力优化仍没有对应力学、
-不造占位（2D 只有 §9.8 末的 opt-in `[LENGTH2D]` 平面索长闭合一层）。
+**本节是 3D 专属**：2D 已有 opt-in `[LENGTH2D]` 与 `[OPT2D]` 两层，
+但都不等于 3D `[OPT]`→`[LENGTH]`→`[NEWTON]` 三层迭代（2D 无
+`SYSGUARD` / `MINENERGY` / `J=M·D` 闭式影响矩阵 / 垂度 / Ernst /
+共转成桥态 / 三维制造线形；`[OPT2D]` 仍 `P ≠ Y`）。
 
 `METHOD=RIGID` 与 `METHOD=MINENERGY` 是「按一个固定准则直接算一组索力」；
 本节是「给定可行域，求一组更优的索力」。默认 `OPTIMIZE=0` **完全不进入

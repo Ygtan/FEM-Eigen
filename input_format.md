@@ -324,13 +324,68 @@ LENGTH2D=1 TOLT=1e-6 MAXLENITER=20
   （`ERRKIND=tension_rel`，无量纲），不掺线形闭合 / `geomErr` 判据。
 - **这是 2D 一层平面索长闭合，不等于 3D 的 `[OPT]` → `[LENGTH]` →
   `[NEWTON]` 三层迭代**：没有垂度 / Ernst 等效模量 / 共转成桥态 /
-  闭式影响矩阵 `J=M·D` / 制造线形预抬高；`[OPT]` 带约束目标索力优化
-  在 2D 仍没有对应力学、不造占位。
+  闭式影响矩阵 `J=M·D` / 制造线形预抬高。第十四次起另有 opt-in
+  `[OPT2D]` 平面索力优化一层（见 §6.6，只 `MINMAXM` + 显式索力箱），
+  但 2D 仍无 `SYSGUARD` / `MINENERGY` / `J=M·D` 闭式影响矩阵，
+  仍不等于 3D `[OPT]`。
 - 结果由 `example_mixed.exe <dat> --length-detail[-only]` 写入
   `<stem>.length.txt` 的 `[LENGTH2D]` 段（`--length-detail-only`
   求解后返回、不写 `.result`）；段字段按 2D 事实取舍，不写
   sag / Ernst / SENS / NJ / J / geomErr / STAGE 占位。详见
   `USER_MANUAL.md` §9.8 末的二维子节。
+
+### 6.6 `*CABLE_OPT2D` —— 2D 平面索力优化（opt-in，第十四次）
+
+按 opt-in 给若干 `CABLE` 单元登记**待优化索**及其显式索力箱
+`TMIN` / `TMAX`，并显式登记纳入目标函数的 `BEAM` 单元端弯矩，由 2D
+内核求一组建议索力 `T*` 使登记弯矩的 `max|M|` 最小。第十四次起该段
+与 §6.5 的 `[LENGTH2D]` 并列为 2D 两层独立、opt-in 力学；默认**不写
+该段**，不写时走原有本构、`.result` 与控制台逐位不变，结果文件写
+`KIND=none STATUS=not_applicable` + `ERROR=no_opt_request`，不摆空表。
+
+```text
+*CABLE_OPT2D
+OPT2D=1 TMIN=200000 TMAX=1500000 TOL=1e-7 MAXITER=120 IRLS=4 ROUNDTOL=1e-5
+2 1000000
+M 1 1
+```
+
+- 参数行（段内第一行）：`OPT2D=1` 开启本段；`TMIN` / `TMAX` 是
+  **必填的显式索力箱**（`0<TMIN<TMAX`、`BND_SRC=USER`），缺一写
+  `ERROR=missing_tension_bounds`、`APPLIED=0`；**绝不猜 3D 的
+  `1.5×RIGID`**。`TOL>0` 为收敛容差、`MAXITER>=1` 为投影梯度最大
+  轮数、`IRLS` 为 IRLS 指数序列 `p=2/4/8/16` 的档数、`ROUNDTOL>0`
+  为解取整容差。
+- 索行：每行 `<CABLE单元号> <名义初值T0_N>`，单元必须是已定义的
+  `CABLE`、`T0>0`；可逐行列出多根待优化索。
+- 弯矩行：每行 `M <BEAM单元号> <end>`，`end∈{1,2}` 指定取该 `BEAM`
+  单元的哪一端弯矩；单元必须已定义且类型为 `BEAM`。**内核只把用户
+  显式登记的这些梁端弯矩纳入 `max|M|`，不自动识别「主梁」、不补零**。
+- 目标只做 `MINMAXM`（最小化登记弯矩集合的 `max|M|`）；**不做
+  `MINENERGY`**（2D 无裸结构弯曲应变能柔度 `Fm` / 影响矩阵）。变量是
+  无量纲名义索力 `x=T/Tscale`，经
+  `Lu(x)=Lgeom/(1+Tscale·x/EA−istrn)` 落到 §6.5 的无垂度线性杆本构；
+  用**中心有限差分 Jacobian + IRLS(p=2/4/8/16) + 投影梯度**求解，
+  **不是 3D 的 `J=M·D` 闭式影响矩阵**，也不等于 3D
+  `[OPT]`→`[LENGTH]`→`[NEWTON]` 三层迭代。
+- 结果由 `example_mixed.exe <dat> --opt-detail[-only]` 写入
+  `<stem>.opt.txt` 的 `[OPT2D]` 段（`--opt-detail-only` 求解后返回、
+  不写 `.result`）。段按 2D 事实取舍：`I` 行逐 IRLS 轮写 `p` /
+  `max|M|` / 梯度步，`T` 行逐索写建议 `T` / `TMIN` / `TMAX` /
+  `BND_SRC`，`M` 行逐个登记梁端写 `M`，摘要字段写 `STATUS` /
+  `CONVERGED` / `CONVBY` / `APPLIED` / `REJECT`。`APPLIED=1` 只表示
+  建议 `T*` 被采纳，命中 `T*` 属 §6.5 `[LENGTH2D]` 职责；`T` 行只是
+  过程量、不能当设计索力，`[OPT2D]` **不写回 `.dat` / `.result`**；
+  峰值不降写 `objective_not_improved` / `APPLIED=0`；结构柔性使
+  `Nfinal ≠ T*`。详见 `USER_MANUAL.md` §9.8 末的二维子节。
+- **5 条能力边界**（如实保留，不得虚报）：① 只 `MINMAXM` + 显式
+  `BEAM` 端弯矩集合，无 `MINENERGY` / 影响矩阵 / 自动主梁识别；
+  ② 只显式索力箱 `TMIN` / `TMAX`，无 2D `DECKLOAD` / 塔顶
+  `ΣT·cos` / `SYSGUARD` 三判据、不造占位；③ 中心有限差分 Jacobian
+  + IRLS + 投影梯度，不是 3D `J=M·D` 闭式影响矩阵、不等于 3D 三层
+  迭代；④ 无垂度 / Ernst 等效模量 / 共转成桥态 / 三维制造线形；
+  ⑤ `APPLIED=1` 只采纳建议值、不命中 `T*`、不写回，能力矩阵该格
+  `2D=P` 仍 `P ≠ Y`、不等于 3D `[OPT]`。
 
 ## 7. 约束与荷载（编号支持 `a-b` 区间）
 
@@ -850,6 +905,7 @@ TYPE=STRESS   单元应力目标
 - `*DO`：`step ≠ 0`，方向一致，且必须有匹配的 `*ENDDO`。
 - `*ANALYSIS`：`TYPE` 只能为 `LINEAR` 或 `NONLINEAR`；`TOL > 0`；`MAXITER ≥ 1`。
 - `*CABLE_LENGTH2D`（`LENGTH2D=1` 时）：`TOLT > 0`、`MAXLENITER ≥ 1`；每条目标行引用的单元必须已定义且类型为 `CABLE`，其 `EA > 0`（材料 `E` 与实常数 `A` 均为正）、几何弦长 `L > 0`、目标索力 `T* > 0`（单位 N）；`Lu` 由内核迭代求出，不要求输入。未开启或缺段时不校验、不摆空表。
+- `*CABLE_OPT2D`（`OPT2D=1` 时）：`0 < TMIN < TMAX`（`TMIN` / `TMAX` 必填，缺一写 `ERROR=missing_tension_bounds`）、`TOL > 0`、`MAXITER ≥ 1`、`IRLS ≥ 1`、`ROUNDTOL > 0`；每条索行引用的单元必须已定义且类型为 `CABLE`、名义初值 `T0 > 0`；每条 `M` 行引用的单元必须已定义且类型为 `BEAM`，`end` 只能为 `1` 或 `2`；未开启或缺段时不校验、不摆空表。
 - `*PRESTRESS`：`P > 0`、`LOSS > 0`、`EPS > 0`；`ELEM` 必须按顺序连续且均为 `BEAM`；
   `METHOD=TENDON` 或 `AUTO` 在非线性分析下还需要 `APS/AP > 0`。
 - `*INFLUENCE`：`DISP/REACTION` 需要 `node dof`；`FORCE/STRESS` 需要 `elem component end`。

@@ -2,6 +2,61 @@
 
 本文件记录 FEM-Eigen 项目的新增功能和主要修改内容。
 
+## 2026-11-12
+
+### 新增：2D 平面索力优化 [OPT2D] 段（`--opt-detail` / `--opt-detail-only`，opt-in）
+
+- 第十四次（B2「2D 平面索力优化 [OPT2D] 一层」）是 2D **首次新造第二层
+  力学**：第十三次已新造 `[LENGTH2D]` 平面索长闭合一层，本轮在其无垂度
+  线性杆本构之上再新造 `[OPT2D]` 平面索力优化一层。第十一次「本轮不新造
+  力学」、第十三次「`[OPT]` 在 2D 仍不做、仍标 `2D=N`、不造占位」都是
+  当时的历史事实记录，一字不改、仍予保留；**自第十四次起该结论已被
+  `[OPT2D]` 取代**：能力矩阵该格 `2D=N` → `2D=P`，但仍 `P ≠ Y`。
+- 用户拍板的力学口径（逐条如实落到内核与文档）：
+  1. **目标**：只做 `MINMAXM`，最小化**用户显式登记的 `BEAM` 单元端弯矩
+     集合**的 `max|M|`；内核不自动识别「主梁」、不补零；**不做
+     `MINENERGY`**（2D 无裸结构弯曲应变能柔度 `Fm` / 影响矩阵）。
+  2. **约束**：只做**显式索力箱** `TMIN` / `TMAX`（必填、
+     `0<TMIN<TMAX`、`BND_SRC=USER`），缺一写 `ERROR=missing_tension_bounds`；
+     **绝不猜 3D 的 `1.5×RIGID`**；2D 无 `DECKLOAD` / 塔顶 `ΣT·cos` /
+     `SYSGUARD` 三判据，**不造占位**。
+  3. **算法**：变量是无量纲名义索力 `x=T/Tscale`，经
+     `Lu(x)=Lgeom/(1+Tscale·x/EA−istrn)` 落到第十三次无垂度线性杆本构；
+     **中心有限差分 Jacobian + IRLS(p=2/4/8/16) + 投影梯度**。段内明写
+     「**不是 3D 的 `J=M·D` 闭式影响矩阵**」，也**不等于 3D
+     `[OPT]`→`[LENGTH]`→`[NEWTON]` 三层迭代**。
+  4. **写回边界**：`APPLIED=1` 只表示建议 `T*` 被采纳，命中 `T*` 属
+     `[LENGTH2D]` 职责；`[OPT2D]` 只定目标、**不写回 `.dat` / `.result`**；
+     `T` 行只是过程量不能当设计索力；峰值不降写
+     `objective_not_improved` / `APPLIED=0`。`Nfinal ≠ T*`：结构柔性使
+     `Lu(T)` 闭式只是近似。
+- 新增输入段 `*CABLE_OPT2D`：参数行
+  `OPT2D=1 TMIN=... TMAX=... TOL=... MAXITER=... IRLS=... ROUNDTOL=...`
+  + 逐行 `<CABLE单元号> <T0_N>` 显式登记待优化索 + 逐行
+  `M <BEAM单元号> <end=1|2>` 显式登记纳入 `max|M|` 的梁端弯矩。
+  `fem_2d.cpp::iterateCableOpt2D()` 求建议索力 `T*`，不做命中。
+- 新增 `cable_opt_output_2d.hpp` 写 `[OPT2D]` 段，字段按 2D 事实取舍：
+  `I` 行（逐 IRLS 轮 `p` / `max|M|` / 投影梯度步）、`T` 行（每索
+  `T` / `TMIN` / `TMAX` / `BND_SRC`）、`M` 行（每个登记梁端 `M`），
+  及 `STATUS` / `CONVERGED` / `CONVBY` / `APPLIED` / `REJECT` 摘要字段；
+  无契约时写 `ERROR=no_opt_request`，**不摆空表**。
+  `example_mixed.exe <dat> --opt-detail` 把该段写进独立
+  `<stem>.opt.txt`；`--opt-detail-only` 求解后直接返回、
+  **不写 `.result`**、不打印结果明细。
+- 验证：`mingw32-make -C build -j4` rc=0；`ctest` 7/7（含
+  `dat_byte_regression` 37/37）。两个新算例：`verify_opt_2d.dat`
+  正例 `T*=TMIN=200000`、`MPEAK0=1304347.826`、
+  `MPEAK=260869.5652`、`APPLIED=1`、`CONVERGED=1`；
+  `verify_opt_2d_negative.dat` 负例 `objective_not_improved` /
+  `APPLIED=0`。**三条零污染证据通过**：默认 `.dat` / 默认 `.result` /
+  默认 HTML 逐位不变，12 格 `DEFAULT_DAT_SHA` 不刷新，37 个黄金基线
+  不刷新；双层 opt-in 默认全关。
+- 口径：`[OPT2D]` 是 2D opt-in 平面索力优化一层，**不等于 3D `[OPT]`**
+  （2D 仍缺 `SYSGUARD` / `MINENERGY` / 影响矩阵 / 垂度 / Ernst /
+  共转成桥态 / 三维制造线形），能力矩阵 `2D=P` 不是 `Y`。
+  BridgeStudio 侧 `opt_2d.py` 只解析、不重算、不补零，
+  `verify_opt_2d.py` 守卫由用户另行编写。
+
 ## 2026-11-11
 
 ### 新增：2D 平面索长闭合 [LENGTH2D] 段（`--length-detail` / `--length-detail-only`，opt-in）
