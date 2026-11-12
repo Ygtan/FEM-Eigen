@@ -1,0 +1,40 @@
+# 2D 平面索力优化 [OPT2D] 峰值不降负例（闭式 oracle）
+# 与 verify_opt_2d.dat 同一结构 / 同一 T0=1e6，仅把显式索力箱整体抬到
+# T0 之上：TMIN=1200000 TMAX=1500000。min max|M| 只能把名义索力压到
+# 下界 T*=TMIN=1.2e6（已高于 T0=1e6），根部 |M1| 相对 T0 起点不降反升。
+# 闭式：T* = TMIN = 1200000 N，Lu* = 5/(1+6e-3) = 4.970178926... m；
+#       起点 Lu0 = 5/1.005 = 4.975124378... m。
+# 期望守卫 mpeakFinal > mpeak0*(1+1e-6) => STATUS=objective_not_improved、
+# APPLIED=0、REJECT=objective_not_improved；T 行只是过程量，不能当设计索力。
+# 本用例只用 --opt-detail[-only] 显式调用，不进 compare_regression.py 的
+# 默认 CASES，黄金基线不刷新。
+*TITLE
+2D cable force opt negative oracle (peak not reduced)
+*NODE
+1 0.0 0.0
+2 10.0 0.0
+3 10.0 5.0
+*ET
+1 BEAM
+2 CABLE
+*MP
+1 E=2.0e11
+*R
+1 A=0.01 I=1.0e-2 WT=1.0e-3 WB=1.0e-3
+2 A=0.001
+*TYPE,1
+*MAT,1
+*REAL,1
+*EN,1,1,2
+*TYPE,2
+*MAT,1
+*REAL,2
+*EN,2,3,2
+*BOUNDARY
+1 1-3 0.0
+3 1-3 0.0
+*CABLE_OPT2D
+OPT2D=1 TMIN=1200000 TMAX=1500000 TOL=1e-7 MAXITER=120 IRLS=4 ROUNDTOL=1e-5
+2 1000000
+M 1 1
+*END

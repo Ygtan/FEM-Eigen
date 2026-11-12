@@ -1301,6 +1301,64 @@ Model2D readModel2D(const std::string& path) {
                 m.lengthEnabled = true;
                 m.lengthTargets.push_back({elem, target});
             }
+        } else if (section == "*CABLE_OPT2D") {
+            // opt-in 2D 平面索力优化 [OPT2D] 输入契约。段内三种行：
+            //   OPT2D=1 TMIN=.. TMAX=.. TOL=.. MAXITER=.. IRLS=.. ROUNDTOL=..
+            //   <CABLE单元号> <初始名义索力T0_N>   （数字开头，逐索 T0）
+            //   M <BEAM单元号> <端号1|2>           （M 开头，显式登记端弯矩）
+            // 这里只解析契约、填 Model2D 字段，不做任何力学 / 语义校验；
+            // 校验与求解都在 iterateCableOpt2D()，非法一律写结构化 ERROR=，
+            // 不摆空表、不静默兜底。不写该段时 readModel2D 完全不进入这里，
+            // 默认 .dat / .result 与既有黄金基线逐位不变。
+            const std::string first = detail::toUpper(
+                t.substr(0, t.find_first_of(" \t=,")));
+            if (first == "OPT2D" || first == "TMIN" || first == "TMAX" ||
+                first == "TOL" || first == "MAXITER" || first == "IRLS" ||
+                first == "ROUNDTOL") {
+                std::string args = t;
+                std::replace(args.begin(), args.end(), ',', ' ');
+                const auto p = detail::parseKeyValues(args);
+                auto it = p.find("OPT2D");
+                if (it != p.end()) {
+                    const std::string s = detail::toUpper(it->second);
+                    if (s == "ON" || s == "1" || s == "TRUE" || s == "YES")
+                        m.optEnabled = true;
+                    else if (s == "OFF" || s == "0" || s == "FALSE" || s == "NO")
+                        m.optEnabled = false;
+                    else
+                        throw std::runtime_error("*CABLE_OPT2D OPT2D 只能为 0/1");
+                } else {
+                    m.optEnabled = true; // 写了参数行即显式启用
+                }
+                it = p.find("TMIN");
+                if (it != p.end()) m.optTMin = std::stod(it->second);
+                it = p.find("TMAX");
+                if (it != p.end()) m.optTMax = std::stod(it->second);
+                it = p.find("TOL");
+                if (it != p.end()) m.optTol = std::stod(it->second);
+                it = p.find("MAXITER");
+                if (it != p.end()) m.optMaxIter = std::stoi(it->second);
+                it = p.find("IRLS");
+                if (it != p.end()) m.optItersMax = std::stoi(it->second);
+                it = p.find("ROUNDTOL");
+                if (it != p.end()) m.optRoundTol = std::stod(it->second);
+            } else if (first == "M") {
+                // M 登记行：M <BEAM单元号> <端号1|2>
+                std::string tag;
+                int elem = 0, end = 0;
+                if (!(ss >> tag >> elem >> end))
+                    throw std::runtime_error("*CABLE_OPT2D M 登记行格式错误: " + t);
+                m.optEnabled = true;
+                m.optMoments.push_back(Model2D::OptMoment{elem, end});
+            } else {
+                // 逐索行：<CABLE单元号> <初始名义索力T0_N>（数字开头）
+                int elem = 0;
+                double t0 = 0.0;
+                if (!(ss >> elem >> t0))
+                    throw std::runtime_error("*CABLE_OPT2D 逐索行格式错误: " + t);
+                m.optEnabled = true;
+                m.optTargets.push_back(Model2D::OptTarget{elem, t0});
+            }
         } else if (section == "*INFLUENCE") {
             int id = 0;
             std::string kind;
@@ -3386,6 +3444,361 @@ LengthIterationResult2D iterateCableLength2D(const Model2D& m, SolverType type) 
         c.Lgeom = Lgeom[k];
         c.EA = EA[k];
         out.cables.push_back(c);
+    }
+    return out;
+}
+
+// 第十四次新造 2D 力学：按 *CABLE_OPT2D 契约最小化「用户显式登记的 BEAM
+// 端弯矩集合」的 max|M|（MINMAXM）。变量是各索无量纲名义索力 x=T/Tscale，
+// 经下料长度 Lu(x) 落到第十三次本构 N=EA·((L-Lu)/Lu+istrn)，每轮 eval
+// 都完整重跑 2D 求解取实测 M/N。
+//   * 目标：只做 MINMAXM，无裸结构弯曲应变能柔度 Fm，不做 MINENERGY；
+//     内核不识别主梁、不补零，登记什么算什么。
+//   * 约束：只做显式索力箱 TMIN/TMAX（BND_SRC=USER）；2D 无 DECKLOAD /
+//     塔顶 ΣT·cos / SYSGUARD 三判据的数据源，不造占位。
+//   * 敏感度：中心有限差分 Jacobian + IRLS(p=2/4/8/16) + 投影梯度，
+//     不是 3D 的 J=M·D 闭式影响矩阵。
+//   * 不写回主模型 / .dat / .result：APPLIED=1 只表示 T* 是建议值，命中
+//     T* 属 [LENGTH2D] 职责，[OPT2D] 只负责定目标，不等于 3D 的
+//     [OPT]→[LENGTH]→[NEWTON] 三层迭代。
+// 默认不带契约 / 契约非法 / 求解失败一律返回结构化 ERROR，不摆空表。
+CableOptResult2D iterateCableOpt2D(const Model2D& m, SolverType type) {
+    CableOptResult2D out;
+    out.maxIter = m.optMaxIter;
+    out.irlsMax = m.optItersMax;
+    out.tol = m.optTol;
+    out.roundTol = m.optRoundTol;
+    out.tmin = m.optTMin;
+    out.tmax = m.optTMax;
+
+    // 没有 *CABLE_OPT2D 契约：内核没有算过任何优化，不摆空表。
+    if (!m.optEnabled) {
+        out.status = "not_applicable";
+        out.kind = "none";
+        out.error = "no_opt_request";
+        return out;
+    }
+
+    out.enabled = true;
+    out.kind = "plane_cable_force_opt";
+    out.ncables = static_cast<int>(m.optTargets.size());
+    out.nmoments = static_cast<int>(m.optMoments.size());
+
+    // ---- 契约校验：缺上界 / 缺登记 / 非法单元 / 非法参数一律写结构化
+    // ERROR=，绝不猜参数、不静默兜底、不摆空表。----
+    // 缺显式索力上/下界优先（口径 2：绝不猜 3D 的 1.5×RIGID）。
+    if (!(m.optTMin > 0.0 && m.optTMax > 0.0)) {
+        out.status = "invalid_contract";
+        out.error = "missing_tension_bounds";
+        return out;
+    }
+    if (!(m.optTMin < m.optTMax) || !(m.optTol > 0.0) ||
+        m.optMaxIter < 1 || m.optItersMax < 1 || !(m.optRoundTol > 0.0)) {
+        out.status = "invalid_contract";
+        out.error = "bad_bounds";
+        return out;
+    }
+    if (out.ncables < 1) {
+        out.status = "invalid_contract";
+        out.error = "no_cables";
+        return out;
+    }
+    if (out.nmoments < 1) {
+        out.status = "invalid_contract";
+        out.error = "no_moments";
+        return out;
+    }
+
+    const int nc = out.ncables, nm = out.nmoments;
+
+    // 逐索：单元存在 / CABLE / EA>0 / 弦长>0 / T0>0，并记录几何量。
+    std::vector<int> elemIndex(nc, -1);
+    std::vector<double> Lgeom(nc, 0.0), EA(nc, 0.0), istrn(nc, 0.0), T0(nc, 0.0);
+    for (int k = 0; k < nc; ++k) {
+        const int eid = m.optTargets[k].elem;
+        for (int i = 0; i < static_cast<int>(m.elements.size()); ++i)
+            if (m.elements[i].id == eid) { elemIndex[k] = i; break; }
+        if (elemIndex[k] < 0) {
+            out.status = "invalid_contract"; out.error = "bad_element"; return out;
+        }
+        const Model2D::Element& e = m.elements[elemIndex[k]];
+        if (e.type != "CABLE" || !(e.E > 0.0) || !(e.A > 0.0) || e.conn.size() < 2) {
+            out.status = "invalid_contract"; out.error = "bad_element"; return out;
+        }
+        const auto it1 = m.nodes.find(e.conn[0]);
+        const auto it2 = m.nodes.find(e.conn[1]);
+        if (it1 == m.nodes.end() || it2 == m.nodes.end()) {
+            out.status = "invalid_contract"; out.error = "bad_element"; return out;
+        }
+        Lgeom[k] = (it2->second - it1->second).norm();
+        if (!(Lgeom[k] > 0.0)) {
+            out.status = "invalid_contract"; out.error = "bad_element"; return out;
+        }
+        EA[k] = e.E * e.A;
+        istrn[k] = e.istrn;
+        if (!(m.optTargets[k].t0 > 0.0)) {
+            out.status = "invalid_contract"; out.error = "bad_t0"; return out;
+        }
+        T0[k] = m.optTargets[k].t0;
+    }
+    // M 登记：单元存在 / BEAM / end∈{1,2}。
+    for (int i = 0; i < nm; ++i) {
+        const int eid = m.optMoments[i].elem;
+        const int end = m.optMoments[i].end;
+        bool ok = false;
+        for (int j = 0; j < static_cast<int>(m.elements.size()); ++j) {
+            if (m.elements[j].id == eid) {
+                ok = (m.elements[j].type == "BEAM");
+                break;
+            }
+        }
+        if (!ok || (end != 1 && end != 2)) {
+            out.status = "invalid_contract"; out.error = "bad_element"; return out;
+        }
+    }
+
+    // ---- 步骤 1：尺度、无量纲变量、显式箱 ----
+    double Tscale = 0.0;
+    for (int k = 0; k < nc; ++k) Tscale = std::max(Tscale, T0[k]);
+    const double lox = m.optTMin / Tscale;
+    const double hix = m.optTMax / Tscale;
+    out.Tscale = Tscale;
+
+    // 用户显式给的 T0 起点 x = T0/Tscale：报告基准（MPEAK0 / Lu0 / M0 行）
+    // 与守卫基准都取这里的**实测**峰值。优化可行起点 x0 = clamp(x,lox,hix)
+    // （步骤 1）保证 u=0 落在显式箱内，投影梯度才有可行初始点；ulo/uhi 是
+    // 相对 x0 的 u 箱界。守卫比较「最终实测峰值」与「T0 起点实测峰值」：
+    // 当整个箱都高于 T0（负例）时优化只能把索力抬到 TMIN，最终峰值高于
+    // T0 起点峰值，objective_not_improved 才能被如实捕获，不会被 clamp 抹平。
+    Eigen::VectorXd x(nc), x0(nc), ulo(nc), uhi(nc);
+    for (int k = 0; k < nc; ++k) {
+        x(k) = T0[k] / Tscale;
+        x0(k) = std::min(std::max(x(k), lox), hix); // clamp 到显式索力箱
+        ulo(k) = lox - x0(k);
+        uhi(k) = hix - x0(k);
+    }
+
+    // 步骤 2：下料长度映射 Lu(x)=Lgeom/(1+Tscale*x/EA-istrn)（在本构
+    // N=EA·((L-Lu)/Lu+istrn) 中取 L=Lgeom 反解）；分母<=0 或 Lu<=0 报错。
+    auto LuOf = [&](double xk, int k) -> double {
+        const double denom = 1.0 + Tscale * xk / EA[k] - istrn[k];
+        if (!(denom > 0.0))
+            throw std::runtime_error("*CABLE_OPT2D 下料长度分母非正");
+        const double Lu = Lgeom[k] / denom;
+        if (!(Lu > 0.0))
+            throw std::runtime_error("*CABLE_OPT2D 下料长度非正");
+        return Lu;
+    };
+
+    // 步骤 3：eval(x) 用模型副本改 Lu，完整重跑求解，取实测 N1 与 M1/M2。
+    struct EvalOut { Eigen::VectorXd M, N; };
+    auto eval = [&](const Eigen::VectorXd& xv) -> EvalOut {
+        Model2D mc = m;
+        for (int k = 0; k < nc; ++k)
+            mc.elements[elemIndex[k]].Lu = LuOf(xv(k), k);
+        const ModelResult r = solveModel2D(mc, type);
+        const std::vector<ElementForce> fs = elementForces2D(mc, r.U);
+        Eigen::VectorXd M(nm), N(nc);
+        for (int k = 0; k < nc; ++k) {
+            const int eid = m.optTargets[k].elem;
+            const auto it = std::find_if(fs.begin(), fs.end(),
+                [&](const ElementForce& f) { return f.id == eid; });
+            if (it == fs.end())
+                throw std::runtime_error("*CABLE_OPT2D 求解结果缺索单元内力");
+            N(k) = it->N1; // 实测轴力，取端 1，不做平均加工
+        }
+        for (int i = 0; i < nm; ++i) {
+            const int eid = m.optMoments[i].elem;
+            const auto it = std::find_if(fs.begin(), fs.end(),
+                [&](const ElementForce& f) { return f.id == eid; });
+            if (it == fs.end())
+                throw std::runtime_error("*CABLE_OPT2D 求解结果缺梁单元内力");
+            M(i) = (m.optMoments[i].end == 1) ? it->M1 : it->M2;
+        }
+        return EvalOut{M, N};
+    };
+
+    try {
+        // 步骤 4：T0 起点（x）实测 Mstart 作为报告基准 MPEAK0 / M0 行 /
+        // 守卫基准；优化可行起点 x0 处实测 M0lin 作为线性化基点（u=x-x0）。
+        // 正常契约 T0 落在箱内时 x==x0，二者逐位相同；仅当 T0 落在箱外
+        // （负例）才分离，守卫始终以用户给的 T0 起点为「是否改善」基准。
+        const Eigen::VectorXd Mstart = eval(x).M;
+        const Eigen::VectorXd M0lin = eval(x0).M;
+        out.mpeak0 = Mstart.cwiseAbs().maxCoeff();
+        const double Mscale = std::max(out.mpeak0, 1.0);
+        out.Mscale = Mscale;
+        const Eigen::VectorXd m0hat = M0lin / Mscale;
+
+        // 步骤 5：中心差分敏感度 A(nm×nc)=∂M_i/∂x_j、B(nc×nc)=∂N_k/∂x_j
+        // （每列 2 次 eval，h=1e-6·max(1,|x0_j|)）。B 只用于报告/诊断，
+        // 不强制写进段；这里按口径算出但不写 0 占位。
+        Eigen::MatrixXd A(nm, nc), B(nc, nc);
+        for (int j = 0; j < nc; ++j) {
+            const double h = 1e-6 * std::max(1.0, std::abs(x0(j)));
+            Eigen::VectorXd xp = x0, xm = x0;
+            xp(j) += h;
+            xm(j) -= h;
+            const EvalOut ep = eval(xp), em = eval(xm);
+            for (int i = 0; i < nm; ++i)
+                A(i, j) = (ep.M(i) - em.M(i)) / (2.0 * h);
+            for (int k = 0; k < nc; ++k)
+                B(k, j) = (ep.N(k) - em.N(k)) / (2.0 * h);
+        }
+        (void)B; // B 只诊断，不写进段，禁止 J / SENS / NJ 之类占位
+        const Eigen::MatrixXd Ahat = A / Mscale; // x 无量纲，无需再乘尺度
+
+        // 步骤 6：IRLS(p=2/4/8/16) + 投影梯度，迭代变量 u = x - x0。
+        Eigen::VectorXd u = Eigen::VectorXd::Zero(nc);
+        auto MvOf = [&](const Eigen::VectorXd& uv) -> Eigen::VectorXd {
+            return M0lin + A * uv; // 线性化 Mv = M0 + A·u（基点 x0）
+        };
+        auto fOf = [&](const Eigen::VectorXd& uv, const Eigen::MatrixXd& Q,
+                       const Eigen::VectorXd& q) -> double {
+            return 0.5 * uv.dot(Q * uv) + q.dot(uv);
+        };
+
+        auto solveQP = [&](const Eigen::MatrixXd& Q, const Eigen::VectorXd& q,
+                           int irlsR, int iterCap) -> bool {
+            const Eigen::VectorXd diag = Q.diagonal().cwiseMax(1e-30);
+            bool innerConv = false;
+            double prevMpeakLin = MvOf(u).cwiseAbs().maxCoeff();
+            for (int it = 1; it <= iterCap; ++it) {
+                const Eigen::VectorXd g = Q * u + q;
+                const Eigen::VectorXd d = -g.cwiseQuotient(diag); // 对角预条件
+                const double denom = d.dot(Q * d);
+                double alpha = (denom > 0.0)
+                    ? (-d.dot(g) / denom)
+                    : 1.0 / std::max(1.0, Q.cwiseAbs().maxCoeff());
+                const double f0 = fOf(u, Q, q);
+                Eigen::VectorXd ut;
+                bool ok = false;
+                for (int ls = 0; ls < 40; ++ls) {
+                    ut = (u + alpha * d).cwiseMax(ulo).cwiseMin(uhi);
+                    // 任务口径的标准 Armijo：f(ut) <= f(u)+1e-4·g·(ut-u)。
+                    // ut==u（投影驻点）时右端退化为 f(u)，零步被接受并以
+                    // step_rel=0<TOL 收敛，不摆空表、不强行造下降方向。
+                    const double predicted = g.dot(ut - u);
+                    if (fOf(ut, Q, q) <= f0 + 1e-4 * predicted) {
+                        ok = true; break;
+                    }
+                    alpha *= 0.5;
+                }
+                if (!ok) break; // 已到投影驻点
+                const double step = (ut - u).norm() / std::max(1.0, u.norm());
+                u = ut;
+                ++out.niter;
+                const double ft = fOf(u, Q, q);
+                const double mpeakLin = MvOf(u).cwiseAbs().maxCoeff();
+                const double mrel = std::abs(mpeakLin - prevMpeakLin)
+                                    / std::max(1.0, std::abs(prevMpeakLin));
+                const double jrel = std::abs(ft - f0) / std::max(1.0, std::abs(f0));
+                prevMpeakLin = mpeakLin;
+                OptStep2D st;
+                st.irls = irlsR;
+                st.iter = it;
+                st.objective = ft;
+                st.mpeakLinearized = mpeakLin;
+                st.step = step;
+                out.steps.push_back(st);
+                const bool done = step < m.optTol
+                    || (it > 5 && (mrel < m.optTol || jrel < m.optTol));
+                if (done) { innerConv = true; break; }
+            }
+            return innerConv;
+        };
+
+        bool converged = false;
+        std::string convBy = "none";
+        int irlsDone = 0;
+        for (int r = 0; r < m.optItersMax; ++r) {
+            const Eigen::VectorXd xprev = x0 + u;
+            const double p = 2.0 * std::pow(2.0, r);
+            // 线性化 Mv = M0 + A·u（用当前 u，跨轮延续，不重置）。
+            const Eigen::VectorXd Mv = MvOf(u);
+            const double scale = std::max(Mv.cwiseAbs().maxCoeff(), 1e-9);
+            Eigen::VectorXd w(nm);
+            for (int i = 0; i < nm; ++i)
+                w(i) = std::max(std::pow(std::abs(Mv(i)) / scale, p - 2.0), 1e-6);
+            w /= w.mean();
+            // Q = Ahatᵀ diag(w) Ahat / nm + 1e-9·I；q = Ahatᵀ(w⊙m0hat)/nm。
+            const Eigen::MatrixXd WA = w.asDiagonal() * Ahat;
+            Eigen::MatrixXd Q = (Ahat.transpose() * WA) / nm;
+            Q += Eigen::MatrixXd::Identity(nc, nc) * 1e-9;
+            const Eigen::VectorXd q =
+                (Ahat.transpose() * (w.asDiagonal() * m0hat)) / nm;
+            const bool inner = solveQP(Q, q, r + 1, m.optMaxIter);
+            irlsDone = r + 1;
+            const Eigen::VectorXd xcur = x0 + u;
+            const double round = (xcur - xprev).norm()
+                                 / std::max(1.0, xprev.norm());
+            converged = inner;
+            convBy = inner ? "projected_gradient" : "none";
+            if (round < m.optRoundTol) {
+                converged = true;
+                convBy = "irls_round_stable";
+                break;
+            }
+        }
+        out.irls = irlsDone;
+        out.convBy = convBy;
+        out.converged = (out.convBy != "none"); // 口径 9
+
+        // 步骤 7：最终 x* / T* / Lu*，再跑一次 eval 得实测 Mfinal / Nfinal。
+        const Eigen::VectorXd xstar = x0 + u;
+        Eigen::VectorXd Tstar(nc), Lu0(nc), Lu(nc);
+        for (int k = 0; k < nc; ++k) {
+            Tstar(k) = Tscale * xstar(k);
+            Lu0(k) = LuOf(x(k), k);   // T0 起点的下料长度（报告基准）
+            Lu(k) = LuOf(xstar(k), k);
+        }
+        const EvalOut ef = eval(xstar);
+        out.mpeak = ef.M.cwiseAbs().maxCoeff(); // 实测，非线性化预测
+
+        // 步骤 8/9 + 口径 4：数学守卫与 STATUS / APPLIED / REJECT。
+        if (out.mpeak > out.mpeak0 * (1.0 + 1e-6)) {
+            out.status = "objective_not_improved";
+            out.applied = false;
+            out.reject = "objective_not_improved";
+        } else {
+            out.applied = true;
+            out.reject = "none";
+            out.status = converged ? "ok" : "not_converged";
+        }
+
+        // T 行 / M 行：只格式化已算出的实测 / 建议量，不补零、不重算。
+        for (int k = 0; k < nc; ++k) {
+            OptCable2D c;
+            c.elem = m.optTargets[k].elem;
+            c.t0 = T0[k];
+            c.tstar = Tstar(k);
+            c.nfinal = ef.N(k);
+            c.Lu0 = Lu0(k);
+            c.Lu = Lu(k);
+            c.Lgeom = Lgeom[k];
+            c.EA = EA[k];
+            out.cables.push_back(c);
+        }
+        for (int i = 0; i < nm; ++i) {
+            OptMoment2D mm;
+            mm.elem = m.optMoments[i].elem;
+            mm.end = m.optMoments[i].end;
+            mm.m0 = Mstart(i);       // T0 起点实测端弯矩（MPEAK0 来源）
+            mm.mfinal = ef.M(i);
+            out.moments.push_back(mm);
+        }
+    } catch (const std::exception&) {
+        // 求解失败 / 下料长度非法：一律写结构化 ERROR=，不摆空表、不把
+        // 半成品过程量拼凑成成功结果。
+        out.status = "solve_failed";
+        out.error = "solve_failed";
+        out.applied = false;
+        out.reject = "none";
+        out.converged = false;
+        out.convBy = "none";
+        out.steps.clear();
+        out.cables.clear();
+        out.moments.clear();
     }
     return out;
 }

@@ -104,6 +104,31 @@ struct Model2D {
     double lengthTolT = 1e-6;   // 索力相对偏差 |N/T* - 1| 的收敛容差
     int lengthMaxIter = 20;     // 最大外层迭代轮数
 
+    // ---- opt-in 2D 平面索力优化 [OPT2D] 输入契约（第十四次新造力学）----
+    // 只在 .dat 显式写 *CABLE_OPT2D 时生效；默认不写该段，readModel2D
+    // 不填这组字段，任何既有算例的 .dat / .result 逐位不变。
+    // 与 [LENGTH2D] 不同：[OPT2D] 不写回任何模型字段，只用模型副本改 Lu
+    // 求目标，结果写独立的 <stem>.opt.txt，不进 .result。
+    struct OptTarget {
+        int elem = 0;        // 单元号，必须是 CABLE（只受拉轴向单元）
+        double t0 = 0.0;     // 初始名义索力 T0（N，用户显式给，必须 > 0）
+    };
+    struct OptMoment {
+        int elem = 0;        // 单元号，必须是 BEAM
+        int end = 1;         // 端号 1|2 -> 登记的 M1/M2
+    };
+    std::vector<OptTarget> optTargets;   // 逐索 T0 登记
+    std::vector<OptMoment> optMoments;   // 显式登记的 BEAM 端弯矩集合
+    bool optEnabled = false;
+    // TMIN/TMAX 必填且 0<TMIN<TMAX；默认 0 表示「用户未给」，缺任一即报错，
+    // 绝不猜 3D 的 1.5×RIGID，也不静默兜底。
+    double optTMin = 0.0;
+    double optTMax = 0.0;
+    double optTol = 1e-7;        // 投影梯度收敛容差
+    int optMaxIter = 120;        // 每轮 IRLS 的投影梯度迭代上限（MAXITER）
+    int optItersMax = 4;         // IRLS 最大轮数（IRLSMAX）
+    double optRoundTol = 1e-5;   // 轮间解相对变化收敛判据
+
     struct Constraint {
         int node;
         int dof;    // 1/2/3
@@ -855,6 +880,83 @@ struct LengthIterationResult2D {
 // 长度 Lu，使成桥态索力 N 命中 T*。默认不带该段时返回 no_request，不求解、
 // 不写零行冒充收敛。实现在 fem_2d.cpp，段格式化在 cable_length_output_2d.hpp。
 LengthIterationResult2D iterateCableLength2D(const Model2D& m, SolverType type);
+
+// ==================== opt-in 2D 平面索力优化 [OPT2D] ====================
+//
+// 第十四次新造力学：只做 MINMAXM，目标是「用户显式登记的 BEAM 单元端
+// 弯矩集合」的 max|M|。与 3D 的 [OPT] 同名不同实，字段按 2D 事实取舍：
+//   * 2D 无裸结构弯曲应变能柔度 Fm，不做 MINENERGY；内核不识别主梁、
+//     不补零，登记什么就算什么。
+//   * 约束只做显式索力箱 TMIN/TMAX，BND_SRC=USER；2D 无 DECKLOAD /
+//     塔顶 ΣT·cos / SYSGUARD 三判据的数据源，不造占位。
+//   * 敏感度用中心有限差分 Jacobian + IRLS(p=2/4/8/16) + 投影梯度，
+//     **不是** 3D 的 J=M·D 闭式影响矩阵，故写 JMETHOD=FINITE_DIFFERENCE。
+//   * 优化变量是各索无量纲名义索力 x=T/Tscale，经下料长度 Lu(x) 落到
+//     第十三次本构 N=EA·((L-Lu)/Lu+istrn)，每轮 eval 都完整重跑 2D 求解。
+//   * APPLIED=1 只表示 T* 被采纳为建议值；命中 T* 属 [LENGTH2D] 职责，
+//     [OPT2D] 只负责定目标，不等于 3D 的 [OPT]→[LENGTH]→[NEWTON] 三层迭代；
+//     绝不写回主模型 / .dat / .result。
+// 默认不带契约时返回 not_applicable / ERROR=no_opt_request，不摆空表。
+// 段名带 2D 后缀避免与 3D 的 [OPT] 解析链串段。
+struct OptStep2D {
+    int irls = 0;               // IRLS 轮次（1..）
+    int iter = 0;               // 该轮内投影梯度迭代序号（1..）
+    double objective = 0.0;     // 线性化 IRLS 二次目标 f(u)
+    double mpeakLinearized = 0.0; // 线性化峰值 max|M0 + A·u|（非实测）
+    double step = 0.0;          // 本步相对步长
+};
+
+struct OptCable2D {
+    int elem = 0;
+    double t0 = 0.0;      // 用户显式给的初始名义索力 T0（N）
+    double tstar = 0.0;   // 最终名义索力 T* = Tscale·x*（N，建议值）
+    double nfinal = 0.0;  // 最终实测索力 N1（N）
+    double Lu0 = 0.0;     // 起点下料长度 Lu(x0)（m）
+    double Lu = 0.0;      // 最终下料长度 Lu(x*)（m）
+    double Lgeom = 0.0;   // 几何初始弦长（m）
+    double EA = 0.0;      // E·A（N）
+};
+
+struct OptMoment2D {
+    int elem = 0;
+    int end = 1;
+    double m0 = 0.0;      // 起点实测端弯矩（N·m）
+    double mfinal = 0.0;  // 最终实测端弯矩（N·m）
+};
+
+struct CableOptResult2D {
+    std::string status = "not_applicable"; // ok / not_converged /
+        // objective_not_improved / invalid_contract / solve_failed / not_applicable
+    std::string kind = "none";             // plane_cable_force_opt / none
+    std::string error;                     // 无契约 / 非法契约 / 求解失败的原因码
+    bool enabled = false;
+    int ncables = 0;
+    int nmoments = 0;
+    int niter = 0;         // 跨 IRLS 轮累加的投影梯度迭代总数
+    int irls = 0;          // 实际跑过的 IRLS 轮数
+    int maxIter = 0;       // 每轮投影梯度上限（MAXITER）
+    int irlsMax = 0;       // 契约给的最大轮数（IRLSMAX）
+    double tol = 0.0;
+    double roundTol = 0.0;
+    double Tscale = 0.0;
+    double Mscale = 0.0;
+    bool converged = false;
+    std::string convBy = "none"; // projected_gradient / irls_round_stable / none
+    bool applied = false;
+    std::string reject = "none"; // none / objective_not_improved
+    double tmin = 0.0;
+    double tmax = 0.0;
+    double mpeak0 = 0.0;   // 起点实测 max|M0|（N·m）
+    double mpeak = 0.0;    // 最终实测 max|Mfinal|（N·m，非线性化预测）
+    std::vector<OptStep2D> steps;
+    std::vector<OptCable2D> cables;
+    std::vector<OptMoment2D> moments;
+};
+
+// 唯一力学入口：按 *CABLE_OPT2D 契约对模型副本迭代名义索力，最小化已登记
+// BEAM 端弯矩的 max|M|。不带契约 / 契约非法 / 求解失败均返回结构化 ERROR，
+// 不抛空表。实现在 fem_2d.cpp，段格式化在 cable_opt_output_2d.hpp。
+CableOptResult2D iterateCableOpt2D(const Model2D& m, SolverType type);
 
 // ==================== 方案C Newton 的诊断信息 ====================
 //

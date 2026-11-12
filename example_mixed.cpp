@@ -2,6 +2,7 @@
 #include "prestress_loss_output_2d.hpp"
 #include "newton_output_2d.hpp"
 #include "cable_length_output_2d.hpp"
+#include "cable_opt_output_2d.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -62,6 +63,8 @@ static int runMixed(int argc, char** argv) {
     bool newtonDetailOnly = false;
     bool lengthDetail = false;
     bool lengthDetailOnly = false;
+    bool optDetail = false;
+    bool optDetailOnly = false;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--solver") {
@@ -81,6 +84,10 @@ static int runMixed(int argc, char** argv) {
             lengthDetail = true;
         } else if (a == "--length-detail-only") {
             lengthDetailOnly = true;
+        } else if (a == "--opt-detail") {
+            optDetail = true;
+        } else if (a == "--opt-detail-only") {
+            optDetailOnly = true;
         } else {
             path = a;
         }
@@ -152,6 +159,23 @@ static int runMixed(int argc, char** argv) {
         lgOut << formatCableLengthSection2D(lr);
     }
     if (lengthDetailOnly) return 0;
+
+    // opt-in：单独写一份 2D 平面索力优化过程量 [OPT2D]，不碰 .result /
+    // 控制台 / 默认黄金基线。迭代函数用 model 的副本逐轮改 Lu 并重跑求解，
+    // 不改变本次主求解 r；段里的 T* 只是建议值，不写回主结果、不改 .dat。
+    // --opt-detail-only 在主求解之后直接返回：不写 .result、不打印结果明细，
+    // 与 --length-detail-only 同款，避免覆盖主求解的 .result。
+    if (optDetail || optDetailOnly) {
+        const CableOptResult2D optr = iterateCableOpt2D(model, solverType);
+        std::string opPath = path;
+        const std::size_t q = opPath.rfind(".dat");
+        if (q != std::string::npos && q + 4 == opPath.size())
+            opPath = opPath.substr(0, q);
+        opPath += ".opt.txt";
+        std::ofstream opOut(opPath);
+        opOut << formatCableOptSection2D(optr);
+    }
+    if (optDetailOnly) return 0;
 
     // opt-in：单独写一份逐迭代 Newton 过程量，不碰 .result / 控制台 /
     // 默认黄金基线。过程量必须求解后才有，故放在 timedSolve 之后；
