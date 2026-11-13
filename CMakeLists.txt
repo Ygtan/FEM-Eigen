@@ -242,6 +242,21 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(element_loads_3d_kernel_validation PROPERTIES
         TIMEOUT 600
         LABELS "benchmark")
+
+    # 非线性成桥态 vs ANSYS NLGEOM：CB3D10 由同一 ModelSpec3D 导出
+    # .dat / BEAM4+LINK180+NLGEOM+INISTATE .inp。重跑 cable_solver.exe，
+    # 与冻结自真实 ANSYS 18.0 批处理的 325 项黄金值逐项比对；同时校验
+    # 重跑结果与冻结 *_cable.txt 的一致性。默认离线，不需要 ANSYS 许可，
+    # --live-ansys 可现场重跑归档 APDL 逐格复核 CSV。
+    add_test(NAME nonlinear_ansys_3d_benchmark
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/nonlinear_ansys_3d/compare_nonlinear_ansys_3d.py
+                     --bin ${CMAKE_CURRENT_BINARY_DIR}
+                     --cases ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/nonlinear_ansys_3d/cases
+                     --reference ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/nonlinear_ansys_3d/reference)
+    set_tests_properties(nonlinear_ansys_3d_benchmark PROPERTIES
+        TIMEOUT 900
+        LABELS "benchmark")
 else()
     message(STATUS "未找到 Python3，跳过 .dat 逐字节回归 CTest")
 endif()

@@ -200,6 +200,8 @@ TRUSS 自重算例额外约束了自由端水平自由度，避免零刚度自�
 - ANSYS 侧横向 `SFBEAM` 语义不可靠；GY / LZ 方向由内核闭式解覆盖，不声称 ANSYS 对标。
 - **纯竖直 BEAM** 的局部 y 轴默认规则在 FEM-Eigen 与 ANSYS 之间差 90°
   （IY/IZ 互换，D 阶段已实测）；本批算例均为水平梁，不覆盖该情形。
+  F 阶段已在 `ansys_bridge_cable.py` 用方向节点 `K(+Y)` 解决，并由 CB3D09
+  真实竖直塔柱算例验证，见 `cable_arch_3d/README.md`。
 - `--live-ansys` 依赖本机 ANSYS 许可，因此**不进默认 CTest**。
 
 ## 11. 相关文件

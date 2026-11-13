@@ -292,4 +292,31 @@ if (Test-Path $elkScript) {
     $failed++
 }
 
+# ---- 非线性成桥态 vs ANSYS NLGEOM + LINK180（CB3D10）----
+# cable_solver.exe 重跑 .dat，与冻结自真实 ANSYS 18.0 批处理的 325 项
+# 黄金值逐项比对；默认离线，不需要 ANSYS 许可。
+$nlScript = Join-Path $root "tests\benchmark\nonlinear_ansys_3d\compare_nonlinear_ansys_3d.py"
+$nlCases  = Join-Path $root "tests\benchmark\nonlinear_ansys_3d\cases"
+$nlRef    = Join-Path $root "tests\benchmark\nonlinear_ansys_3d\reference"
+if (Test-Path $nlScript) {
+    $py = Get-Command python -ErrorAction SilentlyContinue
+    if ($py) {
+        Write-Host ""
+        Write-Host "== Nonlinear completion vs ANSYS NLGEOM benchmark =="
+        & python $nlScript --bin $bin --cases $nlCases --reference $nlRef
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[PASS] Nonlinear completion vs ANSYS NLGEOM benchmark"
+        } else {
+            Write-Host "[FAIL] Nonlinear completion vs ANSYS NLGEOM benchmark"
+            $failed++
+        }
+    } else {
+        Write-Host "[MISS] python not found, skip nonlinear ANSYS benchmark"
+        $failed++
+    }
+} else {
+    Write-Host "[MISS] nonlinear ANSYS benchmark script missing: $nlScript"
+    $failed++
+}
+
 if ($failed -eq 0) { Write-Host "ALL TESTS PASSED" } else { Write-Host "$failed TEST(S) FAILED"; exit 1 }
