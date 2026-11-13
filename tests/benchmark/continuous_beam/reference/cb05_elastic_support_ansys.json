@@ -1,0 +1,163 @@
+{
+  "id": "cb05_elastic_support",
+  "dat": "cb05_elastic_support.dat",
+  "inp": "cb05_elastic_support.inp",
+  "exe": "example_mixed.exe",
+  "description": "两跨连续梁 2x20 m（CB01 几何），均布 20 kN/m；中支座节点 11 由刚性改为竖向接地弹簧 K=2e6 N/m。中支座下沉约 32.6 mm，弹簧反力约 65.15 kN，两端刚性反力各约 367.42 kN。",
+  "load_case": "elastic mid support K=2e6 N/m; FEM *BOUNDARY 11 2 0 K=2e6 <-> ANSYS COMBIN14 + KEYOPT(2)=2 + R,2,2e6 + grounded node",
+  "reference_source": "ANSYS 18.0 / BEAM3 + COMBIN14 批处理实测，冻结 CSV 见 cases/cb05_elastic_support_ansys_*.csv；由 build_reference.py 从这些 CSV 抽取，非解析解、非 FEM-Eigen 自测值。",
+  "ansys": {
+    "release": "18.0",
+    "element": "BEAM3 + COMBIN14",
+    "mode": "batch -b",
+    "csv_columns": {
+      "disp": "UX/UY/ROTZ",
+      "reac": "FX/FY",
+      "elem": "NI/VI/MI/NJ/VJ/MJ",
+      "spring": "node/SMISC1"
+    }
+  },
+  "same_source_apdl": "cases/cb05_elastic_support.inp 与 cases/cb05_elastic_support.dat 由同一个 BridgeSpec 对象生成（BridgeStudio/ansys_bridge.py），节点/单元/材料/截面/约束/荷载完全一致。",
+  "tolerances": {
+    "default_rtol": 0.001,
+    "comment": "|got-ref| <= atol + rtol*|ref|"
+  },
+  "checks": [
+    {
+      "name": "spring_node_uy",
+      "kind": "nodal_disp",
+      "node": 11,
+      "dof": 2,
+      "ref": -0.03257583655,
+      "rtol": 0.001,
+      "atol": 0.0,
+      "source": "cb05_elastic_support_ansys_disp.csv:node11.col2"
+    },
+    {
+      "name": "left_span_quarter_uy",
+      "kind": "nodal_disp",
+      "node": 6,
+      "dof": 2,
+      "ref": -0.02333230139,
+      "rtol": 0.001,
+      "atol": 0.0,
+      "source": "cb05_elastic_support_ansys_disp.csv:node6.col2"
+    },
+    {
+      "name": "left_span_max_uy",
+      "kind": "nodal_disp",
+      "node": 5,
+      "dof": 2,
+      "ref": -0.01947394895,
+      "rtol": 0.001,
+      "atol": 0.0,
+      "source": "cb05_elastic_support_ansys_disp.csv:node5.col2"
+    },
+    {
+      "name": "end_support_uy",
+      "kind": "nodal_disp",
+      "node": 1,
+      "dof": 2,
+      "ref": 0.0,
+      "rtol": 0.001,
+      "atol": 1e-09,
+      "source": "cb05_elastic_support_ansys_disp.csv:node1.col2"
+    },
+    {
+      "name": "far_support_uy",
+      "kind": "nodal_disp",
+      "node": 21,
+      "dof": 2,
+      "ref": 0.0,
+      "rtol": 0.001,
+      "atol": 1e-09,
+      "source": "cb05_elastic_support_ansys_disp.csv:node21.col2"
+    },
+    {
+      "name": "reaction_R1",
+      "kind": "reaction",
+      "node": 1,
+      "dof": 2,
+      "ref": 367424.1635,
+      "rtol": 0.001,
+      "atol": 0.0,
+      "source": "cb05_elastic_support_ansys_reac.csv:node1.col2"
+    },
+    {
+      "name": "reaction_R4",
+      "kind": "reaction",
+      "node": 21,
+      "dof": 2,
+      "ref": 367424.1635,
+      "rtol": 0.001,
+      "atol": 0.0,
+      "source": "cb05_elastic_support_ansys_reac.csv:node21.col2"
+    },
+    {
+      "name": "spring_force_node11",
+      "kind": "spring_force",
+      "node": 11,
+      "abs": true,
+      "k": 2000000.0,
+      "value": 0.0,
+      "ref": 65151.67188,
+      "rtol": 0.001,
+      "atol": 0.0,
+      "source": "cb05_elastic_support_ansys_spring.csv:node11.col1",
+      "note": "ANSYS COMBIN14 SMISC1 与弹簧对结构的反力反号，此处比幅值"
+    },
+    {
+      "name": "hogging_e10_M2",
+      "kind": "force",
+      "elem": 10,
+      "col": "M2",
+      "ref": 3348483.25,
+      "rtol": 0.001,
+      "atol": 0.0,
+      "source": "cb05_elastic_support_ansys_elem.csv:elem10.col6"
+    },
+    {
+      "name": "hogging_e11_M1",
+      "kind": "force",
+      "elem": 11,
+      "col": "M1",
+      "ref": 3348483.25,
+      "rtol": 0.001,
+      "atol": 0.0,
+      "source": "cb05_elastic_support_ansys_elem.csv:elem11.col3"
+    },
+    {
+      "name": "sagging_e4_M2",
+      "kind": "force",
+      "elem": 4,
+      "col": "M2",
+      "ref": 2299393.25,
+      "rtol": 0.001,
+      "atol": 0.0,
+      "source": "cb05_elastic_support_ansys_elem.csv:elem4.col6"
+    },
+    {
+      "name": "zero_end_moment_e1_M1",
+      "kind": "force",
+      "elem": 1,
+      "col": "M1",
+      "ref": 0.0,
+      "rtol": 0.001,
+      "atol": 1e-06,
+      "source": "cb05_elastic_support_ansys_elem.csv:elem1.col3",
+      "note": "ANSYS 实测 -2.48292e-09（舍入噪声），参考值取精确 0"
+    },
+    {
+      "name": "end_shear_e1_V1",
+      "kind": "force",
+      "elem": 1,
+      "col": "V1",
+      "abs": true,
+      "ref": 367424.1562,
+      "rtol": 0.001,
+      "atol": 0.0,
+      "source": "cb05_elastic_support_ansys_elem.csv:elem1.col2",
+      "note": "FEM-Eigen 与 ANSYS SMISC 剪力符号约定相反，此处比幅值"
+    }
+  ]
+}

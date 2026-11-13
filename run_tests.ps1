@@ -135,4 +135,161 @@ if (Test-Path $bridgeScript) {
     $failed++
 }
 
+# ---- 连续梁算例：ANSYS 18.0 BEAM3 实测冻结值 vs tests/benchmark/continuous_beam ----
+# 与上面两个 benchmark 不同，这里 ref 来自真实 ANSYS 批处理导出的 CSV。
+# 默认离线运行（只重跑 FEM-Eigen），不依赖 ANSYS 许可；
+# 需要端到端商业软件复核时手动加 --live-ansys。
+$cbScript = Join-Path $root "tests\benchmark\continuous_beam\compare_continuous_beam.py"
+$cbCases  = Join-Path $root "tests\benchmark\continuous_beam\cases"
+$cbRef    = Join-Path $root "tests\benchmark\continuous_beam\reference"
+if (Test-Path $cbScript) {
+    $py = Get-Command python -ErrorAction SilentlyContinue
+    if ($py) {
+        Write-Host ""
+        Write-Host "== Continuous beam ANSYS benchmark =="
+        & python $cbScript --bin $bin --cases $cbCases --reference $cbRef
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[PASS] Continuous beam ANSYS benchmark"
+        } else {
+            Write-Host "[FAIL] Continuous beam ANSYS benchmark"
+            $failed++
+        }
+    } else {
+        Write-Host "[MISS] python not found, skip continuous beam benchmark"
+        $failed++
+    }
+} else {
+    Write-Host "[MISS] Continuous beam benchmark script missing: $cbScript"
+    $failed++
+}
+
+# ---- 3D 连续箱梁算例：FEM-Eigen 3D vs 冻结的 ANSYS BEAM4 (Euler-Bernoulli) ----
+# BEAM188 (Timoshenko) 结果已归档，差异在 *_compare_report.txt [4] 节量化，
+# 不作为黄金参考值。默认离线运行，不依赖 ANSYS 许可。
+$cb3Script = Join-Path $root "tests\benchmark\continuous_beam_3d\compare_continuous_beam_3d.py"
+$cb3Cases  = Join-Path $root "tests\benchmark\continuous_beam_3d\cases"
+$cb3Ref    = Join-Path $root "tests\benchmark\continuous_beam_3d\reference"
+if (Test-Path $cb3Script) {
+    $py = Get-Command python -ErrorAction SilentlyContinue
+    if ($py) {
+        Write-Host ""
+        Write-Host "== Continuous beam 3D ANSYS benchmark =="
+        & python $cb3Script --bin $bin --cases $cb3Cases --reference $cb3Ref
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[PASS] Continuous beam 3D ANSYS benchmark"
+        } else {
+            Write-Host "[FAIL] Continuous beam 3D ANSYS benchmark"
+            $failed++
+        }
+    } else {
+        Write-Host "[MISS] python not found, skip continuous beam 3D benchmark"
+        $failed++
+    }
+} else {
+    Write-Host "[MISS] Continuous beam 3D benchmark script missing: $cb3Script"
+    $failed++
+}
+
+# ---- 3D 斜拉桥/拱桥混合单元：FEM-Eigen 3D vs 冻结 ANSYS BEAM4+LINK180 ----
+# 同一 ModelSpec3D 里 BEAM + CABLE/TRUSS；默认离线运行，不依赖 ANSYS 许可。
+$caScript = Join-Path $root "tests\benchmark\cable_arch_3d\compare_cable_arch_3d.py"
+$caCases  = Join-Path $root "tests\benchmark\cable_arch_3d\cases"
+$caRef    = Join-Path $root "tests\benchmark\cable_arch_3d\reference"
+if (Test-Path $caScript) {
+    $py = Get-Command python -ErrorAction SilentlyContinue
+    if ($py) {
+        Write-Host ""
+        Write-Host "== Cable/arch 3D mixed-element ANSYS benchmark =="
+        & python $caScript --bin $bin --cases $caCases --reference $caRef
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[PASS] Cable/arch 3D mixed-element ANSYS benchmark"
+        } else {
+            Write-Host "[FAIL] Cable/arch 3D mixed-element ANSYS benchmark"
+            $failed++
+        }
+    } else {
+        Write-Host "[MISS] python not found, skip cable/arch 3D benchmark"
+        $failed++
+    }
+} else {
+    Write-Host "[MISS] Cable/arch 3D benchmark script missing: $caScript"
+    $failed++
+}
+
+# ---- 非线性成桥态 / 索长迭代 smoke：cable_solver.exe (fem_3d_nl.hpp) ----
+# 共转列式几何非线性链，无 ANSYS 基准；检查收敛 / 几何闭合 / 索长闭合
+# 以及与冻结 *_cable.txt 的一致性。不需要 ANSYS 许可。
+$csScript = Join-Path $root "tests\benchmark\cable_arch_3d\compare_cable_solver_smoke.py"
+$csSmoke  = Join-Path $root "tests\benchmark\cable_arch_3d\nonlinear_smoke"
+if (Test-Path $csScript) {
+    $py = Get-Command python -ErrorAction SilentlyContinue
+    if ($py) {
+        Write-Host ""
+        Write-Host "== cable_solver nonlinear completion smoke =="
+        & python $csScript --bin $bin --smoke $csSmoke
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[PASS] cable_solver nonlinear completion smoke"
+        } else {
+            Write-Host "[FAIL] cable_solver nonlinear completion smoke"
+            $failed++
+        }
+    } else {
+        Write-Host "[MISS] python not found, skip cable_solver smoke"
+        $failed++
+    }
+} else {
+    Write-Host "[MISS] cable_solver smoke script missing: $csScript"
+    $failed++
+}
+
+# ---- 3D 分布荷载/自重：FEM-Eigen 3D vs 冻结 ANSYS BEAM4 ----
+# *ELEMENT_LOAD / *GRAVITY / *SELF_WEIGHT 一致节点荷载与固端力扣除；
+# CB3D06/07/08 同源导出，默认离线运行，不依赖 ANSYS 许可。
+$elScript = Join-Path $root "tests\benchmark\element_loads_3d\compare_element_loads_3d.py"
+$elCases  = Join-Path $root "tests\benchmark\element_loads_3d\cases"
+$elRef    = Join-Path $root "tests\benchmark\element_loads_3d\reference"
+if (Test-Path $elScript) {
+    $py = Get-Command python -ErrorAction SilentlyContinue
+    if ($py) {
+        Write-Host ""
+        Write-Host "== 3D element-load / selfweight ANSYS benchmark =="
+        & python $elScript --bin $bin --cases $elCases --reference $elRef
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[PASS] 3D element-load / selfweight ANSYS benchmark"
+        } else {
+            Write-Host "[FAIL] 3D element-load / selfweight ANSYS benchmark"
+            $failed++
+        }
+    } else {
+        Write-Host "[MISS] python not found, skip element-load 3D benchmark"
+        $failed++
+    }
+} else {
+    Write-Host "[MISS] element-load 3D benchmark script missing: $elScript"
+    $failed++
+}
+
+# ---- 3D 分布荷载内核级闭式解 / 叠加恒等式验证 ----
+$elkScript = Join-Path $root "tests\benchmark\element_loads_3d\verify_kernel_loads.py"
+if (Test-Path $elkScript) {
+    $py = Get-Command python -ErrorAction SilentlyContinue
+    if ($py) {
+        Write-Host ""
+        Write-Host "== 3D distributed-load kernel validation =="
+        & python $elkScript --bin $bin
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[PASS] 3D distributed-load kernel validation"
+        } else {
+            Write-Host "[FAIL] 3D distributed-load kernel validation"
+            $failed++
+        }
+    } else {
+        Write-Host "[MISS] python not found, skip 3D distributed-load kernel validation"
+        $failed++
+    }
+} else {
+    Write-Host "[MISS] 3D distributed-load kernel validation script missing: $elkScript"
+    $failed++
+}
+
 if ($failed -eq 0) { Write-Host "ALL TESTS PASSED" } else { Write-Host "$failed TEST(S) FAILED"; exit 1 }

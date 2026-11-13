@@ -50,7 +50,11 @@ int main(int argc, char** argv) {
                 double dl = 0.0;
                 for (int k = 0; k < 3; ++k)
                     dl += (U[dm.dof(e.n2, k)] - U[dm.dof(e.n1, k)]) * c(k);
-                out << " N=" << (e.E * e.A / L * dl);
+                // 单元分布荷载/自重下需把 i 端等效节点荷载沿轴向的分量加回，
+                // 与 fem_2d.cpp 的 f.N1 = Nrestore + fe_i 保持一致。
+                const Eigen::VectorXd fe = elementEquivalentLoad3D(m, e);
+                const double fe_i = fe(0) * c(0) + fe(1) * c(1) + fe(2) * c(2);
+                out << " N=" << (e.E * e.A / L * dl + fe_i);
             }
             out << "\n";
         }

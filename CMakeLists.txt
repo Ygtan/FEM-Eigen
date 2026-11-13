@@ -167,6 +167,81 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(bridge_benchmark PROPERTIES
         TIMEOUT 600
         LABELS "benchmark")
+
+    # 连续梁算例：BridgeStudio 同源 .dat/.inp + ANSYS 18.0 BEAM3 批处理实测值。
+    # 与 ansys_benchmark 的区别是参考值取自真实 ANSYS 导出的 CSV（冻结在 cases/），
+    # 不是用闭式解代替；默认离线运行，不需要 ANSYS 许可。
+    add_test(NAME continuous_beam_benchmark
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/continuous_beam/compare_continuous_beam.py
+                     --bin ${CMAKE_CURRENT_BINARY_DIR}
+                     --cases ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/continuous_beam/cases
+                     --reference ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/continuous_beam/reference)
+    set_tests_properties(continuous_beam_benchmark PROPERTIES
+        TIMEOUT 600
+        LABELS "benchmark")
+
+    # 3D 连续箱梁算例：FEM-Eigen 3D (example_3d_report.exe) 的 12x12
+    # Euler-Bernoulli 空间梁 vs 冻结的 ANSYS 18.0 BEAM4 (同为 EB) 实测值。
+    # BEAM188 是 Timoshenko 单元，差异单列在 *_compare_report.txt，不作黄金参考。
+    # 默认离线运行，不需要 ANSYS 许可。
+    add_test(NAME continuous_beam_3d_benchmark
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/continuous_beam_3d/compare_continuous_beam_3d.py
+                     --bin ${CMAKE_CURRENT_BINARY_DIR}
+                     --cases ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/continuous_beam_3d/cases
+                     --reference ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/continuous_beam_3d/reference)
+    set_tests_properties(continuous_beam_3d_benchmark PROPERTIES
+        TIMEOUT 600
+        LABELS "benchmark")
+
+    # 3D 斜拉桥 / 拱桥混合单元算例：FEM-Eigen 3D 线性内核
+    # (BEAM + CABLE/TRUSS，轴向杆按 EA/L 装配) vs 冻结的 ANSYS 18.0
+    # BEAM4 + LINK180 实测值。默认离线运行，不需要 ANSYS 许可。
+    add_test(NAME cable_arch_3d_benchmark
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/cable_arch_3d/compare_cable_arch_3d.py
+                     --bin ${CMAKE_CURRENT_BINARY_DIR}
+                     --cases ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/cable_arch_3d/cases
+                     --reference ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/cable_arch_3d/reference)
+    set_tests_properties(cable_arch_3d_benchmark PROPERTIES
+        TIMEOUT 600
+        LABELS "benchmark")
+
+    # 非线性成桥态 / 索长迭代端到端 smoke：cable_solver.exe (fem_3d_nl.hpp
+    # 共转列式几何非线性)。无线性 ANSYS 基准，检查收敛、几何闭合、索长
+    # 闭合以及重跑结果与冻结 *_cable.txt 的一致性。
+    add_test(NAME cable_solver_smoke
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/cable_arch_3d/compare_cable_solver_smoke.py
+                     --bin ${CMAKE_CURRENT_BINARY_DIR}
+                     --smoke ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/cable_arch_3d/nonlinear_smoke)
+    set_tests_properties(cable_solver_smoke PROPERTIES
+        TIMEOUT 600
+        LABELS "benchmark")
+
+    # 3D 分布荷载 / 自重：*ELEMENT_LOAD、*GRAVITY、*SELF_WEIGHT 的一致节点
+    # 荷载与固端力扣除。CB3D06/07/08 由同一 ModelSpec3D 导出，参考值冻结
+    # 自 ANSYS 18.0 BEAM4 实测 CSV。默认离线运行，不需要 ANSYS 许可。
+    add_test(NAME element_loads_3d_benchmark
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/element_loads_3d/compare_element_loads_3d.py
+                     --bin ${CMAKE_CURRENT_BINARY_DIR}
+                     --cases ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/element_loads_3d/cases
+                     --reference ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/element_loads_3d/reference)
+    set_tests_properties(element_loads_3d_benchmark PROPERTIES
+        TIMEOUT 600
+        LABELS "benchmark")
+
+    # 同一荷载通道的内核级闭式解 / 叠加恒等式验证：GZ、GY、LZ 两个弯曲
+    # 平面、DENS、ADDMASS、*SELF_WEIGHT RHO/MASS、TRUSS 自重、梯形 q1/q2。
+    add_test(NAME element_loads_3d_kernel_validation
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/element_loads_3d/verify_kernel_loads.py
+                     --bin ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(element_loads_3d_kernel_validation PROPERTIES
+        TIMEOUT 600
+        LABELS "benchmark")
 else()
     message(STATUS "未找到 Python3，跳过 .dat 逐字节回归 CTest")
 endif()

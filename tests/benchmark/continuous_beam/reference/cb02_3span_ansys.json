@@ -1,0 +1,253 @@
+{
+  "id": "cb02_3span",
+  "dat": "cb02_3span.dat",
+  "inp": "cb02_3span.inp",
+  "exe": "example_mixed.exe",
+  "description": "三跨等截面连续梁 3x30 m（总长 90 m），箱形截面 h=2.0 m b=8.0 m，A=0.478 m2 I=0.4148 m4，E=2.06e11 Pa，30 个 2D BEAM 单元 / 31 节点，全桥均布荷载 q=20 kN/m 向下，自重关闭。支座节点 1/11/21/31。",
+  "load_case": "equal-span continuous beam under full UDL",
+  "reference_source": "ANSYS 18.0 / BEAM3 批处理实测，冻结 CSV 见 cases/cb02_3span_ansys_*.csv；由 build_reference.py 从这些 CSV 抽取，非解析解、非 FEM-Eigen 自测值。",
+  "ansys": {
+    "release": "18.0",
+    "element": "BEAM3",
+    "mode": "batch -b",
+    "csv_columns": {
+      "disp": "UX/UY/ROTZ",
+      "reac": "FX/FY",
+      "elem": "NI/VI/MI/NJ/VJ/MJ",
+      "spring": "node/SMISC1"
+    }
+  },
+  "same_source_apdl": "cases/cb02_3span.inp 与 cases/cb02_3span.dat 由同一个 BridgeSpec 对象生成（BridgeStudio/ansys_bridge.py），节点/单元/材料/截面/约束/荷载完全一致。",
+  "tolerances": {
+    "default_rtol": 0.001,
+    "comment": "|got-ref| <= atol + rtol*|ref|"
+  },
+  "checks": [
+    {
+      "name": "span1_mid_uy",
+      "kind": "nodal_disp",
+      "node": 6,
+      "dof": 2,
+      "ref": -0.001283664723,
+      "rtol": 0.001,
+      "atol": 0.0,
+      "source": "cb02_3span_ansys_disp.csv:node6.col2"
+    },
+    {
+      "name": "span1_max_uy",
+      "kind": "nodal_disp",
+      "node": 5,
+      "dof": 2,
+      "ref": -0.001289194356,
+      "rtol": 0.001,
+      "atol": 0.0,
+      "source": "cb02_3span_ansys_disp.csv:node5.col2"
+    },
+    {
+      "name": "span2_mid_uy",
+      "kind": "nodal_disp",
+      "node": 16,
+      "dof": 2,
+      "ref": -9.874344024e-05,
+      "rtol": 0.001,
+      "atol": 0.0,
+      "source": "cb02_3span_ansys_disp.csv:node16.col2"
+    },
+    {
+      "name": "span3_mid_uy",
+      "kind": "nodal_disp",
+      "node": 26,
+      "dof": 2,
+      "ref": -0.001283664723,
+      "rtol": 0.001,
+      "atol": 0.0,
+      "source": "cb02_3span_ansys_disp.csv:node26.col2"
+    },
+    {
+      "name": "end_support_uy",
+      "kind": "nodal_disp",
+      "node": 1,
+      "dof": 2,
+      "ref": 0.0,
+      "rtol": 0.001,
+      "atol": 1e-09,
+      "source": "cb02_3span_ansys_disp.csv:node1.col2"
+    },
+    {
+      "name": "support2_uy",
+      "kind": "nodal_disp",
+      "node": 11,
+      "dof": 2,
+      "ref": 0.0,
+      "rtol": 0.001,
+      "atol": 1e-09,
+      "source": "cb02_3span_ansys_disp.csv:node11.col2"
+    },
+    {
+      "name": "support3_uy",
+      "kind": "nodal_disp",
+      "node": 21,
+      "dof": 2,
+      "ref": 0.0,
+      "rtol": 0.001,
+      "atol": 1e-09,
+      "source": "cb02_3span_ansys_disp.csv:node21.col2"
+    },
+    {
+      "name": "far_support_uy",
+      "kind": "nodal_disp",
+      "node": 31,
+      "dof": 2,
+      "ref": 0.0,
+      "rtol": 0.001,
+      "atol": 1e-09,
+      "source": "cb02_3span_ansys_disp.csv:node31.col2"
+    },
+    {
+      "name": "reaction_R1",
+      "kind": "reaction",
+      "node": 1,
+      "dof": 2,
+      "ref": 240000.0,
+      "rtol": 0.001,
+      "atol": 0.0,
+      "source": "cb02_3span_ansys_reac.csv:node1.col2"
+    },
+    {
+      "name": "reaction_R2",
+      "kind": "reaction",
+      "node": 11,
+      "dof": 2,
+      "ref": 660000.0,
+      "rtol": 0.001,
+      "atol": 0.0,
+      "source": "cb02_3span_ansys_reac.csv:node11.col2"
+    },
+    {
+      "name": "reaction_R3",
+      "kind": "reaction",
+      "node": 21,
+      "dof": 2,
+      "ref": 660000.0,
+      "rtol": 0.001,
+      "atol": 0.0,
+      "source": "cb02_3span_ansys_reac.csv:node21.col2"
+    },
+    {
+      "name": "reaction_R4",
+      "kind": "reaction",
+      "node": 31,
+      "dof": 2,
+      "ref": 240000.0,
+      "rtol": 0.001,
+      "atol": 0.0,
+      "source": "cb02_3span_ansys_reac.csv:node31.col2"
+    },
+    {
+      "name": "hogging_e10_M2",
+      "kind": "force",
+      "elem": 10,
+      "col": "M2",
+      "ref": -1800000.0,
+      "rtol": 0.001,
+      "atol": 0.0,
+      "source": "cb02_3span_ansys_elem.csv:elem10.col6"
+    },
+    {
+      "name": "hogging_e11_M1",
+      "kind": "force",
+      "elem": 11,
+      "col": "M1",
+      "ref": -1800000.0,
+      "rtol": 0.001,
+      "atol": 0.0,
+      "source": "cb02_3span_ansys_elem.csv:elem11.col3"
+    },
+    {
+      "name": "hogging_e20_M2",
+      "kind": "force",
+      "elem": 20,
+      "col": "M2",
+      "ref": -1800000.0,
+      "rtol": 0.001,
+      "atol": 0.0,
+      "source": "cb02_3span_ansys_elem.csv:elem20.col6"
+    },
+    {
+      "name": "hogging_e21_M1",
+      "kind": "force",
+      "elem": 21,
+      "col": "M1",
+      "ref": -1800000.0,
+      "rtol": 0.001,
+      "atol": 0.0,
+      "source": "cb02_3span_ansys_elem.csv:elem21.col3"
+    },
+    {
+      "name": "sagging_e4_M2",
+      "kind": "force",
+      "elem": 4,
+      "col": "M2",
+      "ref": 1440000.0,
+      "rtol": 0.001,
+      "atol": 0.0,
+      "source": "cb02_3span_ansys_elem.csv:elem4.col6"
+    },
+    {
+      "name": "sagging_e5_M1",
+      "kind": "force",
+      "elem": 5,
+      "col": "M1",
+      "ref": 1440000.0,
+      "rtol": 0.001,
+      "atol": 0.0,
+      "source": "cb02_3span_ansys_elem.csv:elem5.col3"
+    },
+    {
+      "name": "zero_end_moment_e1_M1",
+      "kind": "force",
+      "elem": 1,
+      "col": "M1",
+      "ref": 0.0,
+      "rtol": 0.001,
+      "atol": 1e-06,
+      "source": "cb02_3span_ansys_elem.csv:elem1.col3",
+      "note": "ANSYS 实测 9.31323e-10（舍入噪声），参考值取精确 0"
+    },
+    {
+      "name": "zero_end_moment_e30_M2",
+      "kind": "force",
+      "elem": 30,
+      "col": "M2",
+      "ref": 0.0,
+      "rtol": 0.001,
+      "atol": 1e-06,
+      "source": "cb02_3span_ansys_elem.csv:elem30.col6",
+      "note": "ANSYS 实测 0（舍入噪声），参考值取精确 0"
+    },
+    {
+      "name": "end_shear_e1_V1",
+      "kind": "force",
+      "elem": 1,
+      "col": "V1",
+      "abs": true,
+      "ref": 240000.0,
+      "rtol": 0.001,
+      "atol": 0.0,
+      "source": "cb02_3span_ansys_elem.csv:elem1.col2",
+      "note": "FEM-Eigen 与 ANSYS SMISC 剪力符号约定相反，此处比幅值"
+    },
+    {
+      "name": "end_shear_e10_V2",
+      "kind": "force",
+      "elem": 10,
+      "col": "V2",
+      "abs": true,
+      "ref": 360000.0,
+      "rtol": 0.001,
+      "atol": 0.0,
+      "source": "cb02_3span_ansys_elem.csv:elem10.col5",
+      "note": "FEM-Eigen 与 ANSYS SMISC 剪力符号约定相反，此处比幅值"
+    }
+  ]
+}

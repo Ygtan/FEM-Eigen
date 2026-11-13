@@ -283,6 +283,27 @@ struct Model3D {
     std::vector<Constraint3D> constraints;
     std::vector<std::tuple<int, int, double>> loads; // node, dof, value
 
+    // ---- 3D 单元分布荷载 / 自重（与 fem_2d.hpp 的同类字段同构）----
+    // 默认全空 / 全零：不含这些关键字的旧 .dat 结果与改造前逐位一致。
+    // 特别注意 g 默认是 0，而 2D 的 gy 默认 -9.81；3D 必须显式写 *GRAVITY
+    // 才启用自重，否则含 DENS 的模态/成桥态算例会凭空多出静力自重。
+    struct ElemLoad3D {
+        int e1 = 0, e2 = 0;          // 单元号（区间已在解析时展开成单号）
+        std::string dir;              // GX/GY/GZ/LX/LY/LZ
+        double q1 = 0.0, q2 = 0.0;  // N/m，i/j 端强度
+    };
+    std::vector<ElemLoad3D> elemLoads;
+
+    struct SelfWeight3D {
+        bool all = false;
+        int elem = 0;
+        std::string rule;             // RHO(密度 kg/m^3) | MASS(线质量 kg/m)
+        double value = 0.0;
+    };
+    std::vector<SelfWeight3D> selfWeights;
+
+    Vec3 g = Vec3(0.0, 0.0, 0.0);    // 重力加速度向量 m/s^2（默认 0 = 关闭）
+
     // ---- 一条预应力筋（等效荷载法，直线 + 二次抛物线曲线）----
     //
     // 与 2D 的 `*PRESTRESS` 不同：这里**不生成力筋单元**，只把它翻译成等效
@@ -645,6 +666,140 @@ private:
     int n_ = 0;
 };
 
+// =====================================================================
+// 3D 单元分布荷载 / 自重的一致节点荷载（含固端力 FEF）
+// ---------------------------------------------------------------------
+// 与 fem_2d.cpp::distributedLoadEquivalent / elementEquivalentLoad 同构。
+// 唯一的关键差异：3D 有两个弯曲平面。局部 y(v-θz, 用 Iz) 平面的弯矩 FEF
+// 与局部 z(w-θy, 用 Iy) 平面**符号相反**，依据 beam3DLocalStiffness 中
+//   K(1,5) = +6·kz·L   (v-θz)
+//   K(2,4) = -6·ky·L   (w-θy, 因 θy = -∂w/∂x，Hermite 形函数 N2/N4 取负)
+// 局部自由度顺序 [u1,v1,w1,θx1,θy1,θz1,u2,v2,w2,θx2,θy2,θz2]。
+// 全局等效荷载 = T^T · fl（T 为 beam3DTransformation，正交分块对角）。
+// =====================================================================
+inline std::string upperAscii3(std::string s) {
+    for (char& c : s)
+        if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
+    return s;
+}
+
+// 支持 "1"、"1-10"、"1,3,5-8"（2D 的 detail::parseRange 在 fem_2d.hpp，
+// fem_3d.hpp 不 include 它，故这里自带一份轻量实现）。
+inline std::vector<int> parseElemRange3(const std::string& spec) {
+    std::vector<std::string> parts;
+    std::string cur;
+    for (char c : spec) {
+        if (c == ',') { parts.push_back(cur); cur.clear(); }
+        else cur.push_back(c);
+    }
+    parts.push_back(cur);
+    std::vector<int> ids;
+    for (const auto& p : parts) {
+        if (p.empty()) continue;
+        const std::size_t dash = p.find('-');
+        if (dash == std::string::npos) {
+            ids.push_back(std::stoi(p));
+        } else {
+            const int a = std::stoi(p.substr(0, dash));
+            const int b = std::stoi(p.substr(dash + 1));
+            for (int i = a; i <= b; ++i) ids.push_back(i);
+        }
+    }
+    return ids;
+}
+
+// 返回全局单位方向向量。G* = 全局轴；L* = 单元局部轴（随单元朝向变化）。
+inline Vec3 resolveLoadDir3(const std::string& raw, const Vec3& p1, const Vec3& p2) {
+    const std::string d = upperAscii3(raw);
+    if (d == "GX") return Vec3(1.0, 0.0, 0.0);
+    if (d == "GY") return Vec3(0.0, 1.0, 0.0);
+    if (d == "GZ") return Vec3(0.0, 0.0, 1.0);
+    if (d == "LX" || d == "LY" || d == "LZ") {
+        const auto T = beam3DTransformation(p1, p2);
+        const Mat3 R = T.block<3, 3>(0, 0).transpose();  // col0=ex, col1=ey, col2=ez
+        return R.col(d == "LX" ? 0 : (d == "LY" ? 1 : 2));
+    }
+    throw std::runtime_error("3D *ELEMENT_LOAD 方向不支持: " + raw +
+                             "（仅支持 GX/GY/GZ/LX/LY/LZ）");
+}
+
+// 单个分布荷载的等效节点荷载，返回【全局】向量：BEAM 12 / 轴向 6。
+inline Eigen::VectorXd distributedLoadEquivalent3D(const Element3D& e,
+        const Vec3& p1, const Vec3& p2, const Vec3& gdir, double q1, double q2) {
+    const Vec3 d = p2 - p1;
+    const double L = std::max(d.norm(), 1e-12);
+    const bool axial = (e.type != "BEAM" && e.type != "BEAM7");
+    if (axial) {  // 线性形函数：只有 6 个平动自由度，直接按全局方向分配
+        Eigen::VectorXd fe = Eigen::VectorXd::Zero(6);
+        const double wi = L / 6.0 * (2.0 * q1 + q2);
+        const double wj = L / 6.0 * (q1 + 2.0 * q2);
+        for (int k = 0; k < 3; ++k) {
+            fe(k)     = wi * gdir(k);
+            fe(3 + k) = wj * gdir(k);
+        }
+        return fe;
+    }
+    const auto T = beam3DTransformation(p1, p2);
+    const Mat3 lam = T.block<3, 3>(0, 0);          // = R^T，全局 -> 局部
+    const Vec3 gi = lam * (q1 * gdir);             // 局部 i 端分布荷载
+    const Vec3 gj = lam * (q2 * gdir);
+    const double L2 = L * L;
+    Eigen::VectorXd fl = Eigen::VectorXd::Zero(12);
+    // 轴向（含梯形）：与 2D 完全同式
+    fl(0) = L / 6.0 * (2.0 * gi(0) + gj(0));
+    fl(6) = L / 6.0 * (gi(0) + 2.0 * gj(0));
+    // 局部 y 弯曲 v-θz（Iz）：FEF 弯矩 +qL^2/12 / -qL^2/12
+    fl(1)  = L / 20.0 * (7.0 * gi(1) + 3.0 * gj(1));
+    fl(5)  =  L2 / 60.0 * (3.0 * gi(1) + 2.0 * gj(1));
+    fl(7)  = L / 20.0 * (3.0 * gi(1) + 7.0 * gj(1));
+    fl(11) = -L2 / 60.0 * (2.0 * gi(1) + 3.0 * gj(1));
+    // 局部 z 弯曲 w-θy（Iy）：两个弯矩项符号与上面相反
+    fl(2)  = L / 20.0 * (7.0 * gi(2) + 3.0 * gj(2));
+    fl(4)  = -L2 / 60.0 * (3.0 * gi(2) + 2.0 * gj(2));
+    fl(8)  = L / 20.0 * (3.0 * gi(2) + 7.0 * gj(2));
+    fl(10) =  L2 / 60.0 * (2.0 * gi(2) + 3.0 * gj(2));
+    // fl(3)/fl(9) 为分布扭矩，暂不开放（保持 0）
+    return T.transpose() * fl;
+}
+
+// 汇总某单元的全部等效节点荷载：*ELEMENT_LOAD + 自动自重 + *SELF_WEIGHT。
+// 无荷载时返回严格零向量，保证既有算例的端内力结果逐位不变。
+inline Eigen::VectorXd elementEquivalentLoad3D(const Model3D& m, const Element3D& e) {
+    const int nd = (e.type == "BEAM") ? 12 : ((e.type == "BEAM7") ? 14 : 6);
+    const Vec3 p1 = m.nodes.at(e.n1), p2 = m.nodes.at(e.n2);
+    bool hasLoad = false;
+    Eigen::VectorXd fe = Eigen::VectorXd::Zero(nd);
+    for (const auto& el : m.elemLoads) {
+        if (e.id < el.e1 || e.id > el.e2) continue;
+        const Vec3 gdir = resolveLoadDir3(el.dir, p1, p2);
+        fe += distributedLoadEquivalent3D(e, p1, p2, gdir, el.q1, el.q2);
+        hasLoad = true;
+    }
+    const double gmag = m.g.norm();
+    if (gmag > 0.0) {
+        const Vec3 gdir = m.g / gmag;
+        // 与 2D 一致：线质量 = DENS*A + ADDMASS，w = 线质量 * |g| [N/m]
+        const double w = (e.dens * e.A + e.addmass) * gmag;
+        if (w != 0.0) {
+            fe += distributedLoadEquivalent3D(e, p1, p2, gdir, w, w);
+            hasLoad = true;
+        }
+        for (const auto& sw : m.selfWeights) {
+            if (!sw.all && sw.elem != e.id) continue;
+            double wi = 0.0;
+            if (sw.rule == "RHO") wi = sw.value * gmag * e.A;
+            else if (sw.rule == "MASS") wi = sw.value * gmag;
+            else throw std::runtime_error("3D *SELF_WEIGHT 未知规则: " + sw.rule);
+            fe += distributedLoadEquivalent3D(e, p1, p2, gdir, wi, wi);
+            hasLoad = true;
+        }
+    }
+    if (hasLoad && e.type == "BEAM7")
+        throw std::runtime_error(
+            "3D BEAM7 暂不支持单元分布荷载/自重；请改用 BEAM 或把荷载节点化");
+    return fe;
+}
+
 inline Assembled3D assembleModel3D(const Model3D& m) {
     Assembled3D a;
     a.dm = buildDofMap3D(m);
@@ -699,6 +854,16 @@ inline Assembled3D assembleModel3D(const Model3D& m) {
     for (const auto& [node, dof, val] : m.loads) {
         const int d = a.dm.safeDof(node, dof - 1);
         if (d >= 0) F(d) += val;
+    }
+
+    // 单元分布荷载 / 自重的一致节点荷载（含固端力）。
+    // 必须早于下面的 a.F0 = F 快照，否则支座反力 K0*U - F0 会漏掉这部分。
+    for (const auto& e : m.elements) {
+        const Eigen::VectorXd fe = elementEquivalentLoad3D(m, e);
+        if (fe.cwiseAbs().maxCoeff() == 0.0) continue;
+        const std::vector<int> g = elementGdofs3D(a.dm, e);
+        for (int r = 0; r < static_cast<int>(g.size()) && r < fe.size(); ++r)
+            if (g[r] >= 0) F(g[r]) += fe(r);
     }
 
     // 初应变 / 收缩等效节点荷载
@@ -1676,7 +1841,8 @@ struct BeamEnvelope3D {
     bool valid=false;
 };
 
-// 梁单元的局部杆端力：fl = Kl · (T · ug)
+// 梁单元的局部杆端力：无分布荷载时 fl = Kl · (T · ug)；
+// 有分布荷载/自重时须扣固端力 fl = Kl·(T·ug) − T·fe（对照 fem_2d.cpp:2932-2935）。
 inline Eigen::VectorXd beam3DLocalEndForces(const Model3D& m, const DofMap3D& dm,
                                             const Element3D& e,
                                             const std::vector<double>& U) {
@@ -1691,7 +1857,11 @@ inline Eigen::VectorXd beam3DLocalEndForces(const Model3D& m, const DofMap3D& dm
     const double L = (p2 - p1).norm();
     const auto T = beam3DTransformation(p1, p2);
     const auto Kl = beam3DLocalStiffness(e.E, e.A, e.Iy, e.Iz, e.J, e.G, L);
-    return Kl * (T * ug);
+    const Eigen::VectorXd fl = Kl * (T * ug);
+    const Eigen::VectorXd fe = elementEquivalentLoad3D(m, e);  // 全局一致节点荷载
+    // 零荷载时直接返回 fl，连"减零"都不做，保证旧基线逐位不变。
+    if (fe.cwiseAbs().maxCoeff() == 0.0) return fl;
+    return fl - T * fe;   // T 正交：T·(T^T·fef_local) = fef_local
 }
 
 // 7 自由度梁局部杆端力：fl = Kl · (T · ug)，14 分量含双力矩 B。
@@ -2966,6 +3136,31 @@ inline Model3D readModel3D(const std::string& path) {
             }
         } else if (section == "*CLOAD") {
             int node,dof; double val; if (ss >> node >> dof >> val) m.loads.push_back({node,dof,val});
+        } else if (section.rfind("*ELEMENT_LOAD", 0) == 0) {
+            // <单元号|区间|逗号列表> <方向> <q1> <q2>，q 单位 N/m，沿 dir 指向 i/j 端。
+            std::string es, dir; double q1 = 0.0, q2 = 0.0;
+            if (!(ss >> es >> dir >> q1 >> q2))
+                throw std::runtime_error("3D *ELEMENT_LOAD 行格式错误: " + line);
+            for (int id : parseElemRange3(es))
+                m.elemLoads.push_back({id, id, upperAscii3(dir), q1, q2});
+        } else if (section.rfind("*GRAVITY", 0) == 0) {
+            // <gx> <gy> <gz>，第三列可省略（默认 0）。默认 0 表示关闭自重。
+            double gx = 0.0, gy = 0.0, gz = 0.0;
+            if (!(ss >> gx >> gy))
+                throw std::runtime_error("3D *GRAVITY 行格式错误: " + line);
+            ss >> gz;
+            m.g = Vec3(gx, gy, gz);
+        } else if (section.rfind("*SELF_WEIGHT", 0) == 0) {
+            // <ALL|单元号> <RHO|MASS> <value>，旧格式兼容，与自动自重叠加。
+            std::string who, rule; double val = 0.0;
+            if (!(ss >> who >> rule >> val))
+                throw std::runtime_error("3D *SELF_WEIGHT 行格式错误: " + line);
+            Model3D::SelfWeight3D sw;
+            sw.rule = upperAscii3(rule);
+            sw.value = val;
+            if (upperAscii3(who) == "ALL") sw.all = true;
+            else sw.elem = std::stoi(who);
+            m.selfWeights.push_back(sw);
         } else if (section == "*PRESTRESS_LOSS") {
             // 键名映射与 2D 共用 parsePrestressLossLine（唯一来源）。
             const auto [id, li] = parsePrestressLossLine(line);
@@ -3155,6 +3350,15 @@ inline Model3D readModel3D(const std::string& path) {
     }
     // 整份文件读完后才把 LOSSREF 换成有效比，使 *PRESTRESS_LOSS 写在
     // *STAGE 之前或之后都能引用。只给 LOSS= 的束不进这条路径。
+    //
+    // 阶段增量法用 solveModel3DStages 手工构造 mc（只拷贝 loads = st.loads），
+    // 新荷载字段不会自动带过去。这里显式拒绝，避免"写进去了却静默不生效"——
+    // 这是 3D 内核历史上最坑的一类问题。需要阶段荷载时请用 *STAGE_LOAD。
+    if (!m.stages.empty() &&
+        (!m.elemLoads.empty() || !m.selfWeights.empty() || m.g.squaredNorm() > 0.0))
+        throw std::runtime_error(
+            "3D 阶段求解暂不支持 *ELEMENT_LOAD / *GRAVITY / *SELF_WEIGHT；"
+            "请在 *STAGE_LOAD 中按增量显式表达，或改用无阶段的线性模型");
     resolvePrestressLosses3D(m);
     applyJtgD60LaneLoads(m);
     return m;

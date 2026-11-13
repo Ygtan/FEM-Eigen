@@ -1,0 +1,182 @@
+{
+  "id": "cb04_point_loads",
+  "dat": "cb04_point_loads.dat",
+  "inp": "cb04_point_loads.inp",
+  "exe": "example_mixed.exe",
+  "description": "两跨连续梁 2x20 m（CB01 几何），无均布荷载、无自重；左右两跨跨中节点 6 / 16 各施加 200 kN 向下集中力，总荷载 400 kN。",
+  "load_case": "two -200 kN point loads at nodes 6/16; FEM *CLOAD <-> ANSYS F,<node>,FY,-200000",
+  "reference_source": "ANSYS 18.0 / BEAM3 批处理实测，冻结 CSV 见 cases/cb04_point_loads_ansys_*.csv；由 build_reference.py 从这些 CSV 抽取，非解析解、非 FEM-Eigen 自测值。",
+  "ansys": {
+    "release": "18.0",
+    "element": "BEAM3",
+    "mode": "batch -b",
+    "csv_columns": {
+      "disp": "UX/UY/ROTZ",
+      "reac": "FX/FY",
+      "elem": "NI/VI/MI/NJ/VJ/MJ",
+      "spring": "node/SMISC1"
+    }
+  },
+  "same_source_apdl": "cases/cb04_point_loads.inp 与 cases/cb04_point_loads.dat 由同一个 BridgeSpec 对象生成（BridgeStudio/ansys_bridge.py），节点/单元/材料/截面/约束/荷载完全一致。",
+  "tolerances": {
+    "default_rtol": 0.001,
+    "comment": "|got-ref| <= atol + rtol*|ref|"
+  },
+  "checks": [
+    {
+      "name": "point_load_node6_uy",
+      "kind": "nodal_disp",
+      "node": 6,
+      "dof": 2,
+      "ref": -0.00081936204,
+      "rtol": 0.001,
+      "atol": 0.0,
+      "source": "cb04_point_loads_ansys_disp.csv:node6.col2"
+    },
+    {
+      "name": "point_load_node16_uy",
+      "kind": "nodal_disp",
+      "node": 16,
+      "dof": 2,
+      "ref": -0.00081936204,
+      "rtol": 0.001,
+      "atol": 0.0,
+      "source": "cb04_point_loads_ansys_disp.csv:node16.col2"
+    },
+    {
+      "name": "span_quarter_uy",
+      "kind": "nodal_disp",
+      "node": 3,
+      "dof": 2,
+      "ref": -0.0005243917056,
+      "rtol": 0.001,
+      "atol": 0.0,
+      "source": "cb04_point_loads_ansys_disp.csv:node3.col2"
+    },
+    {
+      "name": "end_support_uy",
+      "kind": "nodal_disp",
+      "node": 1,
+      "dof": 2,
+      "ref": 0.0,
+      "rtol": 0.001,
+      "atol": 1e-09,
+      "source": "cb04_point_loads_ansys_disp.csv:node1.col2"
+    },
+    {
+      "name": "mid_support_uy",
+      "kind": "nodal_disp",
+      "node": 11,
+      "dof": 2,
+      "ref": 0.0,
+      "rtol": 0.001,
+      "atol": 1e-09,
+      "source": "cb04_point_loads_ansys_disp.csv:node11.col2"
+    },
+    {
+      "name": "far_support_uy",
+      "kind": "nodal_disp",
+      "node": 21,
+      "dof": 2,
+      "ref": 0.0,
+      "rtol": 0.001,
+      "atol": 1e-09,
+      "source": "cb04_point_loads_ansys_disp.csv:node21.col2"
+    },
+    {
+      "name": "reaction_R1",
+      "kind": "reaction",
+      "node": 1,
+      "dof": 2,
+      "ref": 62500.0,
+      "rtol": 0.001,
+      "atol": 0.0,
+      "source": "cb04_point_loads_ansys_reac.csv:node1.col2"
+    },
+    {
+      "name": "reaction_R2",
+      "kind": "reaction",
+      "node": 11,
+      "dof": 2,
+      "ref": 275000.0,
+      "rtol": 0.001,
+      "atol": 0.0,
+      "source": "cb04_point_loads_ansys_reac.csv:node11.col2"
+    },
+    {
+      "name": "reaction_R3",
+      "kind": "reaction",
+      "node": 21,
+      "dof": 2,
+      "ref": 62500.0,
+      "rtol": 0.001,
+      "atol": 0.0,
+      "source": "cb04_point_loads_ansys_reac.csv:node21.col2"
+    },
+    {
+      "name": "hogging_e10_M2",
+      "kind": "force",
+      "elem": 10,
+      "col": "M2",
+      "ref": -750000.0,
+      "rtol": 0.001,
+      "atol": 0.0,
+      "source": "cb04_point_loads_ansys_elem.csv:elem10.col6"
+    },
+    {
+      "name": "hogging_e11_M1",
+      "kind": "force",
+      "elem": 11,
+      "col": "M1",
+      "ref": -750000.0,
+      "rtol": 0.001,
+      "atol": 0.0,
+      "source": "cb04_point_loads_ansys_elem.csv:elem11.col3"
+    },
+    {
+      "name": "sagging_at_load_e6_M1",
+      "kind": "force",
+      "elem": 6,
+      "col": "M1",
+      "ref": 625000.0,
+      "rtol": 0.001,
+      "atol": 0.0,
+      "source": "cb04_point_loads_ansys_elem.csv:elem6.col3"
+    },
+    {
+      "name": "zero_end_moment_e1_M1",
+      "kind": "force",
+      "elem": 1,
+      "col": "M1",
+      "ref": 0.0,
+      "rtol": 0.001,
+      "atol": 1e-06,
+      "source": "cb04_point_loads_ansys_elem.csv:elem1.col3",
+      "note": "ANSYS 实测 0（舍入噪声），参考值取精确 0"
+    },
+    {
+      "name": "end_shear_e1_V1",
+      "kind": "force",
+      "elem": 1,
+      "col": "V1",
+      "abs": true,
+      "ref": 62500.0,
+      "rtol": 0.001,
+      "atol": 0.0,
+      "source": "cb04_point_loads_ansys_elem.csv:elem1.col2",
+      "note": "FEM-Eigen 与 ANSYS SMISC 剪力符号约定相反，此处比幅值"
+    },
+    {
+      "name": "shear_e7_V1",
+      "kind": "force",
+      "elem": 7,
+      "col": "V1",
+      "abs": true,
+      "ref": 137500.0,
+      "rtol": 0.001,
+      "atol": 0.0,
+      "source": "cb04_point_loads_ansys_elem.csv:elem7.col2",
+      "note": "FEM-Eigen 与 ANSYS SMISC 剪力符号约定相反，此处比幅值"
+    }
+  ]
+}
