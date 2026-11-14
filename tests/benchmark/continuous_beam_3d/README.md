@@ -14,9 +14,10 @@
 
 ## 1. 为什么要同时跑 BEAM4 和 BEAM188
 
-这是本轮最重要的实测结论（探测脚本留在
-`C:\Users\user\WorkBuddy\2026-11-13-11-23-24\ansys_probe\beam188_probe*.py`、
-`beam4_probe.py`）。
+这是本轮最重要的实测结论（探测脚本已归档在
+`../nonlinear_ansys_3d/probes/beam188_probe*.py`、
+`../nonlinear_ansys_3d/probes/beam4_probe.py`，
+说明见 `../nonlinear_ansys_3d/probes/README.md`）。
 
 | 内核 / 单元 | 梁理论 | 与自研 3D 内核的关系 |
 |---|---|---|

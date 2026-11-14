@@ -72,7 +72,7 @@ README.md
   IY/IZ 互换，会导致结果不一致。CB3D03/04 的竖向构件用轴向杆规避；
   **F 阶段已在 `ansys_bridge_cable.py::_vertical_beam_orientations()` 解决**：
   对纯竖直 BEAM 自动在 I 点全局 +Y 生成方向节点 K，用 `E,I,J,K` 对齐 FEM
-  局部轴，K 节点不需要约束（`vertical_beam_probe.py` 实测 0 warning / 0 error）。
+  局部轴，K 节点不需要约束（`../nonlinear_ansys_3d/probes/vertical_beam_probe.py` 实测 0 warning / 0 error）。
   该逻辑只在检测到竖直梁时插入，CB3D03/04 的 APDL 逐字节不变；CB3D09 是首个
   用到它的算例。
 - `example_3d_report.exe` 对「仅由轴向杆连接的节点」只输出 3 个平动位移；

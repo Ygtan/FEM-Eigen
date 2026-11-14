@@ -55,5 +55,12 @@ Thumbs.db
 !tests/benchmark/*/cases/*.csv
 !tests/benchmark/*/nonlinear_smoke/*.csv
 
+# ---- ANSYS 语义探测脚本的运行产物（只归档 .py / .md）----
+# probes/ 下每个脚本运行时会在本目录写 .inp/.out/.csv/.dat/.rst/.emat 等，
+# 全部排除；diag_reaction.py 还会建 diag_* 子目录，一并排除。
+tests/benchmark/nonlinear_ansys_3d/probes/*
+!tests/benchmark/nonlinear_ansys_3d/probes/*.py
+!tests/benchmark/nonlinear_ansys_3d/probes/*.md
+
 # ---- 本地改造备份（安全网，不入库）----
 *.bak_*

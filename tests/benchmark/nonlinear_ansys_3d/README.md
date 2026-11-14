@@ -47,14 +47,15 @@ FEM 已收敛的成桥态结果；不存在手工重敲节点坐标或索力。
 
 ## 3. 本机 ANSYS v180 实测语义（G 阶段探测结论）
 
-探测脚本位于 `C:\Users\user\WorkBuddy\2026-11-13-11-23-24\ansys_probe\`：
+探测脚本已归档在仓库内 `probes/`（A~G 共 16 个，见 `probes/README.md`；
+脚本含本机绝对路径常量，跨设备运行前需按该 README 调整）：
 
 | 结论 | 说明 |
 |---|---|
 | `LINK180` 的 `R,id,A,ISTRN` 第 3 参数**静默无效** | 初应变必须用 `INISTATE,SET,DTYP,EPEL` + `INISTATE,DEFINE,<e>,,EPEL,X,eps`；零位移下实测 `N0=E·A·eps` |
 | `KEYOPT(3)=1` = tension-only，`2` = compression-only | 压缩时轴力归零；ANSYS 18.0 会给出一条 `KEYOPT(3) = 1 is an undocumented option` **warning**，属已知基线，不隐藏、不作失败 |
 | `KEYOPT(2)=0` 用 Almansi 应变，`1` 用对数应变 | FEM 共转列式索为 Lagrangian 工程应变 `N=EA/L0·(Ln−L0)`；三者一阶一致，差异 `O(eps²)` |
-| 竖直 / 近竖直 `BEAM4` 需方向节点 `K(+Y)` | F 阶段 `vertical_beam_probe.py` 实测：`E,I,J,K` 且 K 取 I 点全局 +Y，可对齐 FEM `ey=+X / ez=+Y`；K 节点无需约束 |
+| 竖直 / 近竖直 `BEAM4` 需方向节点 `K(+Y)` | F 阶段 `probes/vertical_beam_probe.py` 实测：`E,I,J,K` 且 K 取 I 点全局 +Y，可对齐 FEM `ey=+X / ez=+Y`；K 节点无需约束 |
 | `*CLOAD` 累加 vs ANSYS `F` 覆盖 | 塔柱自重按「每段两端各半」写两遍，同一 `(node,dof)` 会出现多条；必须先合并再输出 `F`。未合并时两塔共丢 4.83 MN，反力总和从 18.03 MN 掉到 13.21 MN |
 | `*CFOPEN` + `*VWRITE` | 一次写出整个数组，外层不能套 `*DO`；APDL 命令流保持纯 ASCII |
 
@@ -118,8 +119,12 @@ reference/
   cb3d10_completion_ansys.json              325 个检查项
 build_reference_nl.py                      从冻结 CSV 生成 reference JSON
 compare_nonlinear_ansys_3d.py               CTest 入口（离线 / --live-ansys）
+probes/                                     A~G 全部 16 个 ANSYS 语义探测脚本 + README
 README.md
 ```
+
+`probes/` 是原始探测证据，不进 CTest；其 README 记录了每条结论的实测数字、
+脚本清单，以及跨设备运行前需要调整的本机绝对路径常量。
 
 归档 CSV 命名把 ANSYS 现场生成的 `<apdl_stem>_{disp,reac,link}.csv`
 改名为 `<apdl_stem>_ansys_{...}.csv`，`--live-ansys` 内部做了名称映射。
@@ -192,4 +197,4 @@ powershell -ExecutionPolicy Bypass -File D:\AI-work\FEM-Eigen\run_tests.ps1
 | `BridgeStudio/ansys_bridge_cable.py` | `spec_mixed_to_apdl()`；F 阶段加入竖直 BEAM 方向节点与 `*CLOAD` 合并 |
 | `BridgeStudio/ansys_bridge_tower.py` | F 阶段 CB3D09 真实竖直塔柱斜拉桥构造器 |
 | `FEM-Eigen/tests/benchmark/cable_arch_3d/` | CB3D03/04/09 线性混合单元 + CB3D05 非线性 smoke |
-| `ansys_probe/link180_nl_probe.py`、`link180_inistrain_probe.py`、`vertical_beam_probe.py` | 本机 ANSYS 语义探测记录 |
+| `probes/README.md` 及目录下 16 个 `*_probe.py` / `trial.py` / `diag_reaction.py` | A~G 全部 ANSYS 语义探测脚本与实测结论归档 |
