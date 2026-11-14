@@ -343,6 +343,20 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(stable_path_3d_benchmark PROPERTIES
         TIMEOUT 900
         LABELS "benchmark")
+
+    # CR 梁刚接框架后屈曲（CB3D19 / 第十八次）：frame_probe.exe 的球面
+    # 弧长法 + 共转 CR 梁 vs ANSYS BEAM188 + NLGEOM + ARCLEN。Williams
+    # toggle 型框架：第一极限点 / 下降段 / 反向荷载 / 再硬化完整路径，
+    # 12513 项冻结黄金值 + 独立 2D 线性刚架刚度锚点 k0。
+    add_test(NAME frame_postbuckling_3d_benchmark
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/frame_postbuckling_3d/compare_frame_postbuckling_3d.py
+                     --bin ${CMAKE_CURRENT_BINARY_DIR}
+                     --cases ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/frame_postbuckling_3d/cases
+                     --reference ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/frame_postbuckling_3d/reference)
+    set_tests_properties(frame_postbuckling_3d_benchmark PROPERTIES
+        TIMEOUT 900
+        LABELS "benchmark")
 else()
     message(STATUS "未找到 Python3，跳过 .dat 逐字节回归 CTest")
 endif()
@@ -407,6 +421,11 @@ fem_add_executable(beam_nl_probe beam_nl_probe.cpp)
 # 极限点走完整 snap-through 下降段；与 ANSYS LINK180 + ARCLEN 对标。
 # 独立新文件，不改 fem_3d_nl.hpp 主求解器与 NonlinearOptions3D 默认值。
 fem_add_executable(snap_probe snap_probe.cpp)
+# N 阶段：把同一个球面弧长法内核用于**共转 CR 梁刚接框架**后屈曲
+# （Williams toggle 型，两根多单元 BEAM，端部铰支 / 顶点刚接），
+# 与 ANSYS BEAM188 + ARCLEN 端到端对标。力学仍完全复用内核，
+# 不改 fem_3d_nl.hpp / stability_path_3d.hpp。
+fem_add_executable(frame_probe frame_probe.cpp)
 
 # ---- 2D/3D 分库 ----
 # 2D 层（fem_2d）编译为静态库；共享核心 fem.hpp 与 3D 层 fem_3d.hpp 为纯头文件。

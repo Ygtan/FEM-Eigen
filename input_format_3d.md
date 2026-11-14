@@ -739,13 +739,14 @@ T 1 ...            ; <序号> <T0(N)> <T*(N)> <lo(N)> <hi(N)>
 
 ## 附录：单元级探针参数文件（不是 `.dat`）
 
-有三个 CLI 走**独立的纯 ASCII 参数文件**，不经 `readModel3D()` / `*ET`：
+有四个 CLI 走**独立的纯 ASCII 参数文件**，不经 `readModel3D()` / `*ET`：
 
 | CLI | 输入 | 用途 | 同源导出方 |
 |---|---|---|---|
 | `cable_sag_probe.exe` | `*.sag`（`E= / A= / LH= / NSEG=` + `C <id> <W> <L0> <amp>`） | 索垂度 / Ernst 闭式，对标分段 LINK180 索链 | `BridgeStudio/ansys_bridge_sag.py` |
 | `beam_nl_probe.exe` | `*.beam`（`G <gid> key=...` + `C <cid> <gid> <CIRCLE\|PDELTA> <lambda>`） | 共转 CR 梁大转动 / 梁柱 P-Δ，对标 BEAM188 + NLGEOM | `BridgeStudio/ansys_bridge_beamnl.py` |
 | `snap_probe.exe` | `*.snap`（`G g1 E= A= B= H= PREF= ...` + `C <cid> g1 DS= PSI= STRAIN=`） | 球面弧长法后屈曲 / snap-through 全过程，对标 LINK180 + ARCLEN | `BridgeStudio/ansys_bridge_snap.py` |
+| `frame_probe.exe` | `*.frame`（`G <gid> E= G= A= IY= IZ= J= B= H= NELEM= PREF= ...` + `C <cid> <gid> DS= PSI= TAG=`） | 共转 CR 梁刚接框架后屈曲全过程，对标 BEAM188 + ARCLEN | `BridgeStudio/ansys_bridge_frame.py` |
 
 > 另有 `STABILITY=1` 把**同一球面弧长法内核**接入 `cable_solver.exe`
 > 主链路：它走本文正文的 `.dat`（经 `readModel3D()`），**不是**上表
@@ -760,8 +761,24 @@ T 1 ...            ; <序号> <T0(N)> <T*(N)> <lo(N)> <hi(N)>
 LINK180 `KEYOPT(2)=1` 口径）；`DS` 是初始弧长半径，`DSMAX` 控制
 极值点附近的采样密度。所有 APDL 与 CLI 都使用同一份导出参数，
 不存在第二份手工输入。
-三份参数文件都只做**单元级 / 单构件级**对标，不生成 `ModelSpec3D` 模型；
+
+`*.frame` 的组参数键为
+`E G A IY IZ J B H NELEM PREF TOL MAXSTEPS MAXITER VMAX DSMAX DSMIN`，
+case 行键为 `DS / PSI / TAG`。`frame_probe.exe` 在参考构形上组装
+Williams toggle 型刚接框架（两端铰支、顶点刚接、每杆 `NELEM` 个
+`BEAM`），直接调用 `stability_path_3d.hpp::solveArcLengthPath3D`；
+输出 `P,<cid>,step,lambda,v,residual,iterations,ds,pivot` 逐平衡点行、
+`S,<cid>,key,value` 派生量行与 `E,<cid>,error` 负例行。派生量里
+`lambda_max` 取**第一个 λ 局部极大**（框架翻越后强硬化，全局最大
+通常落在终点）、`lambda_global_max` 只作对照；`k0_fem` 是内核参考
+构形 `K0` 的初始切线刚度，与两份纯 Python 线性刚架刚度实现互为
+独立锚点。BEAM188 侧用 `KEYOPT(3)=2` + `MP,GXY = G×1000` 退化到
+EB 口径，`IY=IZ` 消除局部轴约定差；判据区间限定 `0 ≤ v ≤ VMAX`。
+力学内核与 `fem_3d_nl.hpp` / `stability_path_3d.hpp` 一字未改。
+
+四份参数文件都只做**单元级 / 单构件级**对标，不生成 `ModelSpec3D` 模型；
 完整口径与冻结黄金值见
 `tests/benchmark/cable_sag_ansys_3d/README.md`、
-`tests/benchmark/beam_nl_ansys_3d/README.md` 与
-`tests/benchmark/snap_through_ansys_3d/README.md`。
+`tests/benchmark/beam_nl_ansys_3d/README.md`、
+`tests/benchmark/snap_through_ansys_3d/README.md` 与
+`tests/benchmark/frame_postbuckling_3d/README.md`。

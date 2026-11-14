@@ -4,6 +4,45 @@
 
 ## 2026-11-14
 
+### 新增：共转 CR 梁刚接框架后屈曲独立对标（`frame_probe.exe`，第十八次 / N 阶段）
+
+- 把 L 阶段（CB3D17）的 `stability_path_3d.hpp::solveArcLengthPath3D` 与
+  K 阶段的共转 CR 梁单元组合起来，做 **Williams toggle 型刚接框架**的
+  后屈曲全过程：两根各 24 个 `BEAM` 单元、支座端铰支释放 `ROTZ`、
+  顶点与中间节点刚接、全节点约束 `UZ/ROTX/ROTY` 保持 XY 平面，
+  顶点施加 `-Y` 参考荷载。新增 `frame_probe.exe` / `frame_probe.cpp`
+  读 `*.frame` 纯 ASCII 参数文件，输出 `P` 行（逐平衡点
+  λ / 控制位移 / 残差 / 迭代数 / 弧长 / LU 量级比）、`S` 行派生量与
+  `E` 行错误码；**不修改** `fem_3d_nl.hpp` / `stability_path_3d.hpp`
+  / `cable_solver.cpp` 任何一行，力学完全复用内核。
+- 与 ANSYS `BEAM188 + NLGEOM + ARCLEN` 端到端对标（2 个 job）：
+  `KEYOPT(3)=2` + `MP,GXY = G×1000` 退化到 Euler-Bernoulli 口径，
+  `IY=IZ` 对称截面消除与 BEAM188 缺省局部轴约定的差异；
+  两边同源取 `NELEM=24`（8→12→16→24 离散收敛诊断归档在
+  `tests/benchmark/frame_postbuckling_3d/probes/`）。
+  正式判据限定 `0 ≤ v ≤ VMAX=0.95`，避开 `v→1` 强硬化区
+  `dλ/dv` 过大导致的插值/采样密度放大误差。
+- **极限点取第一个 λ 局部极大**：刚接框架翻越后弯曲刚度强烈再硬化，
+  全局 `max(λ)` 通常落在路径终点而不是极限点；`lambda_global_max`
+  只作对照量输出，不作判据。
+- 独立锚点：梁框架没有桁架 `P(v)` 闭式解，改用**初始切线刚度 `k0`**，
+  三套实现互相对拍 —— `build_reference_frame.py` 自带纯 Python 2D
+  线性刚架刚度矩阵、`ansys_bridge_frame.py::linear_frame_stiffness`
+  第二套纯 Python 实现、`frame_probe.cpp::linearSlope` 在参考构形上
+  组装内核 `K0` 的解。实测 `k0_analytic=1.211946322189e7 N/m`，
+  FEM `k0_fem` 相对差 `1.907e-13`，`nodes=49 / apex=25`。
+- 第 21 项 CTest `frame_postbuckling_3d_benchmark`：
+  `tests/benchmark/frame_postbuckling_3d/` 冻结 **12513 项黄金值**、
+  4 个字符串、37 条 criteria、6 个 case（含 `bad_noload` 负例与
+  ANSYS 日志 `errors=0` 断言），离线重跑 `frame_probe.exe` 复现
+  13958 个数值 `worst|d|=0`；`--live-ansys` 在临时目录复核、
+  不覆写冻结 CSV。`run_tests.ps1` 同步追加该段。
+- **如实边界**：这是**独立 `frame_probe.exe` 探针**，不是
+  `cable_solver.exe` 成桥态闭环 / 施工阶段链路；能力矩阵 B3 仍
+  **标 `P` 不标 `Y`**，把全过程稳定分析接进成桥态闭环属于后续阶段。
+  既有 20 项 CTest 与全部冻结算例逐位不变，`STABILITY=0` 默认
+  零污染口径不受影响。
+
 ### 新增：B3 非线性稳定全过程 `[STABILITY]` 段（`STABILITY=1` opt-in，第十七次）
 
 - 把 L 阶段（CB3D17）已用 ANSYS `ARCLEN` 对标过的

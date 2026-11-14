@@ -467,4 +467,30 @@ if (Test-Path $spScript) {
     $failed++
 }
 
+# ---- CR 梁刚接框架后屈曲（CB3D19 / 第十八次）---------------------------
+$fpScript = Join-Path $root "tests\benchmark\frame_postbuckling_3d\compare_frame_postbuckling_3d.py"
+$fpCases  = Join-Path $root "tests\benchmark\frame_postbuckling_3d\cases"
+$fpRef    = Join-Path $root "tests\benchmark\frame_postbuckling_3d\reference"
+if (Test-Path $fpScript) {
+    $py = Get-Command python -ErrorAction SilentlyContinue
+    if ($py) {
+        Write-Host ""
+        Write-Host "== CR beam frame post-buckling vs ANSYS BEAM188 ARCLEN benchmark =="
+        & python $fpScript --bin $bin --cases $fpCases --reference $fpRef
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[PASS] Frame post-buckling benchmark"
+        } else {
+            Write-Host "[FAIL] Frame post-buckling benchmark"
+            $failed++
+        }
+    } else {
+        Write-Host "[MISS] python not found, skip frame post-buckling benchmark"
+        $failed++
+    }
+} else {
+    Write-Host "[MISS] frame post-buckling benchmark script missing: $fpScript"
+    $failed++
+}
+
 if ($failed -eq 0) { Write-Host "ALL TESTS PASSED" } else { Write-Host "$failed TEST(S) FAILED"; exit 1 }
+
