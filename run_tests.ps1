@@ -346,4 +346,28 @@ if (Test-Path $suScript) {
     $failed++
 }
 
+$seScript = Join-Path $root "tests\benchmark\suspension_erection_3d\compare_suspension_erection_3d.py"
+$seCases  = Join-Path $root "tests\benchmark\suspension_erection_3d\cases"
+$seRef    = Join-Path $root "tests\benchmark\suspension_erection_3d\reference"
+if (Test-Path $seScript) {
+    $py = Get-Command python -ErrorAction SilentlyContinue
+    if ($py) {
+        Write-Host ""
+        Write-Host "== Balanced self-anchored suspension + erection stages benchmark =="
+        & python $seScript --bin $bin --cases $seCases --reference $seRef
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[PASS] Balanced suspension + erection stages benchmark"
+        } else {
+            Write-Host "[FAIL] Balanced suspension + erection stages benchmark"
+            $failed++
+        }
+    } else {
+        Write-Host "[MISS] python not found, skip balanced suspension benchmark"
+        $failed++
+    }
+} else {
+    Write-Host "[MISS] balanced suspension benchmark script missing: $seScript"
+    $failed++
+}
+
 if ($failed -eq 0) { Write-Host "ALL TESTS PASSED" } else { Write-Host "$failed TEST(S) FAILED"; exit 1 }

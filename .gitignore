@@ -64,3 +64,6 @@ tests/benchmark/nonlinear_ansys_3d/probes/*
 
 # ---- 本地改造备份（安全网，不入库）----
 *.bak_*
+
+# ---- 临时 CMake configure 探针目录（验证 CMakeLists 语法用，跑完即删）----
+cmake_probe_*/

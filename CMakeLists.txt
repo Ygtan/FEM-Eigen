@@ -271,6 +271,21 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(suspension_ansys_3d_benchmark PROPERTIES
         TIMEOUT 900
         LABELS "benchmark")
+
+    # 自锚式自动平衡边跨 + 施工阶段找形：CB3D13。三层验证——
+    # [A] 全桥成桥态 / [B] 梁端无抗拔判据 / [C] 5 个施工阶段各一份
+    # LINK180 索链 APDL（从扰动几何独立 NLGEOM 求解）。重跑 cable_solver.exe
+    # 复现含 [ERECTION_*] 新段的冻结结果，与冻结自真实 ANSYS 18.0 批处理的
+    # 478 项黄金值逐项比对；默认离线，--live-ansys 可现场复核 6 个 job。
+    add_test(NAME suspension_erection_3d_benchmark
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/suspension_erection_3d/compare_suspension_erection_3d.py
+                     --bin ${CMAKE_CURRENT_BINARY_DIR}
+                     --cases ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/suspension_erection_3d/cases
+                     --reference ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/suspension_erection_3d/reference)
+    set_tests_properties(suspension_erection_3d_benchmark PROPERTIES
+        TIMEOUT 900
+        LABELS "benchmark")
 else()
     message(STATUS "未找到 Python3，跳过 .dat 逐字节回归 CTest")
 endif()

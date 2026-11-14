@@ -791,6 +791,10 @@ struct ErectionState {
     std::map<int, double> segT;     // 主缆段轴力（单元 id → T）
     std::map<int, double> hangerT;  // 吊索力（单元 id → T）
     std::vector<double> mainX, mainZ;   // 主跨主缆节点（塔1→塔2）的 x / 高程
+    // 逐阶段对标用（ANSYS 侧无需重演 FEM 内部吊装规则）：
+    std::vector<int> mainIds;       // 主跨主缆节点 id，顺序同 mainX/mainZ
+    std::vector<double> mainQ;      // 吊索搬运到各主缆节点的竖向荷载 N（向下为正）
+    std::vector<double> mainT;     // 主跨各段轴力 N（顺序 mainX[k]→mainX[k+1]）
 };
 
 ErectionState findErectionState(const Model3D& m, const Cfg& cfg, double L0target) {
@@ -905,6 +909,13 @@ ErectionState findErectionState(const Model3D& m, const Cfg& cfg, double L0targe
     }
     st.mainX = spMain.x;
     st.mainZ = fMain.z;
+    st.mainT = fMain.segT;
+    st.mainIds = spMain.nodeIds;
+    st.mainQ.assign(spMain.nodeIds.size(), 0.0);
+    for (std::size_t k = 0; k < spMain.nodeIds.size(); ++k) {
+        auto qit = qAtCable.find(spMain.nodeIds[k]);
+        if (qit != qAtCable.end()) st.mainQ[k] = qit->second;
+    }
     return st;
 }
 
@@ -1450,6 +1461,9 @@ int main(int argc, char** argv) {
             double H = 0.0, sag = 0.0, midZ = 0.0;
             double hangerTmin = 0.0, hangerTmax = 0.0;
             std::vector<double> mainX, mainZ;
+            std::vector<int> chainIds;        // 主跨主缆节点 id
+            std::vector<double> chainX, qLoad; // 节点 x / 该阶段竖向荷载 N
+            std::vector<double> segT;         // 主跨各段轴力 N
         };
         std::vector<ErectionRow> erectionRows;
         if (susp && cfg.erection && converged) {
@@ -1529,6 +1543,10 @@ int main(int argc, char** argv) {
                     }
                     row.mainX = es.mainX;
                     row.mainZ = es.mainZ;
+                    row.chainIds = es.mainIds;
+                    row.chainX = es.mainX;
+                    row.qLoad = es.mainQ;
+                    row.segT = es.mainT;
                     erectionRows.push_back(row);
                 };
 
@@ -1728,6 +1746,29 @@ int main(int argc, char** argv) {
                     std::fprintf(f, "%d", r.stage);
                     for (std::size_t k = 0; k < r.mainZ.size(); ++k)
                         std::fprintf(f, " %.10g", r.mainZ[k]);
+                    std::fprintf(f, "\n");
+                }
+                // 逐阶段 ANSYS 独立复算所需的同源输入。这两段只在 *ERECTION
+                // 启用时输出，既有算例的 _cable.txt 逐字节不变。
+                //   [ERECTION_CHAIN]  <node id> <x>   主跨主缆节点链（各阶段相同）
+                //   [ERECTION_LOAD]   <stage> <q...>  吊索搬运到各主缆节点的
+                //                                    竖向荷载 N（向下为正）
+                //   [ERECTION_FORCE]  <stage> <T...>  主跨各段轴力 N
+                const auto& ids0 = erectionRows.front().chainIds;
+                const auto& xs0 = erectionRows.front().chainX;
+                std::fprintf(f, "[ERECTION_CHAIN]\n");
+                for (std::size_t k = 0; k < ids0.size(); ++k)
+                    std::fprintf(f, "%d %.10g\n", ids0[k], xs0[k]);
+                std::fprintf(f, "[ERECTION_LOAD]\n");
+                for (const auto& r : erectionRows) {
+                    std::fprintf(f, "%d", r.stage);
+                    for (double q : r.qLoad) std::fprintf(f, " %.10g", q);
+                    std::fprintf(f, "\n");
+                }
+                std::fprintf(f, "[ERECTION_FORCE]\n");
+                for (const auto& r : erectionRows) {
+                    std::fprintf(f, "%d", r.stage);
+                    for (double T : r.segT) std::fprintf(f, " %.10g", T);
                     std::fprintf(f, "\n");
                 }
             }
