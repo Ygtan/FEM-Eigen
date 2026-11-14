@@ -60,6 +60,31 @@
 - `ADDMASS`：附加线质量 kg/m（质量矩阵用；缺省 0）。
 - `IW`：翘曲常数（扇形惯性矩 m⁶）；仅 `BEAM7` 使用，缺省 0 即退化为圣维南扭转。
 
+索（`CABLE`）：
+
+```text
+*R
+3 A=0.006 W=462.051 L0=99.923490771
+```
+
+- `W`：索单位长度重量 **N/m**（不是密度）。用于浅垂度弹性悬链线的
+  垂度缩短量 `s(T)=w²Lh³/(24T²)`、Ernst 等效弹模
+  `Eeq=E/(1+w²Lh³EA/(12T³L0))` 与索自重外荷载；**缺省 0 = 关闭垂度
+  与 Ernst 修正**，索退化为直杆。生成器侧对应 `cable_dens × A × g`。
+  注意它与 `*MP` 的 `DENS`（质量矩阵/自振用）不是同一个量。
+- `L0`：无应力（弧）长度 **m**，缺省 0 时由几何弦长代替。ANSYS 对标侧
+  对应 `INISTATE,SET,DTYP,EPEL` + `INISTATE,DEFINE,<e>,,EPEL,X,eps`。
+  与 `*R ... ISTRN=`（初应变预张紧）含义不同，不可互相替代。
+- 两类字段都支持**单元级覆盖**：`*EN,<id>,<n1>,<n2> W=<值> L0=<值>`。
+  每根索的 W/L0 本来就各不相同，只靠 `*R` 共享一份会逼得同类索拆成
+  多个实常数。单元级覆盖优先于实常数。
+- 解析位置：`fem_3d.hpp` 的 `readModel3D`（`*R` 段与 `*EN` 后缀），
+  闭式本构见 `cableTensionFromChord` / `cableUnstrainedLengthForTension`，
+  Ernst 模量见 `fem_3d_nl.hpp::cableErnstModulus`。
+
+> 端到端 ANSYS 对标见 `tests/benchmark/cable_sag_ansys_3d/`：ANSYS LINK180
+> 是**无垂度**轴向杆，必须用分段索链 + 节点自重才能独立验证 `W>0` 的效应。
+
 ## 单元生成
 
 ```text

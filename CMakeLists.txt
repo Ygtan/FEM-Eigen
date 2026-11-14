@@ -286,6 +286,22 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(suspension_erection_3d_benchmark PROPERTIES
         TIMEOUT 900
         LABELS "benchmark")
+
+    # 索垂度 / Ernst 等效弹模（CB3D14）+ 带索自重悬索桥空缆态（CB3D15）。
+    # ANSYS LINK180 无垂度模型，因此把单根索离散成 80 段 LINK180 +
+    # 水平均布节点自重 + NLGEOM，从扰动几何独立收敛出悬链线；FEM 侧由
+    # cable_sag_probe.exe 调用 fem_3d.hpp / fem_3d_nl.hpp 的内核闭式。
+    # 7 个 job（5 点 L0 扫描 + W=0 直杆 + W/2 低重度），573 项黄金值；
+    # 另用 L0 扫描的中心差分验证 Ernst 解析切线 dT/dL0。
+    add_test(NAME cable_sag_ansys_3d_benchmark
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/cable_sag_ansys_3d/compare_cable_sag_ansys_3d.py
+                     --bin ${CMAKE_CURRENT_BINARY_DIR}
+                     --cases ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/cable_sag_ansys_3d/cases
+                     --reference ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/cable_sag_ansys_3d/reference)
+    set_tests_properties(cable_sag_ansys_3d_benchmark PROPERTIES
+        TIMEOUT 900
+        LABELS "benchmark")
 else()
     message(STATUS "未找到 Python3，跳过 .dat 逐字节回归 CTest")
 endif()
@@ -338,6 +354,10 @@ fem_add_executable(modal_bench bench/modal_bench.cpp)
 fem_add_executable(nl_bench bench/nl_bench.cpp)
 # 斜拉桥成桥态 CLI 接缝：BridgeStudio 导出 .dat → 这里 → <stem>_cable.txt
 fem_add_executable(cable_solver cable_solver.cpp)
+# J 阶段：把索垂度 / Ernst 等效弹模的内核闭式（fem_3d.hpp + fem_3d_nl.hpp）
+# 暴露成 CSV，供 tests/benchmark/cable_sag_ansys_3d 与 ANSYS 分段 LINK180
+# 索链端到端对标。只读参数文件，不改动 cable_solver 的任何既有路径。
+fem_add_executable(cable_sag_probe cable_sag_probe.cpp)
 
 # ---- 2D/3D 分库 ----
 # 2D 层（fem_2d）编译为静态库；共享核心 fem.hpp 与 3D 层 fem_3d.hpp 为纯头文件。

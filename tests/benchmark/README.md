@@ -33,11 +33,12 @@
 | `nonlinear_ansys_3d/` | `nonlinear_ansys_3d_benchmark` | NLGEOM + LINK180 成桥态 | CB3D10 | **325** |
 | `suspension_ansys_3d/` | `suspension_ansys_3d_benchmark` | 悬索桥找形（地锚/自锚） | CB3D11~12 | **292 + 282 = 574** |
 | `suspension_erection_3d/` | `suspension_erection_3d_benchmark` | 自动平衡边跨 + 施工阶段 | CB3D13 | **478** |
+| `cable_sag_ansys_3d/` | `cable_sag_ansys_3d_benchmark` | 索垂度 / Ernst 弹模 + `W>0` 空缆态 | CB3D14~15 | **573** |
 
 另有 4 个解析/内核单测（`analytical_exact_solutions_2d/3d`、
 `nonlinear_co_rotational_3d`、`shape_sensitivity_3d`）与 1 个
-`dat_byte_regression`，合计 **16 个 CTest**。当前实测全量
-`ctest` 16/16、`run_tests.ps1` `ALL TESTS PASSED`。
+`dat_byte_regression`，合计 **17 个 CTest**。当前实测全量
+`ctest` 17/17、`run_tests.ps1` `ALL TESTS PASSED`。
 
 各目录的 `README.md` 记录该阶段的建模口径、ANSYS APDL 语义、容差来源与
 已知边界；`nonlinear_ansys_3d/probes/` 归档 A~G 阶段全部 16 个 ANSYS 语义
@@ -68,8 +69,8 @@ cmake -G "MSYS Makefiles" \
 ```
 
 **实测（2026-11-14，本机 MSYS2 / GCC 16.2）**：方案 A 干净 configure
-生成 16 条 `add_test`，`cmake --build -j 4` 编译 74/74 目标、产出 36 个
-exe，`ctest` 全新目录 **16/16 Passed**（12.16 s）。即换机后无需手工同步
+生成 17 条 `add_test`，`cmake --build -j 4` 编译 76/76 目标、产出 37 个
+exe，`ctest` 全新目录 **17/17 Passed**（12.99 s）。即换机后无需手工同步
 `CTestTestfile.cmake`，也无需 ANSYS 许可即可全量回归。
 
 > **本机历史坑**：旧 `build/` 缓存的生成器是 `MinGW Makefiles`，却把

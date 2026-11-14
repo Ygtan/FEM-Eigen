@@ -370,4 +370,28 @@ if (Test-Path $seScript) {
     $failed++
 }
 
+$sgScript = Join-Path $root "tests\benchmark\cable_sag_ansys_3d\compare_cable_sag_ansys_3d.py"
+$sgCases  = Join-Path $root "tests\benchmark\cable_sag_ansys_3d\cases"
+$sgRef    = Join-Path $root "tests\benchmark\cable_sag_ansys_3d\reference"
+if (Test-Path $sgScript) {
+    $py = Get-Command python -ErrorAction SilentlyContinue
+    if ($py) {
+        Write-Host ""
+        Write-Host "== Cable sag / Ernst modulus + W>0 empty-cable state benchmark =="
+        & python $sgScript --bin $bin --cases $sgCases --reference $sgRef
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[PASS] Cable sag / Ernst benchmark"
+        } else {
+            Write-Host "[FAIL] Cable sag / Ernst benchmark"
+            $failed++
+        }
+    } else {
+        Write-Host "[MISS] python not found, skip cable sag benchmark"
+        $failed++
+    }
+} else {
+    Write-Host "[MISS] cable sag benchmark script missing: $sgScript"
+    $failed++
+}
+
 if ($failed -eq 0) { Write-Host "ALL TESTS PASSED" } else { Write-Host "$failed TEST(S) FAILED"; exit 1 }

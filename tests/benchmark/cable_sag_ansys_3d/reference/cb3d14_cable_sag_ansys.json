@@ -1,0 +1,4801 @@
+{
+  "id": "cb3d14_cable_sag",
+  "title": "CB3D14 cable sag / Ernst modulus + CB3D15 W>0 empty-cable state vs ANSYS 18.0",
+  "description": "Single CABLE element: E=195 GPa, A=0.006 m2, LH=100 m, W=462.051 N/m. FEM closed form fem_3d.hpp::cableTensionFromChord + fem_3d_nl.hpp::cableErnstModulus; ANSYS 80-segment LINK180 chain with horizontal-uniform nodal self weight, NLGEOM,ON, INISTATE,EPEL and a 0.20 m sine-perturbed straight initial geometry. 7 jobs (5-point L0 sweep, W=0 rod baseline, W/2 low-weight). Ernst tangent is verified by finite difference of ANSYS H over the L0 sweep. CB3D15 confirms that W>0 removes the degenerate empty-cable stage (H >> 100 N, sag > 0).",
+  "params": {
+    "E": 195000000000.0,
+    "A": 0.006,
+    "LH": 100.0,
+    "NSEG": 80
+  },
+  "rtol": 0.002,
+  "sag_file": "cb3d14_cable_sag.sag",
+  "fem_csv": "cb3d14_cable_sag_fem.csv",
+  "cases": [
+    {
+      "id": "sag_01",
+      "W": 462.051,
+      "L0": 99.919490770642,
+      "amp": 0.2,
+      "group": "sag",
+      "apdl": "sag_01.inp",
+      "csv": {
+        "disp": "sag_01_disp.csv",
+        "link": "sag_01_link.csv"
+      }
+    },
+    {
+      "id": "sag_02",
+      "W": 462.051,
+      "L0": 99.921490770642,
+      "amp": 0.2,
+      "group": "sag",
+      "apdl": "sag_02.inp",
+      "csv": {
+        "disp": "sag_02_disp.csv",
+        "link": "sag_02_link.csv"
+      }
+    },
+    {
+      "id": "sag_03",
+      "W": 462.051,
+      "L0": 99.923490770642,
+      "amp": 0.2,
+      "group": "sag",
+      "apdl": "sag_03.inp",
+      "csv": {
+        "disp": "sag_03_disp.csv",
+        "link": "sag_03_link.csv"
+      }
+    },
+    {
+      "id": "sag_04",
+      "W": 462.051,
+      "L0": 99.925490770642,
+      "amp": 0.2,
+      "group": "sag",
+      "apdl": "sag_04.inp",
+      "csv": {
+        "disp": "sag_04_disp.csv",
+        "link": "sag_04_link.csv"
+      }
+    },
+    {
+      "id": "sag_05",
+      "W": 462.051,
+      "L0": 99.927490770642,
+      "amp": 0.2,
+      "group": "sag",
+      "apdl": "sag_05.inp",
+      "csv": {
+        "disp": "sag_05_disp.csv",
+        "link": "sag_05_link.csv"
+      }
+    },
+    {
+      "id": "rod_00",
+      "W": 0.0,
+      "L0": 99.923490770642,
+      "amp": 0.0,
+      "group": "rod",
+      "apdl": "rod_00.inp",
+      "csv": {
+        "disp": "rod_00_disp.csv",
+        "link": "rod_00_link.csv"
+      }
+    },
+    {
+      "id": "sag_half",
+      "W": 231.0255,
+      "L0": 99.9168248702865,
+      "amp": 0.2,
+      "group": "sag",
+      "apdl": "sag_half.inp",
+      "csv": {
+        "disp": "sag_half_disp.csv",
+        "link": "sag_half_link.csv"
+      }
+    }
+  ],
+  "checks": [
+    {
+      "case": "sag_01",
+      "key": "H",
+      "ref": 1038952.0657731502,
+      "group": "force",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "f",
+      "ref": 0.5558870874,
+      "group": "shape",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_01",
+      "ref": 1039202.75,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_02",
+      "ref": 1039190.188,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_03",
+      "ref": 1039178.0,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_04",
+      "ref": 1039166.125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_05",
+      "ref": 1039154.5,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_06",
+      "ref": 1039143.25,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_07",
+      "ref": 1039132.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_08",
+      "ref": 1039121.75,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_09",
+      "ref": 1039111.438,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_10",
+      "ref": 1039101.5,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_11",
+      "ref": 1039091.812,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_12",
+      "ref": 1039082.5,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_13",
+      "ref": 1039073.5,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_14",
+      "ref": 1039064.812,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_15",
+      "ref": 1039056.5,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_16",
+      "ref": 1039048.438,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_17",
+      "ref": 1039040.75,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_18",
+      "ref": 1039033.312,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_19",
+      "ref": 1039026.25,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_20",
+      "ref": 1039019.5,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_21",
+      "ref": 1039013.062,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_22",
+      "ref": 1039007.0,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_23",
+      "ref": 1039001.188,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_24",
+      "ref": 1038995.688,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_25",
+      "ref": 1038990.562,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_26",
+      "ref": 1038985.75,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_27",
+      "ref": 1038981.25,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_28",
+      "ref": 1038977.062,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_29",
+      "ref": 1038973.188,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_30",
+      "ref": 1038969.688,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_31",
+      "ref": 1038966.438,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_32",
+      "ref": 1038963.562,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_33",
+      "ref": 1038961.0,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_34",
+      "ref": 1038958.75,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_35",
+      "ref": 1038956.812,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_36",
+      "ref": 1038955.188,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_37",
+      "ref": 1038953.938,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_38",
+      "ref": 1038952.938,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_39",
+      "ref": 1038952.312,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_40",
+      "ref": 1038952.0,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_41",
+      "ref": 1038952.0,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_42",
+      "ref": 1038952.312,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_43",
+      "ref": 1038952.938,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_44",
+      "ref": 1038953.938,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_45",
+      "ref": 1038955.188,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_46",
+      "ref": 1038956.812,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_47",
+      "ref": 1038958.75,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_48",
+      "ref": 1038961.0,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_49",
+      "ref": 1038963.562,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_50",
+      "ref": 1038966.438,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_51",
+      "ref": 1038969.688,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_52",
+      "ref": 1038973.188,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_53",
+      "ref": 1038977.062,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_54",
+      "ref": 1038981.25,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_55",
+      "ref": 1038985.75,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_56",
+      "ref": 1038990.562,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_57",
+      "ref": 1038995.688,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_58",
+      "ref": 1039001.188,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_59",
+      "ref": 1039007.0,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_60",
+      "ref": 1039013.062,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_61",
+      "ref": 1039019.5,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_62",
+      "ref": 1039026.25,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_63",
+      "ref": 1039033.312,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_64",
+      "ref": 1039040.75,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_65",
+      "ref": 1039048.438,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_66",
+      "ref": 1039056.5,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_67",
+      "ref": 1039064.812,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_68",
+      "ref": 1039073.5,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_69",
+      "ref": 1039082.5,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_70",
+      "ref": 1039091.812,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_71",
+      "ref": 1039101.5,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_72",
+      "ref": 1039111.438,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_73",
+      "ref": 1039121.75,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_74",
+      "ref": 1039132.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_75",
+      "ref": 1039143.25,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_76",
+      "ref": 1039154.5,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_77",
+      "ref": 1039166.125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_78",
+      "ref": 1039178.0,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_79",
+      "ref": 1039190.188,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_01",
+      "key": "T_80",
+      "ref": 1039202.75,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "H",
+      "ref": 1019268.9631043399,
+      "group": "force",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "f",
+      "ref": 0.5666209176,
+      "group": "shape",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_01",
+      "ref": 1019524.5,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_02",
+      "ref": 1019511.688,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_03",
+      "ref": 1019499.25,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_04",
+      "ref": 1019487.125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_05",
+      "ref": 1019475.312,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_06",
+      "ref": 1019463.875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_07",
+      "ref": 1019452.75,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_08",
+      "ref": 1019441.938,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_09",
+      "ref": 1019431.438,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_10",
+      "ref": 1019421.25,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_11",
+      "ref": 1019411.438,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_12",
+      "ref": 1019401.938,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_13",
+      "ref": 1019392.75,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_14",
+      "ref": 1019383.938,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_15",
+      "ref": 1019375.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_16",
+      "ref": 1019367.188,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_17",
+      "ref": 1019359.312,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_18",
+      "ref": 1019351.812,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_19",
+      "ref": 1019344.562,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_20",
+      "ref": 1019337.688,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_21",
+      "ref": 1019331.125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_22",
+      "ref": 1019324.938,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_23",
+      "ref": 1019319.0,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_24",
+      "ref": 1019313.438,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_25",
+      "ref": 1019308.188,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_26",
+      "ref": 1019303.312,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_27",
+      "ref": 1019298.688,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_28",
+      "ref": 1019294.438,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_29",
+      "ref": 1019290.5,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_30",
+      "ref": 1019286.938,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_31",
+      "ref": 1019283.625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_32",
+      "ref": 1019280.688,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_33",
+      "ref": 1019278.062,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_34",
+      "ref": 1019275.75,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_35",
+      "ref": 1019273.812,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_36",
+      "ref": 1019272.188,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_37",
+      "ref": 1019270.875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_38",
+      "ref": 1019269.875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_39",
+      "ref": 1019269.188,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_40",
+      "ref": 1019268.875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_41",
+      "ref": 1019268.875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_42",
+      "ref": 1019269.188,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_43",
+      "ref": 1019269.875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_44",
+      "ref": 1019270.875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_45",
+      "ref": 1019272.188,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_46",
+      "ref": 1019273.812,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_47",
+      "ref": 1019275.75,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_48",
+      "ref": 1019278.062,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_49",
+      "ref": 1019280.688,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_50",
+      "ref": 1019283.625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_51",
+      "ref": 1019286.938,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_52",
+      "ref": 1019290.5,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_53",
+      "ref": 1019294.438,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_54",
+      "ref": 1019298.688,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_55",
+      "ref": 1019303.312,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_56",
+      "ref": 1019308.188,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_57",
+      "ref": 1019313.438,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_58",
+      "ref": 1019319.0,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_59",
+      "ref": 1019324.938,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_60",
+      "ref": 1019331.125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_61",
+      "ref": 1019337.688,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_62",
+      "ref": 1019344.562,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_63",
+      "ref": 1019351.812,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_64",
+      "ref": 1019359.312,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_65",
+      "ref": 1019367.188,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_66",
+      "ref": 1019375.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_67",
+      "ref": 1019383.938,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_68",
+      "ref": 1019392.75,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_69",
+      "ref": 1019401.938,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_70",
+      "ref": 1019411.438,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_71",
+      "ref": 1019421.25,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_72",
+      "ref": 1019431.438,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_73",
+      "ref": 1019441.938,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_74",
+      "ref": 1019452.75,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_75",
+      "ref": 1019463.875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_76",
+      "ref": 1019475.312,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_77",
+      "ref": 1019487.125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_78",
+      "ref": 1019499.25,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_79",
+      "ref": 1019511.688,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_02",
+      "key": "T_80",
+      "ref": 1019524.5,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "H",
+      "ref": 999772.0538642786,
+      "group": "force",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "f",
+      "ref": 0.5776698295,
+      "group": "shape",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_01",
+      "ref": 1000032.562,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_02",
+      "ref": 1000019.5,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_03",
+      "ref": 1000006.812,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_04",
+      "ref": 999994.4375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_05",
+      "ref": 999982.4375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_06",
+      "ref": 999970.75,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_07",
+      "ref": 999959.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_08",
+      "ref": 999948.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_09",
+      "ref": 999937.6875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_10",
+      "ref": 999927.3125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_11",
+      "ref": 999917.3125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_12",
+      "ref": 999907.625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_13",
+      "ref": 999898.25,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_14",
+      "ref": 999889.25,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_15",
+      "ref": 999880.5625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_16",
+      "ref": 999872.1875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_17",
+      "ref": 999864.1875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_18",
+      "ref": 999856.5,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_19",
+      "ref": 999849.125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_20",
+      "ref": 999842.125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_21",
+      "ref": 999835.4375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_22",
+      "ref": 999829.125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_23",
+      "ref": 999823.0625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_24",
+      "ref": 999817.4375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_25",
+      "ref": 999812.0625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_26",
+      "ref": 999807.0625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_27",
+      "ref": 999802.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_28",
+      "ref": 999798.0625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_29",
+      "ref": 999794.0,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_30",
+      "ref": 999790.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_31",
+      "ref": 999787.0,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_32",
+      "ref": 999784.0,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_33",
+      "ref": 999781.3125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_34",
+      "ref": 999779.0,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_35",
+      "ref": 999777.0,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_36",
+      "ref": 999775.3125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_37",
+      "ref": 999774.0,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_38",
+      "ref": 999773.0,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_39",
+      "ref": 999772.3125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_40",
+      "ref": 999772.0,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_41",
+      "ref": 999772.0,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_42",
+      "ref": 999772.3125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_43",
+      "ref": 999773.0,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_44",
+      "ref": 999774.0,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_45",
+      "ref": 999775.3125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_46",
+      "ref": 999777.0,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_47",
+      "ref": 999779.0,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_48",
+      "ref": 999781.3125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_49",
+      "ref": 999784.0,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_50",
+      "ref": 999787.0,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_51",
+      "ref": 999790.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_52",
+      "ref": 999794.0,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_53",
+      "ref": 999798.0625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_54",
+      "ref": 999802.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_55",
+      "ref": 999807.0625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_56",
+      "ref": 999812.0625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_57",
+      "ref": 999817.4375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_58",
+      "ref": 999823.0625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_59",
+      "ref": 999829.125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_60",
+      "ref": 999835.4375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_61",
+      "ref": 999842.125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_62",
+      "ref": 999849.125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_63",
+      "ref": 999856.5,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_64",
+      "ref": 999864.1875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_65",
+      "ref": 999872.1875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_66",
+      "ref": 999880.5625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_67",
+      "ref": 999889.25,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_68",
+      "ref": 999898.25,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_69",
+      "ref": 999907.625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_70",
+      "ref": 999917.3125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_71",
+      "ref": 999927.3125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_72",
+      "ref": 999937.6875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_73",
+      "ref": 999948.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_74",
+      "ref": 999959.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_75",
+      "ref": 999970.75,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_76",
+      "ref": 999982.4375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_77",
+      "ref": 999994.4375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_78",
+      "ref": 1000006.812,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_79",
+      "ref": 1000019.5,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_03",
+      "key": "T_80",
+      "ref": 1000032.562,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "H",
+      "ref": 980470.4123953736,
+      "group": "force",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "f",
+      "ref": 0.5890408601,
+      "group": "shape",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_01",
+      "ref": 980736.0,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_02",
+      "ref": 980722.75,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_03",
+      "ref": 980709.8125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_04",
+      "ref": 980697.1875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_05",
+      "ref": 980684.9375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_06",
+      "ref": 980673.0,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_07",
+      "ref": 980661.4375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_08",
+      "ref": 980650.1875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_09",
+      "ref": 980639.3125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_10",
+      "ref": 980628.75,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_11",
+      "ref": 980618.5,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_12",
+      "ref": 980608.625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_13",
+      "ref": 980599.125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_14",
+      "ref": 980589.875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_15",
+      "ref": 980581.0625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_16",
+      "ref": 980572.5625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_17",
+      "ref": 980564.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_18",
+      "ref": 980556.5,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_19",
+      "ref": 980549.0,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_20",
+      "ref": 980541.875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_21",
+      "ref": 980535.0625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_22",
+      "ref": 980528.5625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_23",
+      "ref": 980522.4375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_24",
+      "ref": 980516.6875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_25",
+      "ref": 980511.1875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_26",
+      "ref": 980506.125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_27",
+      "ref": 980501.3125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_28",
+      "ref": 980496.9375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_29",
+      "ref": 980492.8125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_30",
+      "ref": 980489.0625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_31",
+      "ref": 980485.6875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_32",
+      "ref": 980482.625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_33",
+      "ref": 980479.875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_34",
+      "ref": 980477.5,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_35",
+      "ref": 980475.4375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_36",
+      "ref": 980473.75,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_37",
+      "ref": 980472.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_38",
+      "ref": 980471.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_39",
+      "ref": 980470.6875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_40",
+      "ref": 980470.3125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_41",
+      "ref": 980470.3125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_42",
+      "ref": 980470.6875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_43",
+      "ref": 980471.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_44",
+      "ref": 980472.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_45",
+      "ref": 980473.75,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_46",
+      "ref": 980475.4375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_47",
+      "ref": 980477.5,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_48",
+      "ref": 980479.875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_49",
+      "ref": 980482.625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_50",
+      "ref": 980485.6875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_51",
+      "ref": 980489.0625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_52",
+      "ref": 980492.8125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_53",
+      "ref": 980496.9375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_54",
+      "ref": 980501.3125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_55",
+      "ref": 980506.125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_56",
+      "ref": 980511.1875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_57",
+      "ref": 980516.6875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_58",
+      "ref": 980522.4375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_59",
+      "ref": 980528.5625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_60",
+      "ref": 980535.0625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_61",
+      "ref": 980541.875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_62",
+      "ref": 980549.0,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_63",
+      "ref": 980556.5,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_64",
+      "ref": 980564.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_65",
+      "ref": 980572.5625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_66",
+      "ref": 980581.0625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_67",
+      "ref": 980589.875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_68",
+      "ref": 980599.125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_69",
+      "ref": 980608.625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_70",
+      "ref": 980618.5,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_71",
+      "ref": 980628.75,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_72",
+      "ref": 980639.3125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_73",
+      "ref": 980650.1875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_74",
+      "ref": 980661.4375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_75",
+      "ref": 980673.0,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_76",
+      "ref": 980684.9375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_77",
+      "ref": 980697.1875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_78",
+      "ref": 980709.8125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_79",
+      "ref": 980722.75,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_04",
+      "key": "T_80",
+      "ref": 980736.0,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "H",
+      "ref": 961373.3921629637,
+      "group": "force",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "f",
+      "ref": 0.6007406466,
+      "group": "shape",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_01",
+      "ref": 961644.25,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_02",
+      "ref": 961630.75,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_03",
+      "ref": 961617.5,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_04",
+      "ref": 961604.6875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_05",
+      "ref": 961592.1875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_06",
+      "ref": 961580.0,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_07",
+      "ref": 961568.1875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_08",
+      "ref": 961556.75,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_09",
+      "ref": 961545.625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_10",
+      "ref": 961534.875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_11",
+      "ref": 961524.4375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_12",
+      "ref": 961514.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_13",
+      "ref": 961504.625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_14",
+      "ref": 961495.25,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_15",
+      "ref": 961486.25,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_16",
+      "ref": 961477.5625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_17",
+      "ref": 961469.1875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_18",
+      "ref": 961461.1875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_19",
+      "ref": 961453.5625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_20",
+      "ref": 961446.25,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_21",
+      "ref": 961439.3125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_22",
+      "ref": 961432.75,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_23",
+      "ref": 961426.4375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_24",
+      "ref": 961420.5625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_25",
+      "ref": 961415.0,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_26",
+      "ref": 961409.8125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_27",
+      "ref": 961404.9375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_28",
+      "ref": 961400.4375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_29",
+      "ref": 961396.25,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_30",
+      "ref": 961392.4375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_31",
+      "ref": 961388.9375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_32",
+      "ref": 961385.8125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_33",
+      "ref": 961383.0625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_34",
+      "ref": 961380.625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_35",
+      "ref": 961378.5,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_36",
+      "ref": 961376.8125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_37",
+      "ref": 961375.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_38",
+      "ref": 961374.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_39",
+      "ref": 961373.6875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_40",
+      "ref": 961373.3125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_41",
+      "ref": 961373.3125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_42",
+      "ref": 961373.6875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_43",
+      "ref": 961374.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_44",
+      "ref": 961375.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_45",
+      "ref": 961376.8125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_46",
+      "ref": 961378.5,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_47",
+      "ref": 961380.625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_48",
+      "ref": 961383.0625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_49",
+      "ref": 961385.8125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_50",
+      "ref": 961388.9375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_51",
+      "ref": 961392.4375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_52",
+      "ref": 961396.25,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_53",
+      "ref": 961400.4375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_54",
+      "ref": 961404.9375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_55",
+      "ref": 961409.8125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_56",
+      "ref": 961415.0,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_57",
+      "ref": 961420.5625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_58",
+      "ref": 961426.4375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_59",
+      "ref": 961432.75,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_60",
+      "ref": 961439.3125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_61",
+      "ref": 961446.25,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_62",
+      "ref": 961453.5625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_63",
+      "ref": 961461.1875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_64",
+      "ref": 961469.1875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_65",
+      "ref": 961477.5625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_66",
+      "ref": 961486.25,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_67",
+      "ref": 961495.25,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_68",
+      "ref": 961504.625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_69",
+      "ref": 961514.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_70",
+      "ref": 961524.4375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_71",
+      "ref": 961534.875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_72",
+      "ref": 961545.625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_73",
+      "ref": 961556.75,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_74",
+      "ref": 961568.1875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_75",
+      "ref": 961580.0,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_76",
+      "ref": 961592.1875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_77",
+      "ref": 961604.6875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_78",
+      "ref": 961617.5,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_79",
+      "ref": 961630.75,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_05",
+      "key": "T_80",
+      "ref": 961644.25,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "H",
+      "ref": 895843.375,
+      "group": "force",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_01",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_02",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_03",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_04",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_05",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_06",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_07",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_08",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_09",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_10",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_11",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_12",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_13",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_14",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_15",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_16",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_17",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_18",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_19",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_20",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_21",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_22",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_23",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_24",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_25",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_26",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_27",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_28",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_29",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_30",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_31",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_32",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_33",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_34",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_35",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_36",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_37",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_38",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_39",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_40",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_41",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_42",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_43",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_44",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_45",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_46",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_47",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_48",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_49",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_50",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_51",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_52",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_53",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_54",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_55",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_56",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_57",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_58",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_59",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_60",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_61",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_62",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_63",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_64",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_65",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_66",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_67",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_68",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_69",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_70",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_71",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_72",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_73",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_74",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_75",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_76",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_77",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_78",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_79",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "rod_00",
+      "key": "T_80",
+      "ref": 895843.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "H",
+      "ref": 999950.6641250029,
+      "group": "force",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "f",
+      "ref": 0.28879291705,
+      "group": "shape",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_01",
+      "ref": 1000015.812,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_02",
+      "ref": 1000012.562,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_03",
+      "ref": 1000009.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_04",
+      "ref": 1000006.25,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_05",
+      "ref": 1000003.25,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_06",
+      "ref": 1000000.312,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_07",
+      "ref": 999997.5,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_08",
+      "ref": 999994.75,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_09",
+      "ref": 999992.0625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_10",
+      "ref": 999989.5,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_11",
+      "ref": 999987.0,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_12",
+      "ref": 999984.5625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_13",
+      "ref": 999982.1875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_14",
+      "ref": 999979.9375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_15",
+      "ref": 999977.8125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_16",
+      "ref": 999975.6875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_17",
+      "ref": 999973.6875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_18",
+      "ref": 999971.75,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_19",
+      "ref": 999969.9375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_20",
+      "ref": 999968.1875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_21",
+      "ref": 999966.5,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_22",
+      "ref": 999964.9375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_23",
+      "ref": 999963.4375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_24",
+      "ref": 999962.0,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_25",
+      "ref": 999960.6875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_26",
+      "ref": 999959.4375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_27",
+      "ref": 999958.25,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_28",
+      "ref": 999957.125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_29",
+      "ref": 999956.125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_30",
+      "ref": 999955.25,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_31",
+      "ref": 999954.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_32",
+      "ref": 999953.625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_33",
+      "ref": 999953.0,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_34",
+      "ref": 999952.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_35",
+      "ref": 999951.875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_36",
+      "ref": 999951.5,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_37",
+      "ref": 999951.125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_38",
+      "ref": 999950.875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_39",
+      "ref": 999950.75,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_40",
+      "ref": 999950.625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_41",
+      "ref": 999950.625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_42",
+      "ref": 999950.75,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_43",
+      "ref": 999950.875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_44",
+      "ref": 999951.125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_45",
+      "ref": 999951.5,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_46",
+      "ref": 999951.875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_47",
+      "ref": 999952.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_48",
+      "ref": 999953.0,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_49",
+      "ref": 999953.625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_50",
+      "ref": 999954.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_51",
+      "ref": 999955.25,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_52",
+      "ref": 999956.125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_53",
+      "ref": 999957.125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_54",
+      "ref": 999958.25,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_55",
+      "ref": 999959.4375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_56",
+      "ref": 999960.6875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_57",
+      "ref": 999962.0,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_58",
+      "ref": 999963.4375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_59",
+      "ref": 999964.9375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_60",
+      "ref": 999966.5,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_61",
+      "ref": 999968.1875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_62",
+      "ref": 999969.9375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_63",
+      "ref": 999971.75,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_64",
+      "ref": 999973.6875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_65",
+      "ref": 999975.6875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_66",
+      "ref": 999977.8125,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_67",
+      "ref": 999979.9375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_68",
+      "ref": 999982.1875,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_69",
+      "ref": 999984.5625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_70",
+      "ref": 999987.0,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_71",
+      "ref": 999989.5,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_72",
+      "ref": 999992.0625,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_73",
+      "ref": 999994.75,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_74",
+      "ref": 999997.5,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_75",
+      "ref": 1000000.312,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_76",
+      "ref": 1000003.25,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_77",
+      "ref": 1000006.25,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_78",
+      "ref": 1000009.375,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_79",
+      "ref": 1000012.562,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    },
+    {
+      "case": "sag_half",
+      "key": "T_80",
+      "ref": 1000015.812,
+      "group": "segforce",
+      "tol": 0.002,
+      "source": "ansys_csv"
+    }
+  ],
+  "derived": {
+    "sag_01": {
+      "H": 1038952.0657731502,
+      "f": 0.5558870874,
+      "T": [
+        1039202.75,
+        1038952.0,
+        1039202.75
+      ]
+    },
+    "sag_02": {
+      "H": 1019268.9631043399,
+      "f": 0.5666209176,
+      "T": [
+        1019524.5,
+        1019268.875,
+        1019524.5
+      ]
+    },
+    "sag_03": {
+      "H": 999772.0538642786,
+      "f": 0.5776698295,
+      "T": [
+        1000032.562,
+        999772.0,
+        1000032.562
+      ]
+    },
+    "sag_04": {
+      "H": 980470.4123953736,
+      "f": 0.5890408601,
+      "T": [
+        980736.0,
+        980470.3125,
+        980736.0
+      ]
+    },
+    "sag_05": {
+      "H": 961373.3921629637,
+      "f": 0.6007406466,
+      "T": [
+        961644.25,
+        961373.3125,
+        961644.25
+      ]
+    },
+    "rod_00": {
+      "H": 895843.375,
+      "f": 0.0,
+      "T": [
+        895843.375,
+        895843.375,
+        895843.375
+      ]
+    },
+    "sag_half": {
+      "H": 999950.6641250029,
+      "f": 0.28879291705,
+      "T": [
+        1000015.812,
+        999950.625,
+        1000015.812
+      ]
+    }
+  },
+  "derived_rules": {
+    "H": "mean over segments of T_k*|dx_k|/L_k (x = x_init + UX)",
+    "f": "z_first - min(z), z = z_init + UZ, z_init=-amp*sin(pi*k/N)",
+    "T_k": "LINK180 SMISC,1 from *_link.csv, k=1..NSEG",
+    "ansys_fd": "central difference of ANSYS H over the L0 sweep"
+  },
+  "tangent": {
+    "pair": [
+      "sag_02",
+      "sag_04"
+    ],
+    "center": "sag_03",
+    "ansys_fd": -9699637.677229729,
+    "fem_ernst": -9698616.07575,
+    "rel": 0.00010533476856374828,
+    "tol": 0.002,
+    "description": "dT/dL0 = -(1+T/EA)*Eeq*A/L0 (kernel analytic tangent)"
+  },
+  "degeneration": {
+    "case": "rod_00",
+    "Eeq_ratio": 1.0,
+    "expect": 1.0,
+    "tol": 1e-12
+  },
+  "bridge": {
+    "id": "cb3d15_cable_selfweight",
+    "dat": "cb3d15_cable_selfweight.dat",
+    "cable": "cb3d15_cable_selfweight_cable.txt",
+    "stage0": {
+      "stage": 0,
+      "name": "空缆",
+      "H": 354451.0506,
+      "sag": 11.73211081,
+      "midz": 5.267889193
+    },
+    "criteria": {
+      "H_min": 1000.0,
+      "sag_min": 1e-06
+    },
+    "description": "W>0 gives a real catenary empty-cable state; W=0 (CB3D13) degenerates to the 100 N bisection floor"
+  },
+  "ansys_log_expect": {
+    "errors": 0,
+    "warnings": 0
+  },
+  "fem_exe": "cable_sag_probe.exe",
+  "fem_exe_args": [
+    "<sag_file>",
+    "<out_csv>"
+  ]
+}
