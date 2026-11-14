@@ -2,6 +2,32 @@
 
 本文件记录 FEM-Eigen 项目的新增功能和主要修改内容。
 
+## 2026-11-14
+
+### 新增：B3 非线性稳定全过程 `[STABILITY]` 段（`STABILITY=1` opt-in，第十七次）
+
+- 把 L 阶段（CB3D17）已用 ANSYS `ARCLEN` 对标过的
+  `stability_path_3d.hpp` 球面弧长法，以 `STABILITY=1` 接入
+  `cable_solver.exe` 主程序：`*CABLE_BRIDGE` 增 13 个 opt-in 键，
+  在 `readModel3D` 参考构形上跟踪完整荷载–位移平衡路径，
+  输出 `<stem>_stability.txt` 的 `[STABILITY]` 段（逐平衡点
+  λ / 控制位移 / 残差 / 切线奇异指标 / 收敛标志 + `ERROR=` 双函数）。
+- **默认全关**，既有成桥态闭环 / `[NEWTON]` / `[LENGTH]` / `[OPT]` /
+  默认参数与全部既有结果文件逐位不变；
+  `fem_3d_nl.hpp::solveModel3DNonlinear` 仍是荷载控制 Newton，
+  `NonlinearOptions3D` 默认值一字未动。
+  `[BUCKLING] ERROR=nonlinear_state_not_supported` **原样保留**：
+  线性屈曲对共转成桥态不适用是独立的物理结论，不与全过程极值点混淆。
+- 上面 §2026-11-09 附近「真实需求是…本版本未覆盖，不拿线弹性 λ 冒充」
+  是当时的历史事实记录，一字不改仍予保留；**自第十七次起该结论已被
+  `STABILITY=1` opt-in 取代**，但能力矩阵仍标 `P` 不标 `Y`：
+  只有球面弧长法，位移控制 / Riks / 分支屈曲 / 初始缺陷 / 材料非线性 /
+  CR 梁后屈曲 / 真实桥梁全过程对标均未覆盖，且不等于成桥态闭环已具备
+  全过程稳定分析。
+- `input_format_3d.md` 新章登记 13 键、`[STABILITY]` 段格式与 7 类
+  `ERROR=` 码；第 20 项 CTest 冻结 von Mises 两杆浅桁架解析锚点、
+  默认零污染断言与 ERROR 负例。
+
 ## 2026-11-12
 
 ### 新增：2D 平面索力优化 [OPT2D] 段（`--opt-detail` / `--opt-detail-only`，opt-in）

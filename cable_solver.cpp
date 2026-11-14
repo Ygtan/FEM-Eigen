@@ -109,6 +109,7 @@
 #include "cable_length_output_3d.hpp"
 #include "newton_output_3d.hpp"
 #include "cable_opt_3d.hpp"      // [OPT]：带约束成桥索力优化（默认关闭）
+#include "stability_output_3d.hpp"  // [STABILITY]：球面弧长法全过程（STABILITY=1 opt-in）
 
 #include <algorithm>
 #include <cctype>
@@ -228,6 +229,21 @@ struct CableReq {
     double tension = 0.0;  // <=0 = 自动定索力
 };
 
+// ---- B3 非线性稳定全过程（第十七次 opt-in，默认全关）--------------------
+// 独立字段 + 独立键前缀，不复用 *CABLE_BRIDGE 既有的 TOL / MAXITER
+// （那是成桥态几何闭合容差与外层迭代上限），避免悄悄改掉既有算例默认值。
+struct StabilityCfg {
+    bool enabled = false;
+    std::string pathMethod = "SPHERE";
+    int ctrlNode = 0;          // 0 = 未给，内核回 invalid_control_dof
+    int ctrlDof = 2;
+    double ctrlTarget = 1.0;
+    double ds0 = 0.02, dsMin = 1.0e-7, dsMax = 0.2, psi = 1.0;
+    double stabTol = 1.0e-7;
+    int maxPathStep = 400, stabIter = 30;
+    int strain = 0;            // 0=工程应变 1=对数应变
+};
+
 struct Cfg {
     std::string mode = "COMPLETION";
     int nlSteps = 3;
@@ -269,6 +285,8 @@ struct Cfg {
     double erectionQ1 = 0.0;        // 一期恒载 N/m（钢箱梁自重，吊装阶段施加）
     double erectionQ2 = 0.0;        // 二期恒载 N/m（铺装+护栏，合拢后施加）
     int erectionPanels = 1;         // 每次对称吊装的吊点对数（每次对称吊 2 段）
+    // ---- B3：非线性稳定全过程 opt-in（默认全关，既有路径零改动）----
+    StabilityCfg stability;
 };
 
 // 只扫 *CABLE_BRIDGE / *CABLE 两个扩展段；其余交给 readModel3D。
@@ -318,6 +336,20 @@ Cfg readCfg(const std::string& path) {
                 else if (key == "SYSDECKMAX") c.sysDeckMax = std::stod(val);
                 else if (key == "SYSADJMAX") c.sysAdjMax = std::stod(val);
                 else if (key == "VERBOSE") c.verbose = (std::stod(val) != 0.0);
+                // ---- B3 [STABILITY] opt-in：全部带独立前缀 / 独立字段 ----
+                else if (key == "STABILITY") c.stability.enabled = (std::stod(val) != 0.0);
+                else if (key == "PATHMETHOD") c.stability.pathMethod = upper(val);
+                else if (key == "CTRLNODE") c.stability.ctrlNode = std::stoi(val);
+                else if (key == "CTRLDOF") c.stability.ctrlDof = std::stoi(val);
+                else if (key == "CTRLTARGET") c.stability.ctrlTarget = std::stod(val);
+                else if (key == "DS0") c.stability.ds0 = std::stod(val);
+                else if (key == "DSMIN") c.stability.dsMin = std::stod(val);
+                else if (key == "DSMAX") c.stability.dsMax = std::stod(val);
+                else if (key == "PSI") c.stability.psi = std::stod(val);
+                else if (key == "MAXPATHSTEP") c.stability.maxPathStep = std::max(1, std::stoi(val));
+                else if (key == "STABITER") c.stability.stabIter = std::max(1, std::stoi(val));
+                else if (key == "STABTOL") c.stability.stabTol = std::stod(val);
+                else if (key == "STRAIN") c.stability.strain = std::stoi(val);
                 else std::fprintf(stderr, "[警告] *CABLE_BRIDGE 未知关键字: %s\n", kv.c_str());
             }
         } else if (sec == "CABLE") {
@@ -367,6 +399,64 @@ Cfg readCfg(const std::string& path) {
         }
     }
     return c;
+}
+
+// ---- B3：STABILITY=1 独立 opt-in 模式 -----------------------------------
+// 在 readModel3D 的参考构形上跑球面弧长法，与成桥态闭环完全解耦：
+// 不要求模型含 CABLE、不做找形 / 索长迭代 / [OPT]，不改任何默认参数。
+// 输出 <stem>_stability.txt；[STABILITY] 段置于 [END] 前。
+// 线性屈曲对共转成桥态不适用与全过程极值点是两回事，[BUCKLING] ERROR
+// 段在此也原样保留，防止下游把两种 λ 混为一谈（规格 §2.3 要求不删除）。
+int runStabilityMode(const std::string& dat, const Model3D& m,
+                     const StabilityCfg& sc) {
+    std::string stem = dat;
+    const std::size_t dot = stem.find_last_of('.');
+    if (dot != std::string::npos) stem = stem.substr(0, dot);
+    const std::string outPath = stem + "_stability.txt";
+    std::FILE* f = std::fopen(outPath.c_str(), "w");
+    if (!f) throw std::runtime_error("无法写出稳定路径结果: " + outPath);
+
+    std::string section;
+    bool converged = false;
+    if (sc.pathMethod != "SPHERE") {
+        section = stabilityErrorSection3D("[STABILITY]", "unsupported_path_method");
+    } else {
+        ArcLengthOptions3D opt;
+        opt.ds0 = sc.ds0;
+        opt.dsMin = sc.dsMin;
+        opt.dsMax = sc.dsMax;
+        opt.psi = sc.psi;
+        opt.tolForce = sc.stabTol;
+        opt.maxSteps = sc.maxPathStep;
+        opt.maxIter = sc.stabIter;
+        opt.ctrlNode = sc.ctrlNode;
+        opt.ctrlDof = sc.ctrlDof;
+        opt.ctrlTarget = sc.ctrlTarget;
+        opt.strainMeasure = sc.strain;
+        try {
+            const ArcLengthResult3D r = solveArcLengthPath3D(m, opt);
+            converged = r.converged && r.error.empty();
+            if (!r.points.empty() && r.steps > 0)
+                section = formatStabilitySection3D(r, opt, "[STABILITY]");
+            else
+                section = stabilityErrorSection3D(
+                    "[STABILITY]", r.error.empty() ? "no_equilibrium_point"
+                                                   : r.error);
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "[STABILITY] 求解异常: %s\n", e.what());
+            section = stabilityErrorSection3D("[STABILITY]", "solver_exception");
+        }
+    }
+
+    std::fputs(bucklingErrorSection3D(
+        "[BUCKLING]", "nonlinear_state_not_supported").c_str(), f);
+    std::fputs(section.c_str(), f);
+    std::fprintf(f, "[END]\n");
+    std::fclose(f);
+    std::printf("cable_solver: mode=STABILITY pathmethod=%s converged=%d "
+                "结果: %s\n", sc.pathMethod.c_str(), converged ? 1 : 0,
+                outPath.c_str());
+    return converged ? 0 : 3;
 }
 
 const Element3D* findElem(const Model3D& m, int id) {
@@ -931,6 +1021,13 @@ int main(int argc, char** argv) {
     try {
         Cfg cfg = readCfg(dat);
         Model3D m = readModel3D(dat);          // 参考构形（只读副本，后续传值）
+
+        // ---- B3：STABILITY=1 独立 opt-in 模式（默认全关）----------------
+        // 在参考构形上做球面弧长法全过程跟踪，与索承体系成桥态闭环完全
+        // 解耦：不要求 CABLE、不做找形 / 索长迭代 / [OPT]。STABILITY=0 时
+        // 下面这行不执行，既有路径与全部结果文件逐位不变。
+        if (cfg.stability.enabled)
+            return runStabilityMode(dat, m, cfg.stability);
 
         // ---- 悬索桥：先找形，再走成桥态闭环 ----
         // 找形会改写 m.nodes 的主缆高程（设计线形 = 恒载索形），这是悬索桥

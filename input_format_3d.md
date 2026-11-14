@@ -458,6 +458,7 @@ support_v_sum_kN=... applied_v_kN=... balance_pct=...
 [U]        node dof value
 [MODAL]    NMODES/NDOF/MASS/F/S ...（成桥态一致切线刚度上的模态，见 modal_output_3d.hpp）
 [BUCKLING] ERROR=nonlinear_state_not_supported（本内核不做线弹性屈曲，见 buckling_output_3d.hpp）
+[STABILITY] KIND/STATUS/BASIS/NSTEP/.../I（STABILITY=1 opt-in 球面弧长法平衡路径，见下）
 [LENGTH]   KIND/STATUS/ERRKIND/.../I/E/NJ/J（外层索长迭代 / 几何闭合逐轮过程，见下）
 [NEWTON]   KIND/STATUS/STAGE/NSTEP/.../S（内层共转列式 Newton 逐迭代过程，见下）
 [OPT]      KIND/STATUS/OBJECTIVE/.../I/T（带约束成桥目标索力优化，见下）
@@ -555,6 +556,71 @@ S 3 4 1 0.04180729204 6.325719466e-09 9178792.139 0 1
   `KIND=none STATUS=not_applicable` + `ERROR=no_newton_solution`，不摆空段。
 
 过程量只说明"数值怎么收敛"，规范没有 Newton 迭代轮数的合格限值。
+
+### 非线性稳定全过程（`[STABILITY]`，`STABILITY=1` opt-in）
+
+段格式与口径定义在 `stability_output_3d.hpp`，求解器是
+`stability_path_3d.hpp::solveArcLengthPath3D`（球面弧长法 / Crisfield
+球面约束）。**默认全关**：`*CABLE_BRIDGE` 不给 `STABILITY=1` 时，
+`cable_solver.exe` 的既有路径、全部默认参数与结果文件逐位不变。
+
+开启后 `cable_solver.exe` 在 `readModel3D` 的**参考构形**上分流，
+输出 `<stem>_stability.txt`（`[BUCKLING] ERROR=nonlinear_state_not_supported`
+仍保留，`[STABILITY]` 段置于 `[END]` 前）。该模式**不要求模型含 CABLE**，
+不做找形 / 索长迭代 / `[OPT]`，与成桥态闭环完全解耦。
+
+`*CABLE_BRIDGE` 可给的 13 个键（全部有默认值，只有 `STABILITY` 是开关）：
+
+| 键 | 默认 | 含义 |
+| --- | --- | --- |
+| `STABILITY` | `0` | `1` = 开启独立稳定路径模式 |
+| `PATHMETHOD` | `SPHERE` | 仅支持球面弧长法；其它值写 `ERROR=unsupported_path_method` |
+| `CTRLNODE` | `0` | 控制节点号；`0` = 未给，内核回 `invalid_control_dof` |
+| `CTRLDOF` | `2` | 控制自由度 1~6 |
+| `CTRLTARGET` | `1.0` | `\|u_ctrl\|` 达到此值即终止 |
+| `DS0` / `DSMIN` / `DSMAX` | `0.02` / `1e-7` / `0.2` | 初始 / 下限 / 上限弧长半径 |
+| `PSI` | `1.0` | 弧长约束里 `dλ` 的权重 |
+| `MAXPATHSTEP` | `400` | 最大平衡点数 |
+| `STABITER` | `30` | 每个平衡点最大校正迭代 |
+| `STABTOL` | `1e-7` | 残差相对 `\|Fref\|` 的收敛容差 |
+| `STRAIN` | `0` | `0`=工程应变 `N=EA(L−L0)/L0`；`1`=对数应变 `N=EA·ln(L/L0)` |
+
+> `STABTOL` / `STABITER` **必须带 `STAB` 前缀**：`*CABLE_BRIDGE` 既有
+> `TOL`（几何闭合容差 `1e-8`）与 `MAXITER`（外层迭代上限 20）属于成桥态
+> 闭环，同名复用会悄悄改掉既有算例的默认参数。
+
+```text
+[STABILITY]
+KIND=spherical_arc_length STATUS=ok BASIS=reference_configuration PATHMETHOD=SPHERE
+NSTEP=231 NPOINT=232 CONVERGED=1 CTRLNODE=2 CTRLDOF=2 STRAIN=1 PSI=1
+LAMBDA_FINAL=-0.6002445 ERROR=none
+I STEP=0 LAMBDA=0 CTRL=0 RES=0 ITER=0 DS=0.01 PIVOT=1 CONVERGED=1
+I STEP=1 LAMBDA=0.0031 CTRL=-0.0029 RES=4.2e-09 ITER=3 DS=0.01 PIVOT=0.98 CONVERGED=1
+...
+```
+
+- `I` 行是**逐平衡点**：`LAMBDA` 为参考荷载放大倍数（不是规范稳定安全系数），
+  `CTRL` 为控制自由度位移（带符号，`v = -CTRL`），`RES` 为收敛时自由
+  自由度残差范数，`ITER` 为校正迭代数，`DS` 为本步弧长半径。
+- `PIVOT = min|diag(U)| / max|diag(U)|` 是**全矩阵** LU 的对角量级比
+  （与 CB3D17 `snap_probe` 完全同源）。约束自由度被置 1、自由自由度
+  对角量级约 `EA/L`，因此绝对值本来就很小（本基准题约 `5e-9` 且沿路径
+  近似恒定）——**它是量级比，不是切线奇异判据**，极限点由 `LAMBDA`
+  的转折判定。极限点处 ANSYS 的
+  `One indefinite tangent matrix is detected` 是物理标志，不是求解失败。
+- 未产出 / 缺参数 / 未收敛写 `KIND=none STATUS=not_applicable` +
+  `ERROR=<code>`，不摆空表、不补 0：`zero_reference_load`（无参考荷载）、
+  `empty_dof_map`（无可用自由度）、`invalid_control_dof`（控制自由度
+  无效或未给）、`arc_length_step_collapsed`（弧长折半到下限）、
+  `max_steps_reached`、`solver_exception`、`unsupported_path_method`、
+  `no_equilibrium_point`。
+- λ 越过极限点后自然下降并可穿过 0 变负（反向荷载），这是荷载控制
+  Newton 做不到的下降段。`fem_3d_nl.hpp::solveModel3DNonlinear`
+  **仍是荷载控制 Newton**，`NonlinearOptions3D` 默认值一字未动。
+- **边界**：只有球面弧长法；位移控制 / Riks / 分支屈曲与分支切换 /
+  初始缺陷与缺陷敏感性 / 材料非线性 / CR 梁后屈曲基准题均未覆盖。
+  `BASIS=reference_configuration` 明示路径基于参考构形，不等于成桥态
+  闭环已具备全过程稳定分析。
 
 ### 带约束成桥目标索力优化过程量（`[OPT]`）
 
@@ -680,6 +746,11 @@ T 1 ...            ; <序号> <T0(N)> <T*(N)> <lo(N)> <hi(N)>
 | `cable_sag_probe.exe` | `*.sag`（`E= / A= / LH= / NSEG=` + `C <id> <W> <L0> <amp>`） | 索垂度 / Ernst 闭式，对标分段 LINK180 索链 | `BridgeStudio/ansys_bridge_sag.py` |
 | `beam_nl_probe.exe` | `*.beam`（`G <gid> key=...` + `C <cid> <gid> <CIRCLE\|PDELTA> <lambda>`） | 共转 CR 梁大转动 / 梁柱 P-Δ，对标 BEAM188 + NLGEOM | `BridgeStudio/ansys_bridge_beamnl.py` |
 | `snap_probe.exe` | `*.snap`（`G g1 E= A= B= H= PREF= ...` + `C <cid> g1 DS= PSI= STRAIN=`） | 球面弧长法后屈曲 / snap-through 全过程，对标 LINK180 + ARCLEN | `BridgeStudio/ansys_bridge_snap.py` |
+
+> 另有 `STABILITY=1` 把**同一球面弧长法内核**接入 `cable_solver.exe`
+> 主链路：它走本文正文的 `.dat`（经 `readModel3D()`），**不是**上表
+> 这三条独立参数文件链。见「非线性稳定全过程（`[STABILITY]`）」章
+> 与 `tests/benchmark/stable_path_3d/README.md`。
 
 `*.beam` 的组参数键为
 `E G L A IY IZ J NELEM LOADSTEPS MAXITER TOL Q`；`CIRCLE` 的端弯矩

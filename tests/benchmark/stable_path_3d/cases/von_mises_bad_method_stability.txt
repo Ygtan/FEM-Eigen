@@ -1,0 +1,8 @@
+[BUCKLING]
+NMODES=0 NDOF=0 BASIS=linear_elastic
+ERROR=nonlinear_state_not_supported
+[STABILITY]
+KIND=none STATUS=not_applicable BASIS=reference_configuration
+NSTEP=0 NPOINT=0 CONVERGED=0
+ERROR=unsupported_path_method
+[END]

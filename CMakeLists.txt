@@ -330,6 +330,19 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(snap_through_ansys_3d_benchmark PROPERTIES
         TIMEOUT 900
         LABELS "benchmark")
+
+    # B3 主链路 [STABILITY] opt-in（第十七次）：cable_solver.exe 的
+    # STABILITY=1 模式 vs CB3D17 冻结路径 + von Mises 闭式解析锚点。
+    # 默认全关零污染、3 类 ERROR 负例，3311 项冻结黄金值。
+    add_test(NAME stable_path_3d_benchmark
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/stable_path_3d/compare_stable_path_3d.py
+                     --bin ${CMAKE_CURRENT_BINARY_DIR}
+                     --cases ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/stable_path_3d/cases
+                     --reference ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/stable_path_3d/reference)
+    set_tests_properties(stable_path_3d_benchmark PROPERTIES
+        TIMEOUT 900
+        LABELS "benchmark")
 else()
     message(STATUS "未找到 Python3，跳过 .dat 逐字节回归 CTest")
 endif()

@@ -442,4 +442,29 @@ if (Test-Path $stScript) {
     $failed++
 }
 
+# ---- B3 主链路 [STABILITY] opt-in（第十七次）---------------------------
+$spScript = Join-Path $root "tests\benchmark\stable_path_3d\compare_stable_path_3d.py"
+$spCases  = Join-Path $root "tests\benchmark\stable_path_3d\cases"
+$spRef    = Join-Path $root "tests\benchmark\stable_path_3d\reference"
+if (Test-Path $spScript) {
+    $py = Get-Command python -ErrorAction SilentlyContinue
+    if ($py) {
+        Write-Host ""
+        Write-Host "== B3 STABILITY=1 main-chain arc-length vs CB3D17 frozen path =="
+        & python $spScript --bin $bin --cases $spCases --reference $spRef
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[PASS] STABILITY main-chain benchmark"
+        } else {
+            Write-Host "[FAIL] STABILITY main-chain benchmark"
+            $failed++
+        }
+    } else {
+        Write-Host "[MISS] python not found, skip STABILITY benchmark"
+        $failed++
+    }
+} else {
+    Write-Host "[MISS] STABILITY benchmark script missing: $spScript"
+    $failed++
+}
+
 if ($failed -eq 0) { Write-Host "ALL TESTS PASSED" } else { Write-Host "$failed TEST(S) FAILED"; exit 1 }

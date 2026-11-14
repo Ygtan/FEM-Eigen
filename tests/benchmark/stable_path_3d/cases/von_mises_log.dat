@@ -1,0 +1,32 @@
+# M 阶段 / 第 20 项 CTest：主链路 STABILITY=1 opt-in 球面弧长法
+# von Mises 两杆浅桁架，与 CB3D17 sn_log_fine 同一组解析锚点
+#   L0 = hypot(B,H) = sqrt(2^2 + 0.5^2)，PREF = 2.0e6 > P_cr
+#   STRAIN=1 -> N = EA*ln(L/L0)（ANSYS LINK180 KEYOPT(2)=1 口径）
+*NODE
+1 -2.0 0.0 0.0
+2 0.0 0.5 0.0
+3 2.0 0.0 0.0
+*ET
+1 TRUSS
+*MP
+1 E=2.1e11
+*R
+1 A=0.001
+*TYPE,1
+*MAT,1
+*REAL,1
+*EN,1,1,2
+*EN,2,2,3
+*BOUNDARY
+1 1-3 0.0
+3 1-3 0.0
+2 3 0.0
+*CLOAD
+2 2 -2000000.0
+*CABLE_BRIDGE
+# 参数与 CB3D17 snap_probe 的 G g1 / C log_fine 逐项对齐，
+# 使主链路 [STABILITY] 段可与冻结的 FEM 路径逐值对拍。
+STABILITY=1 PATHMETHOD=SPHERE CTRLNODE=2 CTRLDOF=2 CTRLTARGET=1.0
+DS0=0.005 DSMAX=0.01 DSMIN=1.0e-8 PSI=1.0
+MAXPATHSTEP=2000 STABITER=40 STABTOL=1.0e-9 STRAIN=1
+*END

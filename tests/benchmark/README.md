@@ -36,11 +36,12 @@
 | `cable_sag_ansys_3d/` | `cable_sag_ansys_3d_benchmark` | 索垂度 / Ernst 弹模 + `W>0` 空缆态 | CB3D14~15 | **573** |
 | `beam_nl_ansys_3d/` | `beam_nl_ansys_3d_benchmark` | 共转 CR 梁大转动 / 解析几何刚度 vs `BEAM188 + NLGEOM` | CB3D16 | **1776** |
 | `snap_through_ansys_3d/` | `snap_through_ansys_3d_benchmark` | 球面弧长法后屈曲 / snap-through 全过程 vs `LINK180 + ARCLEN` | CB3D17 | **1686** |
+| `stable_path_3d/` | `stable_path_3d_benchmark` | B3 主链路 `STABILITY=1` opt-in vs CB3D17 冻结路径 / von Mises 闭式解析锚点 | CB3D18 | **3311** |
 
 另有 4 个解析/内核单测（`analytical_exact_solutions_2d/3d`、
 `nonlinear_co_rotational_3d`、`shape_sensitivity_3d`）与 1 个
-`dat_byte_regression`，合计 **19 个 CTest**。当前实测全量
-`ctest` 19/19、`run_tests.ps1` `ALL TESTS PASSED`。
+`dat_byte_regression`，合计 **20 个 CTest**。当前实测全量
+`ctest` 20/20、`run_tests.ps1` `ALL TESTS PASSED`。
 
 各目录的 `README.md` 记录该阶段的建模口径、ANSYS APDL 语义、容差来源与
 已知边界；`nonlinear_ansys_3d/probes/` 归档 A~G 阶段全部 16 个 ANSYS 语义
@@ -50,10 +51,10 @@
 ## 从零复现（换机 / 重建）
 
 `build/` 及其 `CTestTestfile.cmake` 由 CMake 生成、被 `.gitignore` 排除，
-**不入库**。干净的 configure 会自动生成全部 19 条注册，不需要手工同步。
+**不入库**。干净的 configure 会自动生成全部 20 条注册，不需要手工同步。
 
 ```bash
-# MSYS2 / MinGW-w64 环境。生成器二选一，实测均可生成 19 条 add_test。
+# MSYS2 / MinGW-w64 环境。生成器二选一，实测均可生成 20 条 add_test。
 export PATH="/c/msys64/usr/bin:/c/msys64/mingw64/bin:$PATH"
 
 # 方案 A：Ninja（推荐，路径处理最稳）
@@ -72,11 +73,12 @@ cmake -G "MSYS Makefiles" \
 ```
 
 **实测（2026-11-14，本机 MSYS2 / GCC 16.2）**：方案 A 干净 configure
-自动生成 **19 条 `add_test`**，`cmake --build` 编译产出 **39 个 exe**
-（K 阶段 `beam_nl_probe` 为第 38 个、L 阶段 `snap_probe` 为第 39 个），
-全新目录 `ctest` **19/19 Passed**（12.10 s）。即换机后无需手工同步
-`CTestTestfile.cmake`，也无需 ANSYS 许可即可全量回归；L 阶段干净构建
-逐项数字见 `snap_through_ansys_3d/README.md`。全量重编译在本机约需
+自动生成 **20 条 `add_test`**，`cmake --build` 编译产出 **39 个 exe**
+（K 阶段 `beam_nl_probe` 为第 38 个、L 阶段 `snap_probe` 为第 39 个；
+M 阶段只给 `cable_solver.exe` 加 opt-in 分支、不新增 exe），
+全新目录 `ctest` **20/20 Passed**。即换机后无需手工同步
+`CTestTestfile.cmake`，也无需 ANSYS 许可即可全量回归；M 阶段主链路
+口径与数字见 `stable_path_3d/README.md`。全量重编译在本机约需
 10 分钟（头文件 `fem_3d_nl.hpp` 较大）；内存有限时建议 `-j 4`，实测
 `-j 8` 与其它任务并发会触发 `cc1plus.exe: out of memory`，与代码无关。
 
