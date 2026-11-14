@@ -673,18 +673,24 @@ T 1 ...            ; <序号> <T0(N)> <T*(N)> <lo(N)> <hi(N)>
 
 ## 附录：单元级探针参数文件（不是 `.dat`）
 
-有两个 CLI 走**独立的纯 ASCII 参数文件**，不经 `readModel3D()` / `*ET`：
+有三个 CLI 走**独立的纯 ASCII 参数文件**，不经 `readModel3D()` / `*ET`：
 
 | CLI | 输入 | 用途 | 同源导出方 |
 |---|---|---|---|
 | `cable_sag_probe.exe` | `*.sag`（`E= / A= / LH= / NSEG=` + `C <id> <W> <L0> <amp>`） | 索垂度 / Ernst 闭式，对标分段 LINK180 索链 | `BridgeStudio/ansys_bridge_sag.py` |
 | `beam_nl_probe.exe` | `*.beam`（`G <gid> key=...` + `C <cid> <gid> <CIRCLE\|PDELTA> <lambda>`） | 共转 CR 梁大转动 / 梁柱 P-Δ，对标 BEAM188 + NLGEOM | `BridgeStudio/ansys_bridge_beamnl.py` |
+| `snap_probe.exe` | `*.snap`（`G g1 E= A= B= H= PREF= ...` + `C <cid> g1 DS= PSI= STRAIN=`） | 球面弧长法后屈曲 / snap-through 全过程，对标 LINK180 + ARCLEN | `BridgeStudio/ansys_bridge_snap.py` |
 
 `*.beam` 的组参数键为
 `E G L A IY IZ J NELEM LOADSTEPS MAXITER TOL Q`；`CIRCLE` 的端弯矩
 `M = lambda·2πEI/L`、`PDELTA` 的轴压 `P = lambda·π²EI/L²` 都只由
-`lambda` 与组参数派生，APDL 与 CLI 使用同一公式，不存在第二份手工输入。
-两份参数文件都只做**单元级 / 单构件级**对标，不生成 `ModelSpec3D` 模型；
+`lambda` 与组参数派生。`*.snap` 的 `STRAIN=0/1` 分别选工程应变
+`N=EA(L-L0)/L0`（内核口径）与对数应变 `N=EA·ln(L/L0)`（ANSYS
+LINK180 `KEYOPT(2)=1` 口径）；`DS` 是初始弧长半径，`DSMAX` 控制
+极值点附近的采样密度。所有 APDL 与 CLI 都使用同一份导出参数，
+不存在第二份手工输入。
+三份参数文件都只做**单元级 / 单构件级**对标，不生成 `ModelSpec3D` 模型；
 完整口径与冻结黄金值见
-`tests/benchmark/cable_sag_ansys_3d/README.md` 与
-`tests/benchmark/beam_nl_ansys_3d/README.md`。
+`tests/benchmark/cable_sag_ansys_3d/README.md`、
+`tests/benchmark/beam_nl_ansys_3d/README.md` 与
+`tests/benchmark/snap_through_ansys_3d/README.md`。

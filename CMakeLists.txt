@@ -316,6 +316,20 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(beam_nl_ansys_3d_benchmark PROPERTIES
         TIMEOUT 900
         LABELS "benchmark")
+
+    # 后屈曲 / snap-through（CB3D17）：FEM-Eigen stability_path_3d.hpp 球面
+    # 弧长法（lambda 为未知量 + Crisfield 约束）vs ANSYS LINK180 + ARCLEN。
+    # von Mises 两杆浅桁架完整 S 形荷载-位移路径：极限点、下降段、反向
+    # 荷载段。1686 项冻结黄金值 + 解析 P(v) 独立锚点。
+    add_test(NAME snap_through_ansys_3d_benchmark
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/snap_through_ansys_3d/compare_snap_through_ansys_3d.py
+                     --bin ${CMAKE_CURRENT_BINARY_DIR}
+                     --cases ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/snap_through_ansys_3d/cases
+                     --reference ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/snap_through_ansys_3d/reference)
+    set_tests_properties(snap_through_ansys_3d_benchmark PROPERTIES
+        TIMEOUT 900
+        LABELS "benchmark")
 else()
     message(STATUS "未找到 Python3，跳过 .dat 逐字节回归 CTest")
 endif()
@@ -376,6 +390,10 @@ fem_add_executable(cable_sag_probe cable_sag_probe.cpp)
 # 暴露成文件驱动 CSV，供 tests/benchmark/beam_nl_ansys_3d 与 ANSYS
 # BEAM188 + NLGEOM 端到端对标。力学完全复用内核，不新增单元公式。
 fem_add_executable(beam_nl_probe beam_nl_probe.cpp)
+# L 阶段：球面弧长法平衡路径跟踪探针（stability_path_3d.hpp），越过荷载
+# 极限点走完整 snap-through 下降段；与 ANSYS LINK180 + ARCLEN 对标。
+# 独立新文件，不改 fem_3d_nl.hpp 主求解器与 NonlinearOptions3D 默认值。
+fem_add_executable(snap_probe snap_probe.cpp)
 
 # ---- 2D/3D 分库 ----
 # 2D 层（fem_2d）编译为静态库；共享核心 fem.hpp 与 3D 层 fem_3d.hpp 为纯头文件。

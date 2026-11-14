@@ -418,4 +418,28 @@ if (Test-Path $bnScript) {
     $failed++
 }
 
+$stScript = Join-Path $root "tests\benchmark\snap_through_ansys_3d\compare_snap_through_ansys_3d.py"
+$stCases  = Join-Path $root "tests\benchmark\snap_through_ansys_3d\cases"
+$stRef    = Join-Path $root "tests\benchmark\snap_through_ansys_3d\reference"
+if (Test-Path $stScript) {
+    $py = Get-Command python -ErrorAction SilentlyContinue
+    if ($py) {
+        Write-Host ""
+        Write-Host "== Post-buckling / snap-through (arc-length) vs ANSYS ARCLEN benchmark =="
+        & python $stScript --bin $bin --cases $stCases --reference $stRef
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[PASS] Snap-through arc-length benchmark"
+        } else {
+            Write-Host "[FAIL] Snap-through arc-length benchmark"
+            $failed++
+        }
+    } else {
+        Write-Host "[MISS] python not found, skip snap-through benchmark"
+        $failed++
+    }
+} else {
+    Write-Host "[MISS] snap-through benchmark script missing: $stScript"
+    $failed++
+}
+
 if ($failed -eq 0) { Write-Host "ALL TESTS PASSED" } else { Write-Host "$failed TEST(S) FAILED"; exit 1 }

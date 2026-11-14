@@ -180,9 +180,11 @@ python cases/run_cases_beamnl.py \
 
 ## 6. 已知边界
 
-- **不含后屈曲 / snap-through**：FEM 内核是荷载控制 Newton + 荷载步，
-  无弧长法；`P/Pcr=0.75` 仍在稳定分支内。极值点全过程、Williams
-  toggle frame / Lee frame 尚未覆盖。
+- **本 benchmark 不含后屈曲 / snap-through**：4 个 PDELTA 工况最高
+  `P/Pcr=0.75`，仍在稳定分支内，由荷载控制 Newton 求解即可越过。
+  极值点全过程已由 **L 阶段 CB3D17**（`snap_through_ansys_3d/`）用独立
+  球面弧长法探针 + ANSYS `ARCLEN` 覆盖；Williams toggle frame /
+  Lee frame 等 CR **梁**的后屈曲算例仍未覆盖。
 - **不含支座反力与单元端内力对标**：CLI 目前只导出节点位移/转角与
   解析派生量；`nonlinear_ansys_3d` 的反力/索力对标仍由 CB3D10 承担。
 - **Timoshenko 差异是被显式消除而非被建模**：`G×1000` 只用于同口径
