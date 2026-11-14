@@ -175,7 +175,8 @@ powershell -ExecutionPolicy Bypass -File D:\AI-work\FEM-Eigen\run_tests.ps1
   应变；本算例把索应变控制在 ~1e-3，实测差异 ~8e-4，属 `O(eps²)`。
   大应变 / 大转动工况不在此基准覆盖范围。
 - **BEAM4 为小变形线性梁**：主梁成桥位移为 mm 量级，ANSYS 侧不参与大转动
-  更新的影响为二阶；未验证几何非线性梁柱效应显著的工况。
+  更新的影响为二阶；本基准不验证梁柱效应。**几何非线性梁的大转动 /
+  解析几何刚度已由 `beam_nl_ansys_3d/`（CB3D16，BEAM188 + NLGEOM）独立对标**。
 - **`KEYOPT(3)=1` 是 ANSYS 18.0 的 undocumented 选项**：实测压缩时轴力归零
   确为 tension-only，但依赖该版本行为，升级 ANSYS 后需重跑探测脚本。
 - **ANSYS 只对归档 `.inp` 提供 `--live-ansys` 复核**；默认 CTest 完全离线，

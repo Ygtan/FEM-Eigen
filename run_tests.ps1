@@ -394,4 +394,28 @@ if (Test-Path $sgScript) {
     $failed++
 }
 
+$bnScript = Join-Path $root "tests\benchmark\beam_nl_ansys_3d\compare_beam_nl_ansys_3d.py"
+$bnCases  = Join-Path $root "tests\benchmark\beam_nl_ansys_3d\cases"
+$bnRef    = Join-Path $root "tests\benchmark\beam_nl_ansys_3d\reference"
+if (Test-Path $bnScript) {
+    $py = Get-Command python -ErrorAction SilentlyContinue
+    if ($py) {
+        Write-Host ""
+        Write-Host "== Large-rotation beam-column (CR kernel) vs ANSYS BEAM188 benchmark =="
+        & python $bnScript --bin $bin --cases $bnCases --reference $bnRef
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[PASS] Large-rotation beam-column benchmark"
+        } else {
+            Write-Host "[FAIL] Large-rotation beam-column benchmark"
+            $failed++
+        }
+    } else {
+        Write-Host "[MISS] python not found, skip beam-column benchmark"
+        $failed++
+    }
+} else {
+    Write-Host "[MISS] beam-column benchmark script missing: $bnScript"
+    $failed++
+}
+
 if ($failed -eq 0) { Write-Host "ALL TESTS PASSED" } else { Write-Host "$failed TEST(S) FAILED"; exit 1 }

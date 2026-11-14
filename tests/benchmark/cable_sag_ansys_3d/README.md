@@ -166,8 +166,9 @@ C:\Users\user\anaconda3\python.exe `
 
 ## 已知边界
 
-- **大转动梁柱效应未纳入**：CR 内核（`fem_3d_nl.hpp` 共转 + 解析几何刚度）
-  已具备该能力，但需要 BEAM188 + NLGEOM 的独立算例，属 K 阶段。
+- **大转动梁柱效应已由 K 阶段独立覆盖**：见
+  `tests/benchmark/beam_nl_ansys_3d/`（CB3D16，BEAM188 + NLGEOM 的
+  端弯矩卷圆与梁柱 P-Δ 对标），本索本构基准不涉及梁单元。
 - ANSYS 侧 `KEYOPT(2)=0` Almansi 应变；换用 `KEYOPT(2)=1` 实测可把
   `W>0` 的系统偏差从 2.28e-4 降到 1.63e-4，但不改变浅垂度近似这一主因。
 - CB3D15 只做 FEM 自洽回归，无 ANSYS 全桥对标（见上文说明）。

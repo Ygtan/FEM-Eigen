@@ -302,6 +302,20 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(cable_sag_ansys_3d_benchmark PROPERTIES
         TIMEOUT 900
         LABELS "benchmark")
+
+    # 大转动梁柱效应（CB3D16）：FEM-Eigen fem_3d_nl.hpp 共转列式 CR 梁
+    # （随动三元组 + 解析几何刚度）vs ANSYS BEAM188 + NLGEOM。8 个工况：
+    # 悬臂端弯矩卷圆 0.25/0.5/0.75/1.0 圈（有限转动 2*pi）、简支梁轴压
+    # P/Pcr = 0/0.25/0.50/0.75 的 P-Delta 放大。1776 项冻结黄金值。
+    add_test(NAME beam_nl_ansys_3d_benchmark
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/beam_nl_ansys_3d/compare_beam_nl_ansys_3d.py
+                     --bin ${CMAKE_CURRENT_BINARY_DIR}
+                     --cases ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/beam_nl_ansys_3d/cases
+                     --reference ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/beam_nl_ansys_3d/reference)
+    set_tests_properties(beam_nl_ansys_3d_benchmark PROPERTIES
+        TIMEOUT 900
+        LABELS "benchmark")
 else()
     message(STATUS "未找到 Python3，跳过 .dat 逐字节回归 CTest")
 endif()
@@ -358,6 +372,10 @@ fem_add_executable(cable_solver cable_solver.cpp)
 # 暴露成 CSV，供 tests/benchmark/cable_sag_ansys_3d 与 ANSYS 分段 LINK180
 # 索链端到端对标。只读参数文件，不改动 cable_solver 的任何既有路径。
 fem_add_executable(cable_sag_probe cable_sag_probe.cpp)
+# K 阶段：把 fem_3d_nl.hpp 的共转列式 CR 梁（大转动 + 解析几何刚度）
+# 暴露成文件驱动 CSV，供 tests/benchmark/beam_nl_ansys_3d 与 ANSYS
+# BEAM188 + NLGEOM 端到端对标。力学完全复用内核，不新增单元公式。
+fem_add_executable(beam_nl_probe beam_nl_probe.cpp)
 
 # ---- 2D/3D 分库 ----
 # 2D 层（fem_2d）编译为静态库；共享核心 fem.hpp 与 3D 层 fem_3d.hpp 为纯头文件。
