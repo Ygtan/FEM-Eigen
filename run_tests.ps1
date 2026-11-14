@@ -319,4 +319,31 @@ if (Test-Path $nlScript) {
     $failed++
 }
 
+# ---- 悬索桥找形 vs ANSYS NLGEOM + LINK180（CB3D11 地锚式 / CB3D12 自锚式）----
+# 共用参数只改 SYSTEM；重跑 cable_solver.exe 与 574 项冻结黄金值逐项比对。
+# 默认离线，不需要 ANSYS 许可。
+$suScript = Join-Path $root "tests\benchmark\suspension_ansys_3d\compare_suspension_ansys_3d.py"
+$suCases  = Join-Path $root "tests\benchmark\suspension_ansys_3d\cases"
+$suRef    = Join-Path $root "tests\benchmark\suspension_ansys_3d\reference"
+if (Test-Path $suScript) {
+    $py = Get-Command python -ErrorAction SilentlyContinue
+    if ($py) {
+        Write-Host ""
+        Write-Host "== Suspension bridge form-finding vs ANSYS NLGEOM benchmark =="
+        & python $suScript --bin $bin --cases $suCases --reference $suRef
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[PASS] Suspension bridge ANSYS NLGEOM benchmark"
+        } else {
+            Write-Host "[FAIL] Suspension bridge ANSYS NLGEOM benchmark"
+            $failed++
+        }
+    } else {
+        Write-Host "[MISS] python not found, skip suspension ANSYS benchmark"
+        $failed++
+    }
+} else {
+    Write-Host "[MISS] suspension ANSYS benchmark script missing: $suScript"
+    $failed++
+}
+
 if ($failed -eq 0) { Write-Host "ALL TESTS PASSED" } else { Write-Host "$failed TEST(S) FAILED"; exit 1 }

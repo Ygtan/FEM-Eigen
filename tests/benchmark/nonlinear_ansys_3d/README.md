@@ -14,9 +14,16 @@
 | `cable_arch_3d` | 3D **线性** `example_3d_report.exe`，BEAM + CABLE/TRUSS 按 `EA/L·c⊗c` 装配 | 真实 ANSYS 18.0 BEAM4 + LINK180 CSV |
 | `cable_arch_3d/nonlinear_smoke` | `cable_solver.exe` 共转列式非线性 | 冻结的 `*_cable.txt`，**无**商业软件基准 |
 | **`nonlinear_ansys_3d`** | `cable_solver.exe` 共转列式非线性，`MODE=COMPLETION METHOD=DECK` | 真实 ANSYS 18.0 **NLGEOM + LINK180 + INISTATE** CSV |
+| `suspension_ansys_3d` | `cable_solver.exe` 悬索桥 **FormFinding** 分支（地锚式 / 自锚式各一例） | 真实 ANSYS 18.0 **NLGEOM + LINK180 + INISTATE** CSV |
 
 `nonlinear_ansys_3d` 与 `cable_solver_smoke` 是两个独立 CTest 条目：前者对外部
 商业软件，后者检查 48 索大模型的收敛 / 几何闭合 / 索长闭合，互不替代。
+
+**注意口径不可照搬**：本类目（斜拉桥 COMPLETION）的 ANSYS 初始几何是
+`[ERECTED]` 制造线形，L0 相对它反算；`suspension_ansys_3d` 的悬索桥走
+FormFinding 分支，ANSYS 初始几何必须是设计几何 `[ERECTED] + [U]`，
+`[CAMBER]/[ERECTED]` 只是预拱度建议。把本类目做法套到悬索桥上，实测
+位移相对差 0.25（FAIL）。详见 `../suspension_ansys_3d/README.md`。
 
 ## 2. 数据链路（单一数据源）
 
@@ -148,7 +155,7 @@ C:\Users\user\anaconda3\python.exe D:\AI-work\FEM-Eigen\tests\benchmark\nonlinea
   --cases D:\AI-work\FEM-Eigen\tests\benchmark\nonlinear_ansys_3d\cases `
   --reference D:\AI-work\FEM-Eigen\tests\benchmark\nonlinear_ansys_3d\reference --live-ansys
 
-# 5) 全量回归（33 个 exe + 10 组 benchmark / regression）
+# 5) 全量回归（33 个 exe + 11 组 benchmark / regression）
 powershell -ExecutionPolicy Bypass -File D:\AI-work\FEM-Eigen\run_tests.ps1
 ```
 
