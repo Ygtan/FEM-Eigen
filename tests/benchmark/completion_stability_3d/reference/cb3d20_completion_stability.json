@@ -5925,7 +5925,7 @@
     ],
     [
       "vshape_tension/lambda_final",
-      2.7679104000786
+      2.7679104001213
     ],
     [
       "vshape_tension/ctrl0",
@@ -5941,7 +5941,7 @@
     ],
     [
       "vshape_tension/res0",
-      0.015100147109479
+      2.8405338525772e-08
     ],
     [
       "vshape_tension/p0/lambda",
@@ -5953,7 +5953,7 @@
     ],
     [
       "vshape_tension/p0/res",
-      0.015100147109479
+      2.8405338525772e-08
     ],
     [
       "vshape_tension/p0/iter",
@@ -5969,15 +5969,15 @@
     ],
     [
       "vshape_tension/p1/lambda",
-      0.0039969464980767
+      0.0039969465441662
     ],
     [
       "vshape_tension/p1/ctrl",
-      -7.8132406068895e-05
+      -7.8131816626914e-05
     ],
     [
       "vshape_tension/p1/res",
-      3.2596290111542e-09
+      2.0954757928848e-08
     ],
     [
       "vshape_tension/p1/iter",
@@ -5989,19 +5989,19 @@
     ],
     [
       "vshape_tension/p1/pivot",
-      3.9090821620492e-08
+      3.909082166192e-08
     ],
     [
       "vshape_tension/p2/lambda",
-      0.0081937420248636
+      0.0081937420709462
     ],
     [
       "vshape_tension/p2/ctrl",
-      -0.00016014963953447
+      -0.00016014905018061
     ],
     [
       "vshape_tension/p2/res",
-      2.3748725652695e-08
+      7.4505805969238e-09
     ],
     [
       "vshape_tension/p2/iter",
@@ -6013,19 +6013,19 @@
     ],
     [
       "vshape_tension/p2/pivot",
-      3.9080472915101e-08
+      3.90804729565e-08
     ],
     [
       "vshape_tension/p3/lambda",
-      0.012600379151241
+      0.012600379197317
     ],
     [
       "vshape_tension/p3/ctrl",
-      -0.00024624440771445
+      -0.00024624381845086
     ],
     [
       "vshape_tension/p3/res",
-      2.3283064365387e-09
+      7.4505805969238e-09
     ],
     [
       "vshape_tension/p3/iter",
@@ -6037,19 +6037,19 @@
     ],
     [
       "vshape_tension/p3/pivot",
-      3.9069615019074e-08
+      3.9069615060443e-08
     ],
     [
       "vshape_tension/p4/lambda",
-      0.017227350141953
+      0.017227350188021
     ],
     [
       "vshape_tension/p4/ctrl",
-      -0.00033661821629703
+      -0.00033661762712869
     ],
     [
       "vshape_tension/p4/res",
-      2.2351741790771e-08
+      3.2596290111542e-09
     ],
     [
       "vshape_tension/p4/iter",
@@ -6061,19 +6061,19 @@
     ],
     [
       "vshape_tension/p4/pivot",
-      3.9058223306457e-08
+      3.9058223347794e-08
     ],
     [
       "vshape_tension/p5/lambda",
-      0.022085671893588
+      0.022085671939649
     ],
     [
       "vshape_tension/p5/ctrl",
-      -0.00043148240633982
+      -0.00043148181727319
     ],
     [
       "vshape_tension/p5/res",
-      2.8405338525772e-08
+      4.1909515857697e-09
     ],
     [
       "vshape_tension/p5/iter",
@@ -6085,19 +6085,19 @@
     ],
     [
       "vshape_tension/p5/pivot",
-      3.9046272003649e-08
+      3.9046272044953e-08
     ],
     [
       "vshape_tension/p6/lambda",
-      0.02718691216803
+      0.027186912214082
     ],
     [
       "vshape_tension/p6/ctrl",
-      -0.00053105862193741
+      -0.00053105803297529
     ],
     [
       "vshape_tension/p6/res",
-      1.3969838619232e-09
+      9.7788870334625e-09
     ],
     [
       "vshape_tension/p6/iter",
@@ -6109,19 +6109,19 @@
     ],
     [
       "vshape_tension/p6/pivot",
-      3.9033734140324e-08
+      3.9033734181593e-08
     ],
     [
       "vshape_tension/p7/lambda",
-      0.032543217137759
+      0.032543217183802
     ],
     [
       "vshape_tension/p7/ctrl",
-      -0.00063557929885986
+      -0.00063557871000733
     ],
     [
       "vshape_tension/p7/res",
-      1.3504177331924e-08
+      2.2351741790771e-08
     ],
     [
       "vshape_tension/p7/iter",
@@ -6133,19 +6133,19 @@
     ],
     [
       "vshape_tension/p7/pivot",
-      3.9020581498692e-08
+      3.9020581539924e-08
     ],
     [
       "vshape_tension/p8/lambda",
-      0.038167340308619
+      0.038167340354653
     ],
     [
       "vshape_tension/p8/ctrl",
-      -0.00074528817501331
+      -0.00074528758627695
     ],
     [
       "vshape_tension/p8/res",
-      1.2107193470001e-08
+      2.2351741790771e-08
     ],
     [
       "vshape_tension/p8/iter",
@@ -6157,19 +6157,19 @@
     ],
     [
       "vshape_tension/p8/pivot",
-      3.9006784561123e-08
+      3.9006784602317e-08
     ],
     [
       "vshape_tension/p9/lambda",
-      0.044072672888946
+      0.044072672934971
     ],
     [
       "vshape_tension/p9/ctrl",
-      -0.00086044082352807
+      -0.00086044023491298
     ],
     [
       "vshape_tension/p9/res",
-      4.6566128730774e-09
+      2.7939677238464e-09
     ],
     [
       "vshape_tension/p9/iter",
@@ -6181,19 +6181,19 @@
     ],
     [
       "vshape_tension/p9/pivot",
-      3.8992312456108e-08
+      3.8992312497262e-08
     ],
     [
       "vshape_tension/p10/lambda",
-      0.050273275677388
+      0.050273275723403
     ],
     [
       "vshape_tension/p10/ctrl",
-      -0.00098130520932864
+      -0.00098130462084185
     ],
     [
       "vshape_tension/p10/res",
-      3.5390257835388e-08
+      2.468004822731e-08
     ],
     [
       "vshape_tension/p10/iter",
@@ -6205,19 +6205,19 @@
     ],
     [
       "vshape_tension/p10/pivot",
-      3.8977132902582e-08
+      3.8977132943693e-08
     ],
     [
       "vshape_tension/p11/lambda",
-      0.05678391254538
+      0.056783912591385
     ],
     [
       "vshape_tension/p11/ctrl",
-      -0.0011081622700755
+      -0.0011081616817217
     ],
     [
       "vshape_tension/p11/res",
-      4.0046870708466e-08
+      3.1664967536926e-08
     ],
     [
       "vshape_tension/p11/iter",
@@ -6229,19 +6229,19 @@
     ],
     [
       "vshape_tension/p11/pivot",
-      3.8961212152618e-08
+      3.8961212193685e-08
     ],
     [
       "vshape_tension/p12/lambda",
-      0.063620085594033
+      0.063620085640026
     ],
     [
       "vshape_tension/p12/ctrl",
-      -0.0012413065223277
+      -0.0012413059341141
     ],
     [
       "vshape_tension/p12/res",
-      3.6321580410004e-08
+      1.9092112779617e-08
     ],
     [
       "vshape_tension/p12/iter",
@@ -6253,19 +6253,19 @@
     ],
     [
       "vshape_tension/p12/pivot",
-      3.8944514932521e-08
+      3.8944514973542e-08
     ],
     [
       "vshape_tension/p13/lambda",
-      0.070798072069171
+      0.070798072115154
     ],
     [
       "vshape_tension/p13/ctrl",
-      -0.0013810466938441
+      -0.0013810461057768
     ],
     [
       "vshape_tension/p13/res",
-      3.2596290111542e-08
+      5.6345015764236e-08
     ],
     [
       "vshape_tension/p13/iter",
@@ -6277,19 +6277,19 @@
     ],
     [
       "vshape_tension/p13/pivot",
-      3.8927004382355e-08
+      3.8927004423327e-08
     ],
     [
       "vshape_tension/p14/lambda",
-      0.078334963122484
+      0.078334963168454
     ],
     [
       "vshape_tension/p14/ctrl",
-      -0.0015277063829282
+      -0.001527705795014
     ],
     [
       "vshape_tension/p14/res",
-      4.936009645462e-08
+      6.1467289924622e-08
     ],
     [
       "vshape_tension/p14/iter",
@@ -6301,19 +6301,19 @@
     ],
     [
       "vshape_tension/p14/pivot",
-      3.8908641993954e-08
+      3.8908642034875e-08
     ],
     [
       "vshape_tension/p15/lambda",
-      0.086248704511089
+      0.086248704557047
     ],
     [
       "vshape_tension/p15/ctrl",
-      -0.0016816247457131
+      -0.0016816241579614
     ],
     [
       "vshape_tension/p15/res",
-      5.4016709327698e-08
+      7.4971467256546e-08
     ],
     [
       "vshape_tension/p15/iter",
@@ -6325,19 +6325,19 @@
     ],
     [
       "vshape_tension/p15/pivot",
-      3.888938754748e-08
+      3.8889387588348e-08
     ],
     [
       "vshape_tension/p16/lambda",
-      0.094558139332503
+      0.094558139378448
     ],
     [
       "vshape_tension/p16/ctrl",
-      -0.0018431572123283
+      -0.0018431566247469
     ],
     [
       "vshape_tension/p16/res",
-      9.2200934886932e-08
+      6.6589564085007e-08
     ],
     [
       "vshape_tension/p16/iter",
@@ -6349,19 +6349,19 @@
     ],
     [
       "vshape_tension/p16/pivot",
-      3.8869199046599e-08
+      3.8869199087411e-08
     ],
     [
       "vshape_tension/p17/lambda",
-      0.1032830528968
+      0.10328305294273
     ],
     [
       "vshape_tension/p17/ctrl",
-      -0.0020126762328507
+      -0.0020126756454472
     ],
     [
       "vshape_tension/p17/res",
-      1.080334186554e-07
+      7.4040144681931e-08
     ],
     [
       "vshape_tension/p17/iter",
@@ -6373,19 +6373,19 @@
     ],
     [
       "vshape_tension/p17/pivot",
-      3.8848032652374e-08
+      3.8848032693127e-08
     ],
     [
       "vshape_tension/p18/lambda",
-      0.11244421984285
+      0.11244421988877
     ],
     [
       "vshape_tension/p18/ctrl",
-      -0.0021905720539714
+      -0.0021905714667533
     ],
     [
       "vshape_tension/p18/res",
-      9.5460563898087e-08
+      1.2340024113655e-07
     ],
     [
       "vshape_tension/p18/iter",
@@ -6397,19 +6397,19 @@
     ],
     [
       "vshape_tension/p18/pivot",
-      3.8825842615977e-08
+      3.8825842656669e-08
     ],
     [
       "vshape_tension/p19/lambda",
-      0.12206345361097
+      0.12206345365687
     ],
     [
       "vshape_tension/p19/ctrl",
-      -0.0023772535272861
+      -0.0023772529402629
     ],
     [
       "vshape_tension/p19/res",
-      1.5599653124809e-07
+      1.4528632164001e-07
     ],
     [
       "vshape_tension/p19/iter",
@@ -6421,19 +6421,19 @@
     ],
     [
       "vshape_tension/p19/pivot",
-      3.8802581210358e-08
+      3.8802581250985e-08
     ],
     [
       "vshape_tension/p20/lambda",
-      0.13216365838967
+      0.13216365843556
     ],
     [
       "vshape_tension/p20/ctrl",
-      -0.0025731489501246
+      -0.0025731483633067
     ],
     [
       "vshape_tension/p20/res",
-      1.5739351511002e-07
+      1.5133991837502e-07
     ],
     [
       "vshape_tension/p20/iter",
@@ -6445,19 +6445,19 @@
     ],
     [
       "vshape_tension/p20/pivot",
-      3.8778198661017e-08
+      3.8778198701577e-08
     ],
     [
       "vshape_tension/p21/lambda",
-      0.14276888366052
+      0.14276888370639
     ],
     [
       "vshape_tension/p21/ctrl",
-      -0.002778706939795
+      -0.0027787063531915
     ],
     [
       "vshape_tension/p21/res",
-      1.927837729454e-07
+      1.806765794754e-07
     ],
     [
       "vshape_tension/p21/iter",
@@ -6469,19 +6469,19 @@
     ],
     [
       "vshape_tension/p21/pivot",
-      3.8752643076056e-08
+      3.8752643116545e-08
     ],
     [
       "vshape_tension/p22/lambda",
-      0.15390438147083
+      0.15390438151668
     ],
     [
       "vshape_tension/p22/ctrl",
-      -0.0029943973421219
+      -0.0029943967557438
     ],
     [
       "vshape_tension/p22/res",
-      2.3283064365387e-07
+      2.1280720829964e-07
     ],
     [
       "vshape_tension/p22/iter",
@@ -6493,19 +6493,19 @@
     ],
     [
       "vshape_tension/p22/pivot",
-      3.8725860375711e-08
+      3.8725860416126e-08
     ],
     [
       "vshape_tension/p23/lambda",
-      0.16559666657074
+      0.16559666661658
     ],
     [
       "vshape_tension/p23/ctrl",
-      -0.0032207121751211
+      -0.0032207115889773
     ],
     [
       "vshape_tension/p23/res",
-      2.5937333703041e-07
+      2.7939677238464e-07
     ],
     [
       "vshape_tension/p23/iter",
@@ -6517,19 +6517,19 @@
     ],
     [
       "vshape_tension/p23/pivot",
-      3.8697794221592e-08
+      3.869779426193e-08
     ],
     [
       "vshape_tension/p24/lambda",
-      0.17758769818954
+      0.17758769823535
     ],
     [
       "vshape_tension/p24/ctrl",
-      -0.0034526392741757
+      -0.0034526386882735
     ],
     [
       "vshape_tension/p24/res",
-      3.0873343348503e-07
+      3.0500814318657e-07
     ],
     [
       "vshape_tension/p24/iter",
@@ -6541,19 +6541,19 @@
     ],
     [
       "vshape_tension/p24/pivot",
-      3.866907003824e-08
+      3.8669070078499e-08
     ],
     [
       "vshape_tension/p25/lambda",
-      0.18957874309354
+      0.18957874313933
     ],
     [
       "vshape_tension/p25/ctrl",
-      -0.0036843945924552
+      -0.0036843940067943
     ],
     [
       "vshape_tension/p25/res",
-      3.0407682061195e-07
+      3.1711533665657e-07
     ],
     [
       "vshape_tension/p25/iter",
@@ -6565,19 +6565,19 @@
     ],
     [
       "vshape_tension/p25/pivot",
-      3.8640405449742e-08
+      3.8640405489923e-08
     ],
     [
       "vshape_tension/p26/lambda",
-      0.20156980124542
+      0.2015698012912
     ],
     [
       "vshape_tension/p26/ctrl",
-      -0.0039159784855567
+      -0.0039159779001365
     ],
     [
       "vshape_tension/p26/res",
-      3.008171916008e-07
+      2.9895454645157e-07
     ],
     [
       "vshape_tension/p26/iter",
@@ -6589,19 +6589,19 @@
     ],
     [
       "vshape_tension/p26/pivot",
-      3.8611800255226e-08
+      3.8611800295328e-08
     ],
     [
       "vshape_tension/p27/lambda",
-      0.21356087260801
+      0.21356087265377
     ],
     [
       "vshape_tension/p27/ctrl",
-      -0.0041473913078835
+      -0.004147390722703
     ],
     [
       "vshape_tension/p27/res",
-      2.8219074010849e-07
+      3.0174851417542e-07
     ],
     [
       "vshape_tension/p27/iter",
@@ -6613,19 +6613,19 @@
     ],
     [
       "vshape_tension/p27/pivot",
-      3.8583254254757e-08
+      3.8583254294782e-08
     ],
     [
       "vshape_tension/p28/lambda",
-      0.22555195714428
+      0.22555195719002
     ],
     [
       "vshape_tension/p28/ctrl",
-      -0.0043786334126453
+      -0.0043786328277047
     ],
     [
       "vshape_tension/p28/res",
-      3.0733644962311e-07
+      2.8824433684349e-07
     ],
     [
       "vshape_tension/p28/iter",
@@ -6637,19 +6637,19 @@
     ],
     [
       "vshape_tension/p28/pivot",
-      3.8554767249336e-08
+      3.8554767289282e-08
     ],
     [
       "vshape_tension/p29/lambda",
-      0.23754305481735
+      0.23754305486308
     ],
     [
       "vshape_tension/p29/ctrl",
-      -0.0046097051518717
+      -0.0046097045671696
     ],
     [
       "vshape_tension/p29/res",
-      3.0221417546272e-07
+      2.770684659481e-07
     ],
     [
       "vshape_tension/p29/iter",
@@ -6661,19 +6661,19 @@
     ],
     [
       "vshape_tension/p29/pivot",
-      3.8526339040889e-08
+      3.8526339080758e-08
     ],
     [
       "vshape_tension/p30/lambda",
-      0.24953416559052
+      0.24953416563623
     ],
     [
       "vshape_tension/p30/ctrl",
-      -0.0048406068764093
+      -0.0048406062919449
     ],
     [
       "vshape_tension/p30/res",
-      2.8545036911964e-07
+      2.947635948658e-07
     ],
     [
       "vshape_tension/p30/iter",
@@ -6685,19 +6685,19 @@
     ],
     [
       "vshape_tension/p30/pivot",
-      3.8497969432266e-08
+      3.8497969472057e-08
     ],
     [
       "vshape_tension/p31/lambda",
-      0.26152528942721
+      0.2615252894729
     ],
     [
       "vshape_tension/p31/ctrl",
-      -0.0050713389359325
+      -0.0050713383517063
     ],
     [
       "vshape_tension/p31/res",
-      2.9290094971657e-07
+      3.1013041734695e-07
     ],
     [
       "vshape_tension/p31/iter",
@@ -6709,19 +6709,19 @@
     ],
     [
       "vshape_tension/p31/pivot",
-      3.8469658227231e-08
+      3.8469658266945e-08
     ],
     [
       "vshape_tension/p32/lambda",
-      0.273516426291
+      0.27351642633667
     ],
     [
       "vshape_tension/p32/ctrl",
-      -0.0053019016789484
+      -0.0053019010949601
     ],
     [
       "vshape_tension/p32/res",
-      2.947635948658e-07
+      2.9103830456734e-07
     ],
     [
       "vshape_tension/p32/iter",
@@ -6733,19 +6733,19 @@
     ],
     [
       "vshape_tension/p32/pivot",
-      3.8441405230462e-08
+      3.8441405270099e-08
     ],
     [
       "vshape_tension/p33/lambda",
-      0.28550757614562
+      0.28550757619127
     ],
     [
       "vshape_tension/p33/ctrl",
-      -0.0055322954528001
+      -0.0055322948690483
     ],
     [
       "vshape_tension/p33/res",
-      2.9243528842926e-07
+      3.0174851417542e-07
     ],
     [
       "vshape_tension/p33/iter",
@@ -6757,19 +6757,19 @@
     ],
     [
       "vshape_tension/p33/pivot",
-      3.8413210247542e-08
+      3.8413210287102e-08
     ],
     [
       "vshape_tension/p34/lambda",
-      0.29749873895494
+      0.29749873900057
     ],
     [
       "vshape_tension/p34/ctrl",
-      -0.005762520603673
+      -0.0057625200201581
     ],
     [
       "vshape_tension/p34/res",
-      3.1385570764542e-07
+      3.1199306249619e-07
     ],
     [
       "vshape_tension/p34/iter",
@@ -6781,19 +6781,19 @@
     ],
     [
       "vshape_tension/p34/pivot",
-      3.8385073084953e-08
+      3.8385073124437e-08
     ],
     [
       "vshape_tension/p35/lambda",
-      0.30948991468299
+      0.3094899147286
     ],
     [
       "vshape_tension/p35/ctrl",
-      -0.005992577476602
+      -0.005992576893323
     ],
     [
       "vshape_tension/p35/res",
-      2.8591603040695e-07
+      3.0733644962311e-07
     ],
     [
       "vshape_tension/p35/iter",
@@ -6805,19 +6805,19 @@
     ],
     [
       "vshape_tension/p35/pivot",
-      3.8356993550074e-08
+      3.8356993589482e-08
     ],
     [
       "vshape_tension/p36/lambda",
-      0.32148110329393
+      0.32148110333952
     ],
     [
       "vshape_tension/p36/ctrl",
-      -0.0062224664154728
+      -0.0062224658324299
     ],
     [
       "vshape_tension/p36/res",
-      3.2177194952965e-07
+      3.0454248189926e-07
     ],
     [
       "vshape_tension/p36/iter",
@@ -6829,19 +6829,19 @@
     ],
     [
       "vshape_tension/p36/pivot",
-      3.8328971451172e-08
+      3.8328971490504e-08
     ],
     [
       "vshape_tension/p37/lambda",
-      0.33347230475208
+      0.33347230479765
     ],
     [
       "vshape_tension/p37/ctrl",
-      -0.0064521877630332
+      -0.0064521871802257
     ],
     [
       "vshape_tension/p37/res",
-      2.9662624001503e-07
+      2.7986243367195e-07
     ],
     [
       "vshape_tension/p37/iter",
@@ -6853,19 +6853,19 @@
     ],
     [
       "vshape_tension/p37/pivot",
-      3.8301006597399e-08
+      3.8301006636655e-08
     ],
     [
       "vshape_tension/p38/lambda",
-      0.34546351902189
+      0.34546351906745
     ],
     [
       "vshape_tension/p38/ctrl",
-      -0.0066817418608895
+      -0.0066817412783164
     ],
     [
       "vshape_tension/p38/res",
-      2.9290094971657e-07
+      3.1432136893272e-07
     ],
     [
       "vshape_tension/p38/iter",
@@ -6877,19 +6877,19 @@
     ],
     [
       "vshape_tension/p38/pivot",
-      3.8273098798787e-08
+      3.8273098837968e-08
     ],
     [
       "vshape_tension/p39/lambda",
-      0.35745474606798
+      0.35745474611352
     ],
     [
       "vshape_tension/p39/ctrl",
-      -0.0069111290495225
+      -0.0069111284671841
     ],
     [
       "vshape_tension/p39/res",
-      3.0174851417542e-07
+      2.9895454645157e-07
     ],
     [
       "vshape_tension/p39/iter",
@@ -6901,19 +6901,19 @@
     ],
     [
       "vshape_tension/p39/pivot",
-      3.8245247866241e-08
+      3.8245247905347e-08
     ],
     [
       "vshape_tension/p40/lambda",
-      0.36944598585508
+      0.3694459859006
     ],
     [
       "vshape_tension/p40/ctrl",
-      -0.0071403496682845
+      -0.0071403490861797
     ],
     [
       "vshape_tension/p40/res",
-      2.8638169169426e-07
+      2.6030465960503e-07
     ],
     [
       "vshape_tension/p40/iter",
@@ -6925,19 +6925,19 @@
     ],
     [
       "vshape_tension/p40/pivot",
-      3.8217453611536e-08
+      3.8217453650567e-08
     ],
     [
       "vshape_tension/p41/lambda",
-      0.38143723834808
+      0.38143723839358
     ],
     [
       "vshape_tension/p41/ctrl",
-      -0.0073694040554055
+      -0.0073694034735346
     ],
     [
       "vshape_tension/p41/res",
-      2.9057264328003e-07
+      2.8638169169426e-07
     ],
     [
       "vshape_tension/p41/iter",
@@ -6949,19 +6949,19 @@
     ],
     [
       "vshape_tension/p41/pivot",
-      3.818971584731e-08
+      3.8189715886265e-08
     ],
     [
       "vshape_tension/p42/lambda",
-      0.39342850351202
+      0.3934285035575
     ],
     [
       "vshape_tension/p42/ctrl",
-      -0.0075982925480034
+      -0.0075982919663647
     ],
     [
       "vshape_tension/p42/res",
-      2.9522925615311e-07
+      3.0873343348503e-07
     ],
     [
       "vshape_tension/p42/iter",
@@ -6973,19 +6973,19 @@
     ],
     [
       "vshape_tension/p42/pivot",
-      3.816203438706e-08
+      3.8162034425941e-08
     ],
     [
       "vshape_tension/p43/lambda",
-      0.40541978131205
+      0.40541978135752
     ],
     [
       "vshape_tension/p43/ctrl",
-      -0.0078270154820838
+      -0.0078270149006784
     ],
     [
       "vshape_tension/p43/res",
-      2.887099981308e-07
+      2.9709190130234e-07
     ],
     [
       "vshape_tension/p43/iter",
@@ -6997,19 +6997,19 @@
     ],
     [
       "vshape_tension/p43/pivot",
-      3.8134409045136e-08
+      3.8134409083943e-08
     ],
     [
       "vshape_tension/p44/lambda",
-      0.41741107171351
+      0.41741107175896
     ],
     [
       "vshape_tension/p44/ctrl",
-      -0.0080555731925476
+      -0.008055572611374
     ],
     [
       "vshape_tension/p44/res",
-      2.8498470783234e-07
+      2.8964132070541e-07
     ],
     [
       "vshape_tension/p44/iter",
@@ -7021,19 +7021,19 @@
     ],
     [
       "vshape_tension/p44/pivot",
-      3.8106839636739e-08
+      3.8106839675471e-08
     ],
     [
       "vshape_tension/p45/lambda",
-      0.42940237468182
+      0.42940237472725
     ],
     [
       "vshape_tension/p45/ctrl",
-      -0.0082839660131946
+      -0.0082839654322525
     ],
     [
       "vshape_tension/p45/res",
-      2.8638169169426e-07
+      2.9103830456734e-07
     ],
     [
       "vshape_tension/p45/iter",
@@ -7045,19 +7045,19 @@
     ],
     [
       "vshape_tension/p45/pivot",
-      3.807932597791e-08
+      3.8079326016569e-08
     ],
     [
       "vshape_tension/p46/lambda",
-      0.44139369018259
+      0.441393690228
     ],
     [
       "vshape_tension/p46/ctrl",
-      -0.0085121942767297
+      -0.0085121936960184
     ],
     [
       "vshape_tension/p46/res",
-      2.8358772397041e-07
+      2.9103830456734e-07
     ],
     [
       "vshape_tension/p46/iter",
@@ -7069,19 +7069,19 @@
     ],
     [
       "vshape_tension/p46/pivot",
-      3.8051867885534e-08
+      3.8051867924119e-08
     ],
     [
       "vshape_tension/p47/lambda",
-      0.45338501818153
+      0.45338501822693
     ],
     [
       "vshape_tension/p47/ctrl",
-      -0.0087402583147669
+      -0.0087402577342865
     ],
     [
       "vshape_tension/p47/res",
-      2.9290094971657e-07
+      2.7613714337349e-07
     ],
     [
       "vshape_tension/p47/iter",
@@ -7093,19 +7093,19 @@
     ],
     [
       "vshape_tension/p47/pivot",
-      3.8024465177324e-08
+      3.8024465215837e-08
     ],
     [
       "vshape_tension/p48/lambda",
-      0.46537635864451
+      0.46537635868989
     ],
     [
       "vshape_tension/p48/ctrl",
-      -0.0089681584578368
+      -0.008968157877587
     ],
     [
       "vshape_tension/p48/res",
-      2.6635825634003e-07
+      2.6589259505272e-07
     ],
     [
       "vshape_tension/p48/iter",
@@ -7117,19 +7117,19 @@
     ],
     [
       "vshape_tension/p48/pivot",
-      3.7997117671828e-08
+      3.7997117710267e-08
     ],
     [
       "vshape_tension/p49/lambda",
-      0.47736771153753
+      0.4773677115829
     ],
     [
       "vshape_tension/p49/ctrl",
-      -0.0091958950353857
+      -0.009195894455366
     ],
     [
       "vshape_tension/p49/res",
-      3.0873343348503e-07
+      2.9290094971657e-07
     ],
     [
       "vshape_tension/p49/iter",
@@ -7141,19 +7141,19 @@
     ],
     [
       "vshape_tension/p49/pivot",
-      3.7969825188413e-08
+      3.7969825226779e-08
     ],
     [
       "vshape_tension/p50/lambda",
-      0.48935907682673
+      0.48935907687208
     ],
     [
       "vshape_tension/p50/ctrl",
-      -0.0094234683757898
+      -0.0094234677959992
     ],
     [
       "vshape_tension/p50/res",
-      2.7241185307503e-07
+      2.7799978852272e-07
     ],
     [
       "vshape_tension/p50/iter",
@@ -7165,15 +7165,15 @@
     ],
     [
       "vshape_tension/p50/pivot",
-      3.7942587547269e-08
+      3.7942587585562e-08
     ],
     [
       "vshape_tension/p51/lambda",
-      0.50135045447837
+      0.5013504545237
     ],
     [
       "vshape_tension/p51/ctrl",
-      -0.0096508788063504
+      -0.0096508782267891
     ],
     [
       "vshape_tension/p51/res",
@@ -7189,19 +7189,19 @@
     ],
     [
       "vshape_tension/p51/pivot",
-      3.7915404569399e-08
+      3.791540460762e-08
     ],
     [
       "vshape_tension/p52/lambda",
-      0.51334184445886
+      0.51334184450417
     ],
     [
       "vshape_tension/p52/ctrl",
-      -0.0098781266533032
+      -0.0098781260739708
     ],
     [
       "vshape_tension/p52/res",
-      2.6868656277657e-07
+      2.6728957891464e-07
     ],
     [
       "vshape_tension/p52/iter",
@@ -7213,19 +7213,19 @@
     ],
     [
       "vshape_tension/p52/pivot",
-      3.7888276076617e-08
+      3.7888276114766e-08
     ],
     [
       "vshape_tension/p53/lambda",
-      0.52533324673474
+      0.52533324678003
     ],
     [
       "vshape_tension/p53/ctrl",
-      -0.010105212241825
+      -0.010105211662721
     ],
     [
       "vshape_tension/p53/res",
-      2.9709190130234e-07
+      2.6309862732887e-07
     ],
     [
       "vshape_tension/p53/iter",
@@ -7237,19 +7237,19 @@
     ],
     [
       "vshape_tension/p53/pivot",
-      3.7861201891542e-08
+      3.7861201929619e-08
     ],
     [
       "vshape_tension/p54/lambda",
-      0.53732466127268
+      0.53732466131795
     ],
     [
       "vshape_tension/p54/ctrl",
-      -0.010332135896035
+      -0.010332135317159
     ],
     [
       "vshape_tension/p54/res",
-      2.8219074010849e-07
+      2.5238841772079e-07
     ],
     [
       "vshape_tension/p54/iter",
@@ -7261,19 +7261,19 @@
     ],
     [
       "vshape_tension/p54/pivot",
-      3.7834181837593e-08
+      3.7834181875598e-08
     ],
     [
       "vshape_tension/p55/lambda",
-      0.54931608803947
+      0.54931608808473
     ],
     [
       "vshape_tension/p55/ctrl",
-      -0.010558897939002
+      -0.010558897360352
     ],
     [
       "vshape_tension/p55/res",
-      2.6542693376541e-07
+      2.7799978852272e-07
     ],
     [
       "vshape_tension/p55/iter",
@@ -7285,19 +7285,19 @@
     ],
     [
       "vshape_tension/p55/pivot",
-      3.7807215738986e-08
+      3.7807215776919e-08
     ],
     [
       "vshape_tension/p56/lambda",
-      0.56130752700207
+      0.56130752704731
     ],
     [
       "vshape_tension/p56/ctrl",
-      -0.010785498692745
+      -0.010785498114322
     ],
     [
       "vshape_tension/p56/res",
-      2.8684735298157e-07
+      2.8125941753387e-07
     ],
     [
       "vshape_tension/p56/iter",
@@ -7309,19 +7309,19 @@
     ],
     [
       "vshape_tension/p56/pivot",
-      3.7780303420727e-08
+      3.7780303458589e-08
     ],
     [
       "vshape_tension/p57/lambda",
-      0.57329897812752
+      0.57329897817275
     ],
     [
       "vshape_tension/p57/ctrl",
-      -0.011011938478244
+      -0.011011937900049
     ],
     [
       "vshape_tension/p57/res",
-      2.8125941753387e-07
+      2.6263296604156e-07
     ],
     [
       "vshape_tension/p57/iter",
@@ -7333,19 +7333,19 @@
     ],
     [
       "vshape_tension/p57/pivot",
-      3.7753444708611e-08
+      3.7753444746402e-08
     ],
     [
       "vshape_tension/p58/lambda",
-      0.58529044138303
+      0.58529044142824
     ],
     [
       "vshape_tension/p58/ctrl",
-      -0.011238217615442
+      -0.011238217037473
     ],
     [
       "vshape_tension/p58/res",
-      2.6309862732887e-07
+      2.6635825634003e-07
     ],
     [
       "vshape_tension/p58/iter",
@@ -7357,19 +7357,19 @@
     ],
     [
       "vshape_tension/p58/pivot",
-      3.7726639429214e-08
+      3.7726639466934e-08
     ],
     [
       "vshape_tension/p59/lambda",
-      0.59728191673593
+      0.59728191678112
     ],
     [
       "vshape_tension/p59/ctrl",
-      -0.011464336423247
+      -0.011464335845502
     ],
     [
       "vshape_tension/p59/res",
-      2.5238841772079e-07
+      2.7893111109734e-07
     ],
     [
       "vshape_tension/p59/iter",
@@ -7381,19 +7381,19 @@
     ],
     [
       "vshape_tension/p59/pivot",
-      3.769988740989e-08
+      3.7699887447539e-08
     ],
     [
       "vshape_tension/p60/lambda",
-      0.60927340415365
+      0.60927340419883
     ],
     [
       "vshape_tension/p60/ctrl",
-      -0.011690295219539
+      -0.011690294642021
     ],
     [
       "vshape_tension/p60/res",
-      2.9010698199272e-07
+      2.4819746613503e-07
     ],
     [
       "vshape_tension/p60/iter",
@@ -7405,19 +7405,19 @@
     ],
     [
       "vshape_tension/p60/pivot",
-      3.7673188478766e-08
+      3.7673188516345e-08
     ],
     [
       "vshape_tension/p61/lambda",
-      0.6212649036038
+      0.62126490364896
     ],
     [
       "vshape_tension/p61/ctrl",
-      -0.011916094321177
+      -0.011916093743884
     ],
     [
       "vshape_tension/p61/res",
-      2.7567148208618e-07
+      2.3888424038887e-07
     ],
     [
       "vshape_tension/p61/iter",
@@ -7429,19 +7429,19 @@
     ],
     [
       "vshape_tension/p61/pivot",
-      3.7646542464739e-08
+      3.7646542502248e-08
     ],
     [
       "vshape_tension/p62/lambda",
-      0.63325641505407
+      0.63325641509921
     ],
     [
       "vshape_tension/p62/ctrl",
-      -0.012141734043999
+      -0.01214173346693
     ],
     [
       "vshape_tension/p62/res",
-      2.8079375624657e-07
+      2.4400651454926e-07
     ],
     [
       "vshape_tension/p62/iter",
@@ -7453,19 +7453,19 @@
     ],
     [
       "vshape_tension/p62/pivot",
-      3.761994919747e-08
+      3.7619949234909e-08
     ],
     [
       "vshape_tension/p63/lambda",
-      0.6452479384723
+      0.64524793851742
     ],
     [
       "vshape_tension/p63/ctrl",
-      -0.012367214702828
+      -0.012367214125983
     ],
     [
       "vshape_tension/p63/res",
-      2.6822090148926e-07
+      2.7427449822426e-07
     ],
     [
       "vshape_tension/p63/iter",
@@ -7477,19 +7477,19 @@
     ],
     [
       "vshape_tension/p63/pivot",
-      3.7593408507381e-08
+      3.759340854475e-08
     ],
     [
       "vshape_tension/p64/lambda",
-      0.65723947382645
+      0.65723947387156
     ],
     [
       "vshape_tension/p64/ctrl",
-      -0.01259253661148
+      -0.012592536034857
     ],
     [
       "vshape_tension/p64/res",
-      2.6822090148926e-07
+      2.8777867555618e-07
     ],
     [
       "vshape_tension/p64/iter",
@@ -7501,19 +7501,19 @@
     ],
     [
       "vshape_tension/p64/pivot",
-      3.7566920225648e-08
+      3.7566920262947e-08
     ],
     [
       "vshape_tension/p65/lambda",
-      0.66923102108462
+      0.66923102112971
     ],
     [
       "vshape_tension/p65/ctrl",
-      -0.012817700082762
+      -0.012817699506362
     ],
     [
       "vshape_tension/p65/res",
-      2.589076757431e-07
+      2.6030465960503e-07
     ],
     [
       "vshape_tension/p65/iter",
@@ -7525,19 +7525,19 @@
     ],
     [
       "vshape_tension/p65/pivot",
-      3.75404841842e-08
+      3.754048422143e-08
     ],
     [
       "vshape_tension/p66/lambda",
-      0.681222580215
+      0.68122258026008
     ],
     [
       "vshape_tension/p66/ctrl",
-      -0.013042705428482
+      -0.013042704852305
     ],
     [
       "vshape_tension/p66/res",
-      2.4586915969849e-07
+      2.6868656277657e-07
     ],
     [
       "vshape_tension/p66/iter",
@@ -7549,19 +7549,19 @@
     ],
     [
       "vshape_tension/p66/pivot",
-      3.7514100215713e-08
+      3.7514100252874e-08
     ],
     [
       "vshape_tension/p67/lambda",
-      0.69321415118595
+      0.69321415123101
     ],
     [
       "vshape_tension/p67/ctrl",
-      -0.013267552959452
+      -0.013267552383497
     ],
     [
       "vshape_tension/p67/res",
-      2.5518238544464e-07
+      2.6961788535118e-07
     ],
     [
       "vshape_tension/p67/iter",
@@ -7573,19 +7573,19 @@
     ],
     [
       "vshape_tension/p67/pivot",
-      3.7487768153607e-08
+      3.7487768190699e-08
     ],
     [
       "vshape_tension/p68/lambda",
-      0.70520573396592
+      0.70520573401096
     ],
     [
       "vshape_tension/p68/ctrl",
-      -0.01349224298549
+      -0.013492242409757
     ],
     [
       "vshape_tension/p68/res",
-      2.4959444999695e-07
+      2.6216730475426e-07
     ],
     [
       "vshape_tension/p68/iter",
@@ -7597,19 +7597,19 @@
     ],
     [
       "vshape_tension/p68/pivot",
-      3.7461487832038e-08
+      3.7461487869062e-08
     ],
     [
       "vshape_tension/p69/lambda",
-      0.71719732852349
+      0.71719732856851
     ],
     [
       "vshape_tension/p69/ctrl",
-      -0.013716775815429
+      -0.013716775239918
     ],
     [
       "vshape_tension/p69/res",
-      2.6728957891464e-07
+      2.4214386940002e-07
     ],
     [
       "vshape_tension/p69/iter",
@@ -7621,19 +7621,19 @@
     ],
     [
       "vshape_tension/p69/pivot",
-      3.7435259085899e-08
+      3.7435259122855e-08
     ],
     [
       "vshape_tension/p70/lambda",
-      0.72918893482736
+      0.72918893487237
     ],
     [
       "vshape_tension/p70/ctrl",
-      -0.013941151757117
+      -0.013941151181826
     ],
     [
       "vshape_tension/p70/res",
-      2.3376196622849e-07
+      2.4400651454926e-07
     ],
     [
       "vshape_tension/p70/iter",
@@ -7645,19 +7645,19 @@
     ],
     [
       "vshape_tension/p70/pivot",
-      3.7409081750815e-08
+      3.7409081787702e-08
     ],
     [
       "vshape_tension/p71/lambda",
-      0.74118055284637
+      0.74118055289137
     ],
     [
       "vshape_tension/p71/ctrl",
-      -0.014165371117421
+      -0.014165370542352
     ],
     [
       "vshape_tension/p71/res",
-      2.6170164346695e-07
+      2.5006011128426e-07
     ],
     [
       "vshape_tension/p71/iter",
@@ -7669,19 +7669,19 @@
     ],
     [
       "vshape_tension/p71/pivot",
-      3.7382955663132e-08
+      3.7382955699951e-08
     ],
     [
       "vshape_tension/p72/lambda",
-      0.75317218254947
+      0.75317218259444
     ],
     [
       "vshape_tension/p72/ctrl",
-      -0.014389434202239
+      -0.01438943362739
     ],
     [
       "vshape_tension/p72/res",
-      2.3143365979195e-07
+      2.6170164346695e-07
     ],
     [
       "vshape_tension/p72/iter",
@@ -7693,19 +7693,19 @@
     ],
     [
       "vshape_tension/p72/pivot",
-      3.7356880659923e-08
+      3.7356880696674e-08
     ],
     [
       "vshape_tension/p73/lambda",
-      0.76516382390571
+      0.76516382395067
     ],
     [
       "vshape_tension/p73/ctrl",
-      -0.014613341316493
+      -0.014613340741863
     ],
     [
       "vshape_tension/p73/res",
-      2.705492079258e-07
+      2.4912878870964e-07
     ],
     [
       "vshape_tension/p73/iter",
@@ -7717,19 +7717,19 @@
     ],
     [
       "vshape_tension/p73/pivot",
-      3.7330856578978e-08
+      3.7330856615662e-08
     ],
     [
       "vshape_tension/p74/lambda",
-      0.77715547688429
+      0.77715547692923
     ],
     [
       "vshape_tension/p74/ctrl",
-      -0.014837092764141
+      -0.014837092189732
     ],
     [
       "vshape_tension/p74/res",
-      2.7008354663849e-07
+      2.4028122425079e-07
     ],
     [
       "vshape_tension/p74/iter",
@@ -7741,19 +7741,19 @@
     ],
     [
       "vshape_tension/p74/pivot",
-      3.73048832588e-08
+      3.7304883295416e-08
     ],
     [
       "vshape_tension/p75/lambda",
-      0.78914714145452
+      0.78914714149944
     ],
     [
       "vshape_tension/p75/ctrl",
-      -0.01506068884818
+      -0.01506068827399
     ],
     [
       "vshape_tension/p75/res",
-      2.4028122425079e-07
+      2.3143365979195e-07
     ],
     [
       "vshape_tension/p75/iter",
@@ -7765,19 +7765,19 @@
     ],
     [
       "vshape_tension/p75/pivot",
-      3.7278960538603e-08
+      3.7278960575152e-08
     ],
     [
       "vshape_tension/p76/lambda",
-      0.80113881758581
+      0.80113881763072
     ],
     [
       "vshape_tension/p76/ctrl",
-      -0.015284129870649
+      -0.015284129296678
     ],
     [
       "vshape_tension/p76/res",
-      2.2770836949348e-07
+      2.4773180484772e-07
     ],
     [
       "vshape_tension/p76/iter",
@@ -7789,19 +7789,19 @@
     ],
     [
       "vshape_tension/p76/pivot",
-      3.7253088258307e-08
+      3.7253088294789e-08
     ],
     [
       "vshape_tension/p77/lambda",
-      0.81313050524772
+      0.81313050529262
     ],
     [
       "vshape_tension/p77/ctrl",
-      -0.015507416132632
+      -0.015507415558878
     ],
     [
       "vshape_tension/p77/res",
-      2.5657936930656e-07
+      2.6822090148926e-07
     ],
     [
       "vshape_tension/p77/iter",
@@ -7813,19 +7813,19 @@
     ],
     [
       "vshape_tension/p77/pivot",
-      3.7227266258534e-08
+      3.7227266294949e-08
     ],
     [
       "vshape_tension/p78/lambda",
-      0.82512220440991
+      0.82512220445479
     ],
     [
       "vshape_tension/p78/ctrl",
-      -0.015730547934266
+      -0.01573054736073
     ],
     [
       "vshape_tension/p78/res",
-      2.5378540158272e-07
+      2.3329630494118e-07
     ],
     [
       "vshape_tension/p78/iter",
@@ -7837,19 +7837,19 @@
     ],
     [
       "vshape_tension/p78/pivot",
-      3.7201494380603e-08
+      3.7201494416952e-08
     ],
     [
       "vshape_tension/p79/lambda",
-      0.83711391504215
+      0.83711391508701
     ],
     [
       "vshape_tension/p79/ctrl",
-      -0.01595352557474
+      -0.015953525001422
     ],
     [
       "vshape_tension/p79/res",
-      2.3655593395233e-07
+      2.2677704691887e-07
     ],
     [
       "vshape_tension/p79/iter",
@@ -7861,19 +7861,19 @@
     ],
     [
       "vshape_tension/p79/pivot",
-      3.717577246653e-08
+      3.7175772502812e-08
     ],
     [
       "vshape_tension/p80/lambda",
-      0.84910563711434
+      0.84910563715918
     ],
     [
       "vshape_tension/p80/ctrl",
-      -0.016176349352305
+      -0.016176348779203
     ],
     [
       "vshape_tension/p80/res",
-      2.6589259505272e-07
+      2.6123598217964e-07
     ],
     [
       "vshape_tension/p80/iter",
@@ -7885,19 +7885,19 @@
     ],
     [
       "vshape_tension/p80/pivot",
-      3.7150100359019e-08
+      3.7150100395234e-08
     ],
     [
       "vshape_tension/p81/lambda",
-      0.86109737059649
+      0.86109737064131
     ],
     [
       "vshape_tension/p81/ctrl",
-      -0.016399019564274
+      -0.016399018991389
     ],
     [
       "vshape_tension/p81/res",
-      2.4959444999695e-07
+      2.5704503059387e-07
     ],
     [
       "vshape_tension/p81/iter",
@@ -7909,19 +7909,19 @@
     ],
     [
       "vshape_tension/p81/pivot",
-      3.7124477901461e-08
+      3.712447793761e-08
     ],
     [
       "vshape_tension/p82/lambda",
-      0.87308911545871
+      0.87308911550352
     ],
     [
       "vshape_tension/p82/ctrl",
-      -0.016621536507025
+      -0.016621535934357
     ],
     [
       "vshape_tension/p82/res",
-      2.4633482098579e-07
+      2.3934990167618e-07
     ],
     [
       "vshape_tension/p82/iter",
@@ -7933,19 +7933,19 @@
     ],
     [
       "vshape_tension/p82/pivot",
-      3.709890493793e-08
+      3.7098904974014e-08
     ],
     [
       "vshape_tension/p83/lambda",
-      0.88508087167126
+      0.88508087171606
     ],
     [
       "vshape_tension/p83/ctrl",
-      -0.016843900476013
+      -0.01684389990356
     ],
     [
       "vshape_tension/p83/res",
-      2.5099143385887e-07
+      2.2677704691887e-07
     ],
     [
       "vshape_tension/p83/iter",
@@ -7957,19 +7957,19 @@
     ],
     [
       "vshape_tension/p83/pivot",
-      3.707338131318e-08
+      3.7073381349198e-08
     ],
     [
       "vshape_tension/p84/lambda",
-      0.89707263920448
+      0.89707263924926
     ],
     [
       "vshape_tension/p84/ctrl",
-      -0.017066111765761
+      -0.017066111193523
     ],
     [
       "vshape_tension/p84/res",
-      2.1606683731079e-07
+      2.528540790081e-07
     ],
     [
       "vshape_tension/p84/iter",
@@ -7981,19 +7981,19 @@
     ],
     [
       "vshape_tension/p84/pivot",
-      3.7047906872638e-08
+      3.7047906908591e-08
     ],
     [
       "vshape_tension/p85/lambda",
-      0.90906441802884
+      0.90906441807361
     ],
     [
       "vshape_tension/p85/ctrl",
-      -0.017288170669875
+      -0.017288170097854
     ],
     [
       "vshape_tension/p85/res",
-      2.649612724781e-07
+      2.3143365979195e-07
     ],
     [
       "vshape_tension/p85/iter",
@@ -8005,19 +8005,19 @@
     ],
     [
       "vshape_tension/p85/pivot",
-      3.7022481462403e-08
+      3.7022481498291e-08
     ],
     [
       "vshape_tension/p86/lambda",
-      0.92105620811493
+      0.92105620815967
     ],
     [
       "vshape_tension/p86/ctrl",
-      -0.017510077481047
+      -0.017510076909239
     ],
     [
       "vshape_tension/p86/res",
-      2.2444874048233e-07
+      2.4912878870964e-07
     ],
     [
       "vshape_tension/p86/iter",
@@ -8029,19 +8029,19 @@
     ],
     [
       "vshape_tension/p86/pivot",
-      3.6997104929244e-08
+      3.6997104965066e-08
     ],
     [
       "vshape_tension/p87/lambda",
-      0.93304800943342
+      0.93304800947815
     ],
     [
       "vshape_tension/p87/ctrl",
-      -0.01773183249105
+      -0.017731831919458
     ],
     [
       "vshape_tension/p87/res",
-      2.5797635316849e-07
+      2.2351741790771e-07
     ],
     [
       "vshape_tension/p87/iter",
@@ -8053,19 +8053,19 @@
     ],
     [
       "vshape_tension/p87/pivot",
-      3.6971777120589e-08
+      3.6971777156347e-08
     ],
     [
       "vshape_tension/p88/lambda",
-      0.94503982195512
+      0.94503982199984
     ],
     [
       "vshape_tension/p88/ctrl",
-      -0.017953435990754
+      -0.017953435419375
     ],
     [
       "vshape_tension/p88/res",
-      2.4633482098579e-07
+      2.5052577257156e-07
     ],
     [
       "vshape_tension/p88/iter",
@@ -8077,19 +8077,19 @@
     ],
     [
       "vshape_tension/p88/pivot",
-      3.6946497884531e-08
+      3.6946497920224e-08
     ],
     [
       "vshape_tension/p89/lambda",
-      0.95703164565095
+      0.95703164569565
     ],
     [
       "vshape_tension/p89/ctrl",
-      -0.01817488827012
+      -0.018174887698955
     ],
     [
       "vshape_tension/p89/res",
-      2.4866312742233e-07
+      2.2444874048233e-07
     ],
     [
       "vshape_tension/p89/iter",
@@ -8101,19 +8101,19 @@
     ],
     [
       "vshape_tension/p89/pivot",
-      3.6921267069817e-08
+      3.6921267105446e-08
     ],
     [
       "vshape_tension/p90/lambda",
-      0.96902348049193
+      0.96902348053661
     ],
     [
       "vshape_tension/p90/ctrl",
-      -0.01839618961821
+      -0.018396189047259
     ],
     [
       "vshape_tension/p90/res",
-      2.4819746613503e-07
+      2.4167820811272e-07
     ],
     [
       "vshape_tension/p90/iter",
@@ -8125,19 +8125,19 @@
     ],
     [
       "vshape_tension/p90/pivot",
-      3.6896084525848e-08
+      3.6896084561413e-08
     ],
     [
       "vshape_tension/p91/lambda",
-      0.98101532644919
+      0.98101532649386
     ],
     [
       "vshape_tension/p91/ctrl",
-      -0.018617340323189
+      -0.01861733975245
     ],
     [
       "vshape_tension/p91/res",
-      2.5378540158272e-07
+      2.2677704691887e-07
     ],
     [
       "vshape_tension/p91/iter",
@@ -8149,19 +8149,19 @@
     ],
     [
       "vshape_tension/p91/pivot",
-      3.6870950102674e-08
+      3.6870950138175e-08
     ],
     [
       "vshape_tension/p92/lambda",
-      0.99300718349398
+      0.99300718353864
     ],
     [
       "vshape_tension/p92/ctrl",
-      -0.018838340672328
+      -0.018838340101802
     ],
     [
       "vshape_tension/p92/res",
-      2.6822090148926e-07
+      2.3003667593002e-07
     ],
     [
       "vshape_tension/p92/iter",
@@ -8173,19 +8173,19 @@
     ],
     [
       "vshape_tension/p92/pivot",
-      3.6845863650991e-08
+      3.6845863686428e-08
     ],
     [
       "vshape_tension/p93/lambda",
-      1.0049990515977
+      1.0049990516423
     ],
     [
       "vshape_tension/p93/ctrl",
-      -0.019059190952009
+      -0.019059190381694
     ],
     [
       "vshape_tension/p93/res",
-      2.3934990167618e-07
+      2.5611370801926e-07
     ],
     [
       "vshape_tension/p93/iter",
@@ -8197,19 +8197,19 @@
     ],
     [
       "vshape_tension/p93/pivot",
-      3.6820825022137e-08
+      3.682082505751e-08
     ],
     [
       "vshape_tension/p94/lambda",
-      1.0169909307317
+      1.0169909307763
     ],
     [
       "vshape_tension/p94/ctrl",
-      -0.019279891447729
+      -0.019279890877625
     ],
     [
       "vshape_tension/p94/res",
-      2.1979212760925e-07
+      2.2770836949348e-07
     ],
     [
       "vshape_tension/p94/iter",
@@ -8221,19 +8221,19 @@
     ],
     [
       "vshape_tension/p94/pivot",
-      3.6795834068088e-08
+      3.6795834103397e-08
     ],
     [
       "vshape_tension/p95/lambda",
-      1.0289828208676
+      1.0289828209122
     ],
     [
       "vshape_tension/p95/ctrl",
-      -0.019500442444101
+      -0.019500441874208
     ],
     [
       "vshape_tension/p95/res",
-      2.3655593395233e-07
+      2.407468855381e-07
     ],
     [
       "vshape_tension/p95/iter",
@@ -8245,19 +8245,19 @@
     ],
     [
       "vshape_tension/p95/pivot",
-      3.6770890641456e-08
+      3.6770890676702e-08
     ],
     [
       "vshape_tension/p96/lambda",
-      1.0409747219771
+      1.0409747220217
     ],
     [
       "vshape_tension/p96/ctrl",
-      -0.019720844224861
+      -0.01972084365518
     ],
     [
       "vshape_tension/p96/res",
-      2.4912878870964e-07
+      2.2444874048233e-07
     ],
     [
       "vshape_tension/p96/iter",
@@ -8269,19 +8269,19 @@
     ],
     [
       "vshape_tension/p96/pivot",
-      3.6745994595485e-08
+      3.6745994630668e-08
     ],
     [
       "vshape_tension/p97/lambda",
-      1.052966634032
+      1.0529666340765
     ],
     [
       "vshape_tension/p97/ctrl",
-      -0.019941097072874
+      -0.019941096503402
     ],
     [
       "vshape_tension/p97/res",
-      2.1606683731079e-07
+      2.2770836949348e-07
     ],
     [
       "vshape_tension/p97/iter",
@@ -8293,19 +8293,19 @@
     ],
     [
       "vshape_tension/p97/pivot",
-      3.6721145784046e-08
+      3.6721145819166e-08
     ],
     [
       "vshape_tension/p98/lambda",
-      1.0649585570041
+      1.0649585570487
     ],
     [
       "vshape_tension/p98/ctrl",
-      -0.020161201270129
+      -0.020161200700868
     ],
     [
       "vshape_tension/p98/res",
-      2.4307519197464e-07
+      2.3283064365387e-07
     ],
     [
       "vshape_tension/p98/iter",
@@ -8317,19 +8317,19 @@
     ],
     [
       "vshape_tension/p98/pivot",
-      3.6696344061637e-08
+      3.6696344096694e-08
     ],
     [
       "vshape_tension/p99/lambda",
-      1.0769504908655
+      1.07695049091
     ],
     [
       "vshape_tension/p99/ctrl",
-      -0.020381157097752
+      -0.020381156528701
     ],
     [
       "vshape_tension/p99/res",
-      2.4214386940002e-07
+      2.4493783712387e-07
     ],
     [
       "vshape_tension/p99/iter",
@@ -8341,19 +8341,19 @@
     ],
     [
       "vshape_tension/p99/pivot",
-      3.6671589283374e-08
+      3.6671589318369e-08
     ],
     [
       "vshape_tension/p100/lambda",
-      1.0889424355882
+      1.0889424356327
     ],
     [
       "vshape_tension/p100/ctrl",
-      -0.020600964836005
+      -0.020600964267164
     ],
     [
       "vshape_tension/p100/res",
-      2.528540790081e-07
+      2.3748725652695e-07
     ],
     [
       "vshape_tension/p100/iter",
@@ -8365,19 +8365,19 @@
     ],
     [
       "vshape_tension/p100/pivot",
-      3.6646881304995e-08
+      3.6646881339927e-08
     ],
     [
       "vshape_tension/p101/lambda",
-      1.1009343911445
+      1.100934391189
     ],
     [
       "vshape_tension/p101/ctrl",
-      -0.020820624764292
+      -0.020820624195658
     ],
     [
       "vshape_tension/p101/res",
-      2.0861625671387e-07
+      2.1327286958694e-07
     ],
     [
       "vshape_tension/p101/iter",
@@ -8389,19 +8389,19 @@
     ],
     [
       "vshape_tension/p101/pivot",
-      3.6622219982848e-08
+      3.6622220017719e-08
     ],
     [
       "vshape_tension/p102/lambda",
-      1.1129263575066
+      1.1129263575511
     ],
     [
       "vshape_tension/p102/ctrl",
-      -0.021040137161154
+      -0.02104013659273
     ],
     [
       "vshape_tension/p102/res",
-      2.4726614356041e-07
+      2.4260953068733e-07
     ],
     [
       "vshape_tension/p102/iter",
@@ -8413,19 +8413,19 @@
     ],
     [
       "vshape_tension/p102/pivot",
-      3.6597605173897e-08
+      3.6597605208706e-08
     ],
     [
       "vshape_tension/p103/lambda",
-      1.124918334647
+      1.1249183346915
     ],
     [
       "vshape_tension/p103/ctrl",
-      -0.021259502304291
+      -0.021259501736075
     ],
     [
       "vshape_tension/p103/res",
-      2.1420419216156e-07
+      2.3609027266502e-07
     ],
     [
       "vshape_tension/p103/iter",
@@ -8437,19 +8437,19 @@
     ],
     [
       "vshape_tension/p103/pivot",
-      3.6573036735711e-08
+      3.6573036770457e-08
     ],
     [
       "vshape_tension/p104/lambda",
-      1.1369103225382
+      1.1369103225826
     ],
     [
       "vshape_tension/p104/ctrl",
-      -0.021478720470547
+      -0.021478719902539
     ],
     [
       "vshape_tension/p104/res",
-      2.3143365979195e-07
+      2.1420419216156e-07
     ],
     [
       "vshape_tension/p104/iter",
@@ -8461,19 +8461,19 @@
     ],
     [
       "vshape_tension/p104/pivot",
-      3.6548514526464e-08
+      3.6548514561149e-08
     ],
     [
       "vshape_tension/p105/lambda",
-      1.1489023211528
+      1.1489023211972
     ],
     [
       "vshape_tension/p105/ctrl",
-      -0.021697791935922
+      -0.021697791368121
     ],
     [
       "vshape_tension/p105/res",
-      2.1560117602348e-07
+      2.2910535335541e-07
     ],
     [
       "vshape_tension/p105/iter",
@@ -8485,19 +8485,19 @@
     ],
     [
       "vshape_tension/p105/pivot",
-      3.6524038404931e-08
+      3.6524038439555e-08
     ],
     [
       "vshape_tension/p106/lambda",
-      1.1608943304635
+      1.1608943305079
     ],
     [
       "vshape_tension/p106/ctrl",
-      -0.021916716975576
+      -0.021916716407983
     ],
     [
       "vshape_tension/p106/res",
-      2.1606683731079e-07
+      2.0349398255348e-07
     ],
     [
       "vshape_tension/p106/iter",
@@ -8509,19 +8509,19 @@
     ],
     [
       "vshape_tension/p106/pivot",
-      3.6499608230487e-08
+      3.649960826505e-08
     ],
     [
       "vshape_tension/p107/lambda",
-      1.1728863504431
+      1.1728863504875
     ],
     [
       "vshape_tension/p107/ctrl",
-      -0.022135495863832
+      -0.022135495296445
     ],
     [
       "vshape_tension/p107/res",
-      2.2212043404579e-07
+      2.1606683731079e-07
     ],
     [
       "vshape_tension/p107/iter",
@@ -8533,19 +8533,19 @@
     ],
     [
       "vshape_tension/p107/pivot",
-      3.64752238631e-08
+      3.6475223897601e-08
     ],
     [
       "vshape_tension/p108/lambda",
-      1.1848783810646
+      1.184878381109
     ],
     [
       "vshape_tension/p108/ctrl",
-      -0.022354128874174
+      -0.022354128306995
     ],
     [
       "vshape_tension/p108/res",
-      2.4633482098579e-07
+      2.1932646632195e-07
     ],
     [
       "vshape_tension/p108/iter",
@@ -8557,19 +8557,19 @@
     ],
     [
       "vshape_tension/p108/pivot",
-      3.6450885163331e-08
+      3.6450885197771e-08
     ],
     [
       "vshape_tension/p109/lambda",
-      1.196870422301
+      1.1968704223454
     ],
     [
       "vshape_tension/p109/ctrl",
-      -0.022572616279263
+      -0.022572615712289
     ],
     [
       "vshape_tension/p109/res",
-      2.2677704691887e-07
+      2.1466985344887e-07
     ],
     [
       "vshape_tension/p109/iter",
@@ -8581,19 +8581,19 @@
     ],
     [
       "vshape_tension/p109/pivot",
-      3.6426591992327e-08
+      3.6426592026706e-08
     ],
     [
       "vshape_tension/p110/lambda",
-      1.2088624741254
+      1.2088624741698
     ],
     [
       "vshape_tension/p110/ctrl",
-      -0.022790958350925
+      -0.022790957784157
     ],
     [
       "vshape_tension/p110/res",
-      2.3050233721733e-07
+      2.0023435354233e-07
     ],
     [
       "vshape_tension/p110/iter",
@@ -8605,19 +8605,19 @@
     ],
     [
       "vshape_tension/p110/pivot",
-      3.6402344211822e-08
+      3.6402344246141e-08
     ],
     [
       "vshape_tension/p111/lambda",
-      1.220854536511
+      1.2208545365554
     ],
     [
       "vshape_tension/p111/ctrl",
-      -0.023009155360168
+      -0.023009154793605
     ],
     [
       "vshape_tension/p111/res",
-      2.3003667593002e-07
+      2.2025778889656e-07
     ],
     [
       "vshape_tension/p111/iter",
@@ -8629,19 +8629,19 @@
     ],
     [
       "vshape_tension/p111/pivot",
-      3.6378141684134e-08
+      3.6378141718392e-08
     ],
     [
       "vshape_tension/p112/lambda",
-      1.2328466094312
+      1.2328466094755
     ],
     [
       "vshape_tension/p112/ctrl",
-      -0.023227207577175
+      -0.023227207010817
     ],
     [
       "vshape_tension/p112/res",
-      2.225860953331e-07
+      2.3981556296349e-07
     ],
     [
       "vshape_tension/p112/iter",
@@ -8653,19 +8653,19 @@
     ],
     [
       "vshape_tension/p112/pivot",
-      3.6353984272156e-08
+      3.6353984306354e-08
     ],
     [
       "vshape_tension/p113/lambda",
-      1.2448386928593
+      1.2448386929037
     ],
     [
       "vshape_tension/p113/ctrl",
-      -0.023445115271315
+      -0.023445114705162
     ],
     [
       "vshape_tension/p113/res",
-      2.3888424038887e-07
+      2.1699815988541e-07
     ],
     [
       "vshape_tension/p113/iter",
@@ -8677,19 +8677,19 @@
     ],
     [
       "vshape_tension/p113/pivot",
-      3.6329871839359e-08
+      3.6329871873498e-08
     ],
     [
       "vshape_tension/p114/lambda",
-      1.2568307867689
+      1.2568307868133
     ],
     [
       "vshape_tension/p114/ctrl",
-      -0.023662878711145
+      -0.023662878145195
     ],
     [
       "vshape_tension/p114/res",
-      2.0908191800117e-07
+      2.1839514374733e-07
     ],
     [
       "vshape_tension/p114/iter",
@@ -8701,19 +8701,19 @@
     ],
     [
       "vshape_tension/p114/pivot",
-      3.6305804249788e-08
+      3.6305804283866e-08
     ],
     [
       "vshape_tension/p115/lambda",
-      1.2688228911337
+      1.268822891178
     ],
     [
       "vshape_tension/p115/ctrl",
-      -0.023880498164407
+      -0.023880497598661
     ],
     [
       "vshape_tension/p115/res",
-      2.2351741790771e-07
+      2.3050233721733e-07
     ],
     [
       "vshape_tension/p115/iter",
@@ -8725,19 +8725,19 @@
     ],
     [
       "vshape_tension/p115/pivot",
-      3.6281781368054e-08
+      3.6281781402073e-08
     ],
     [
       "vshape_tension/p116/lambda",
-      1.2808150059272
+      1.2808150059715
     ],
     [
       "vshape_tension/p116/ctrl",
-      -0.02409797389804
+      -0.024097973332498
     ],
     [
       "vshape_tension/p116/res",
-      1.9790604710579e-07
+      2.1280720829964e-07
     ],
     [
       "vshape_tension/p116/iter",
@@ -8749,19 +8749,19 @@
     ],
     [
       "vshape_tension/p116/pivot",
-      3.6257803059339e-08
+      3.6257803093298e-08
     ],
     [
       "vshape_tension/p117/lambda",
-      1.2928071311233
+      1.2928071311676
     ],
     [
       "vshape_tension/p117/ctrl",
-      -0.02431530617818
+      -0.02431530561284
     ],
     [
       "vshape_tension/p117/res",
-      2.1746382117271e-07
+      2.3795291781425e-07
     ],
     [
       "vshape_tension/p117/iter",
@@ -8773,19 +8773,19 @@
     ],
     [
       "vshape_tension/p117/pivot",
-      3.6233869189384e-08
+      3.6233869223284e-08
     ],
     [
       "vshape_tension/p118/lambda",
-      1.304799266696
+      1.3047992667403
     ],
     [
       "vshape_tension/p118/ctrl",
-      -0.02453249527016
+      -0.024532494705024
     ],
     [
       "vshape_tension/p118/res",
-      2.0861625671387e-07
+      2.0721927285194e-07
     ],
     [
       "vshape_tension/p118/iter",
@@ -8797,19 +8797,19 @@
     ],
     [
       "vshape_tension/p118/pivot",
-      3.6209979624496e-08
+      3.6209979658336e-08
     ],
     [
       "vshape_tension/p119/lambda",
-      1.3167914126192
+      1.3167914126634
     ],
     [
       "vshape_tension/p119/ctrl",
-      -0.02474954143852
+      -0.024749540873587
     ],
     [
       "vshape_tension/p119/res",
-      2.0070001482964e-07
+      1.8160790205002e-07
     ],
     [
       "vshape_tension/p119/iter",
@@ -8821,19 +8821,19 @@
     ],
     [
       "vshape_tension/p119/pivot",
-      3.6186134231534e-08
+      3.6186134265316e-08
     ],
     [
       "vshape_tension/p120/lambda",
-      1.328783568867
+      1.3287835689112
     ],
     [
       "vshape_tension/p120/ctrl",
-      -0.024966444947004
+      -0.024966444382273
     ],
     [
       "vshape_tension/p120/res",
-      2.2631138563156e-07
+      1.923181116581e-07
     ],
     [
       "vshape_tension/p120/iter",
@@ -8845,19 +8845,19 @@
     ],
     [
       "vshape_tension/p120/pivot",
-      3.6162332877916e-08
+      3.6162332911639e-08
     ],
     [
       "vshape_tension/p121/lambda",
-      1.3407757354136
+      1.3407757354579
     ],
     [
       "vshape_tension/p121/ctrl",
-      -0.025183206058568
+      -0.025183205494038
     ],
     [
       "vshape_tension/p121/res",
-      2.3096799850464e-07
+      1.8393620848656e-07
     ],
     [
       "vshape_tension/p121/iter",
@@ -8869,19 +8869,19 @@
     ],
     [
       "vshape_tension/p121/pivot",
-      3.6138575431608e-08
+      3.6138575465273e-08
     ],
     [
       "vshape_tension/p122/lambda",
-      1.3527679122334
+      1.3527679122776
     ],
     [
       "vshape_tension/p122/ctrl",
-      -0.025399825035379
+      -0.02539982447105
     ],
     [
       "vshape_tension/p122/res",
-      1.983717083931e-07
+      2.0954757928848e-07
     ],
     [
       "vshape_tension/p122/iter",
@@ -8893,19 +8893,19 @@
     ],
     [
       "vshape_tension/p122/pivot",
-      3.6114861761129e-08
+      3.6114861794735e-08
     ],
     [
       "vshape_tension/p123/lambda",
-      1.3647600993006
+      1.3647600993448
     ],
     [
       "vshape_tension/p123/ctrl",
-      -0.025616302138822
+      -0.025616301574695
     ],
     [
       "vshape_tension/p123/res",
-      2.1746382117271e-07
+      1.927837729454e-07
     ],
     [
       "vshape_tension/p123/iter",
@@ -8917,19 +8917,19 @@
     ],
     [
       "vshape_tension/p123/pivot",
-      3.609119173554e-08
+      3.6091191769088e-08
     ],
     [
       "vshape_tension/p124/lambda",
-      1.3767522965897
+      1.3767522966339
     ],
     [
       "vshape_tension/p124/ctrl",
-      -0.025832637629502
+      -0.025832637065575
     ],
     [
       "vshape_tension/p124/res",
-      2.3515895009041e-07
+      2.4121254682541e-07
     ],
     [
       "vshape_tension/p124/iter",
@@ -8941,19 +8941,19 @@
     ],
     [
       "vshape_tension/p124/pivot",
-      3.6067565224447e-08
+      3.6067565257936e-08
     ],
     [
       "vshape_tension/p125/lambda",
-      1.3887445040754
+      1.3887445041195
     ],
     [
       "vshape_tension/p125/ctrl",
-      -0.026048831767248
+      -0.026048831203521
     ],
     [
       "vshape_tension/p125/res",
-      2.1280720829964e-07
+      2.1979212760925e-07
     ],
     [
       "vshape_tension/p125/iter",
@@ -8965,19 +8965,19 @@
     ],
     [
       "vshape_tension/p125/pivot",
-      3.6043982097994e-08
+      3.6043982131426e-08
     ],
     [
       "vshape_tension/p126/lambda",
-      1.4007367217322
+      1.4007367217764
     ],
     [
       "vshape_tension/p126/ctrl",
-      -0.026264884811111
+      -0.026264884247584
     ],
     [
       "vshape_tension/p126/res",
-      2.1141022443771e-07
+      2.1839514374733e-07
     ],
     [
       "vshape_tension/p126/iter",
@@ -8989,19 +8989,19 @@
     ],
     [
       "vshape_tension/p126/pivot",
-      3.6020442226866e-08
+      3.6020442260239e-08
     ],
     [
       "vshape_tension/p127/lambda",
-      1.412728949535
+      1.4127289495791
     ],
     [
       "vshape_tension/p127/ctrl",
-      -0.026480797019376
+      -0.026480796456049
     ],
     [
       "vshape_tension/p127/res",
-      1.8859282135963e-07
+      2.1094456315041e-07
     ],
     [
       "vshape_tension/p127/iter",
@@ -9013,15 +9013,15 @@
     ],
     [
       "vshape_tension/p127/pivot",
-      3.5996945482278e-08
+      3.5996945515593e-08
     ],
     [
       "vshape_tension/p128/lambda",
-      1.4247211874585
+      1.4247211875026
     ],
     [
       "vshape_tension/p128/ctrl",
-      -0.026696568649557
+      -0.02669656808643
     ],
     [
       "vshape_tension/p128/res",
@@ -9037,19 +9037,19 @@
     ],
     [
       "vshape_tension/p128/pivot",
-      3.5973491735978e-08
+      3.5973491769237e-08
     ],
     [
       "vshape_tension/p129/lambda",
-      1.4367134354777
+      1.4367134355218
     ],
     [
       "vshape_tension/p129/ctrl",
-      -0.026912199958409
+      -0.026912199395481
     ],
     [
       "vshape_tension/p129/res",
-      2.0768493413925e-07
+      2.1886080503464e-07
     ],
     [
       "vshape_tension/p129/iter",
@@ -9061,19 +9061,19 @@
     ],
     [
       "vshape_tension/p129/pivot",
-      3.5950080860245e-08
+      3.5950080893446e-08
     ],
     [
       "vshape_tension/p130/lambda",
-      1.4487056935677
+      1.4487056936118
     ],
     [
       "vshape_tension/p130/ctrl",
-      -0.027127691201919
+      -0.027127690639189
     ],
     [
       "vshape_tension/p130/res",
-      2.1373853087425e-07
+      2.104789018631e-07
     ],
     [
       "vshape_tension/p130/iter",
@@ -9085,19 +9085,19 @@
     ],
     [
       "vshape_tension/p130/pivot",
-      3.592671272788e-08
+      3.5926712761024e-08
     ],
     [
       "vshape_tension/p131/lambda",
-      1.4606979617035
+      1.4606979617475
     ],
     [
       "vshape_tension/p131/ctrl",
-      -0.027343042635322
+      -0.027343042072791
     ],
     [
       "vshape_tension/p131/res",
-      2.1979212760925e-07
+      2.0302832126617e-07
     ],
     [
       "vshape_tension/p131/iter",
@@ -9109,19 +9109,19 @@
     ],
     [
       "vshape_tension/p131/pivot",
-      3.5903387212211e-08
+      3.5903387245298e-08
     ],
     [
       "vshape_tension/p132/lambda",
-      1.4726902398603
+      1.4726902399043
     ],
     [
       "vshape_tension/p132/ctrl",
-      -0.027558254513094
+      -0.027558253950762
     ],
     [
       "vshape_tension/p132/res",
-      2.1466985344887e-07
+      1.923181116581e-07
     ],
     [
       "vshape_tension/p132/iter",
@@ -9133,19 +9133,19 @@
     ],
     [
       "vshape_tension/p132/pivot",
-      3.5880104187084e-08
+      3.5880104220114e-08
     ],
     [
       "vshape_tension/p133/lambda",
-      1.4846825280134
+      1.4846825280575
     ],
     [
       "vshape_tension/p133/ctrl",
-      -0.027773327088962
+      -0.027773326526826
     ],
     [
       "vshape_tension/p133/res",
-      1.9092112779617e-07
+      2.2631138563156e-07
     ],
     [
       "vshape_tension/p133/iter",
@@ -9157,19 +9157,19 @@
     ],
     [
       "vshape_tension/p133/pivot",
-      3.5856863526862e-08
+      3.5856863559836e-08
     ],
     [
       "vshape_tension/p134/lambda",
-      1.4966748261383
+      1.4966748261824
     ],
     [
       "vshape_tension/p134/ctrl",
-      -0.027988260615902
+      -0.027988260053963
     ],
     [
       "vshape_tension/p134/res",
-      2.104789018631e-07
+      2.0908191800117e-07
     ],
     [
       "vshape_tension/p134/iter",
@@ -9181,19 +9181,19 @@
     ],
     [
       "vshape_tension/p134/pivot",
-      3.5833665106426e-08
+      3.5833665139343e-08
     ],
     [
       "vshape_tension/p135/lambda",
-      1.5086671342104
+      1.5086671342544
     ],
     [
       "vshape_tension/p135/ctrl",
-      -0.028203055346148
+      -0.028203054784406
     ],
     [
       "vshape_tension/p135/res",
-      1.7974525690079e-07
+      2.1466985344887e-07
     ],
     [
       "vshape_tension/p135/iter",
@@ -9205,19 +9205,19 @@
     ],
     [
       "vshape_tension/p135/pivot",
-      3.5810508801166e-08
+      3.5810508834027e-08
     ],
     [
       "vshape_tension/p136/lambda",
-      1.5206594522052
+      1.5206594522492
     ],
     [
       "vshape_tension/p136/ctrl",
-      -0.028417711531185
+      -0.02841771096964
     ],
     [
       "vshape_tension/p136/res",
-      1.9604340195656e-07
+      2.0302832126617e-07
     ],
     [
       "vshape_tension/p136/iter",
@@ -9229,19 +9229,19 @@
     ],
     [
       "vshape_tension/p136/pivot",
-      3.5787394486984e-08
+      3.5787394519788e-08
     ],
     [
       "vshape_tension/p137/lambda",
-      1.5326517800984
+      1.5326517801424
     ],
     [
       "vshape_tension/p137/ctrl",
-      -0.028632229421764
+      -0.028632228860416
     ],
     [
       "vshape_tension/p137/res",
-      2.2398307919502e-07
+      2.0535662770271e-07
     ],
     [
       "vshape_tension/p137/iter",
@@ -9253,19 +9253,19 @@
     ],
     [
       "vshape_tension/p137/pivot",
-      3.5764322040287e-08
+      3.5764322073035e-08
     ],
     [
       "vshape_tension/p138/lambda",
-      1.5446441178658
+      1.5446441179098
     ],
     [
       "vshape_tension/p138/ctrl",
-      -0.0288466092679
+      -0.028846608706749
     ],
     [
       "vshape_tension/p138/res",
-      2.1141022443771e-07
+      2.0675361156464e-07
     ],
     [
       "vshape_tension/p138/iter",
@@ -9277,19 +9277,19 @@
     ],
     [
       "vshape_tension/p138/pivot",
-      3.5741291337987e-08
+      3.574129137068e-08
     ],
     [
       "vshape_tension/p139/lambda",
-      1.5566364654831
+      1.5566364655271
     ],
     [
       "vshape_tension/p139/ctrl",
-      -0.029060851318872
+      -0.029060850757915
     ],
     [
       "vshape_tension/p139/res",
-      1.8579885363579e-07
+      1.8812716007233e-07
     ],
     [
       "vshape_tension/p139/iter",
@@ -9301,19 +9301,19 @@
     ],
     [
       "vshape_tension/p139/pivot",
-      3.5718302257499e-08
+      3.5718302290136e-08
     ],
     [
       "vshape_tension/p140/lambda",
-      1.5686288229263
+      1.5686288229702
     ],
     [
       "vshape_tension/p140/ctrl",
-      -0.029274955823225
+      -0.029274955262464
     ],
     [
       "vshape_tension/p140/res",
-      2.104789018631e-07
+      1.9976869225502e-07
     ],
     [
       "vshape_tension/p140/iter",
@@ -9325,19 +9325,19 @@
     ],
     [
       "vshape_tension/p140/pivot",
-      3.5695354676735e-08
+      3.5695354709317e-08
     ],
     [
       "vshape_tension/p141/lambda",
-      1.5806211901713
+      1.5806211902152
     ],
     [
       "vshape_tension/p141/ctrl",
-      -0.029488923028785
+      -0.029488922468218
     ],
     [
       "vshape_tension/p141/res",
-      1.9511207938194e-07
+      2.0302832126617e-07
     ],
     [
       "vshape_tension/p141/iter",
@@ -9349,19 +9349,19 @@
     ],
     [
       "vshape_tension/p141/pivot",
-      3.5672448474104e-08
+      3.567244850663e-08
     ],
     [
       "vshape_tension/p142/lambda",
-      1.5926135671943
+      1.5926135672382
     ],
     [
       "vshape_tension/p142/ctrl",
-      -0.029702753182646
+      -0.029702752622273
     ],
     [
       "vshape_tension/p142/res",
-      1.7601996660233e-07
+      2.044253051281e-07
     ],
     [
       "vshape_tension/p142/iter",
@@ -9373,19 +9373,19 @@
     ],
     [
       "vshape_tension/p142/pivot",
-      3.564958352851e-08
+      3.564958356098e-08
     ],
     [
       "vshape_tension/p143/lambda",
-      1.6046059539714
+      1.6046059540153
     ],
     [
       "vshape_tension/p143/ctrl",
-      -0.029916446531182
+      -0.029916445971004
     ],
     [
       "vshape_tension/p143/res",
-      2.0489096641541e-07
+      1.9464641809464e-07
     ],
     [
       "vshape_tension/p143/iter",
@@ -9397,19 +9397,19 @@
     ],
     [
       "vshape_tension/p143/pivot",
-      3.5626759719345e-08
+      3.5626759751761e-08
     ],
     [
       "vshape_tension/p144/lambda",
-      1.6165983504788
+      1.6165983505227
     ],
     [
       "vshape_tension/p144/ctrl",
-      -0.030130003320051
+      -0.030130002760068
     ],
     [
       "vshape_tension/p144/res",
-      2.0535662770271e-07
+      1.8998980522156e-07
     ],
     [
       "vshape_tension/p144/iter",
@@ -9421,19 +9421,19 @@
     ],
     [
       "vshape_tension/p144/pivot",
-      3.5603976926494e-08
+      3.5603976958855e-08
     ],
     [
       "vshape_tension/p145/lambda",
-      1.6285907566929
+      1.6285907567368
     ],
     [
       "vshape_tension/p145/ctrl",
-      -0.030343423794192
+      -0.030343423234403
     ],
     [
       "vshape_tension/p145/res",
-      2.0070001482964e-07
+      1.8393620848656e-07
     ],
     [
       "vshape_tension/p145/iter",
@@ -9445,19 +9445,19 @@
     ],
     [
       "vshape_tension/p145/pivot",
-      3.5581235030326e-08
+      3.5581235062632e-08
     ],
     [
       "vshape_tension/p146/lambda",
-      1.6405831725902
+      1.6405831726341
     ],
     [
       "vshape_tension/p146/ctrl",
-      -0.030556708197834
+      -0.030556707638238
     ],
     [
       "vshape_tension/p146/res",
-      2.0395964384079e-07
+      1.8952414393425e-07
     ],
     [
       "vshape_tension/p146/iter",
@@ -9469,19 +9469,19 @@
     ],
     [
       "vshape_tension/p146/pivot",
-      3.5558533911693e-08
+      3.5558533943944e-08
     ],
     [
       "vshape_tension/p147/lambda",
-      1.6525755981471
+      1.6525755981909
     ],
     [
       "vshape_tension/p147/ctrl",
-      -0.030769856774492
+      -0.030769856215089
     ],
     [
       "vshape_tension/p147/res",
-      1.9045546650887e-07
+      2.1466985344887e-07
     ],
     [
       "vshape_tension/p147/iter",
@@ -9493,19 +9493,19 @@
     ],
     [
       "vshape_tension/p147/pivot",
-      3.5535873451929e-08
+      3.5535873484126e-08
     ],
     [
       "vshape_tension/p148/lambda",
-      1.6645680333401
+      1.664568033384
     ],
     [
       "vshape_tension/p148/ctrl",
-      -0.030982869766978
+      -0.030982869207767
     ],
     [
       "vshape_tension/p148/res",
-      2.1746382117271e-07
+      1.8160790205002e-07
     ],
     [
       "vshape_tension/p148/iter",
@@ -9517,19 +9517,19 @@
     ],
     [
       "vshape_tension/p148/pivot",
-      3.5513253532847e-08
+      3.551325356499e-08
     ],
     [
       "vshape_tension/p149/lambda",
-      1.6765604781461
+      1.6765604781899
     ],
     [
       "vshape_tension/p149/ctrl",
-      -0.031195747417395
+      -0.031195746858376
     ],
     [
       "vshape_tension/p149/res",
-      1.9418075680733e-07
+      2.0349398255348e-07
     ],
     [
       "vshape_tension/p149/iter",
@@ -9541,19 +9541,19 @@
     ],
     [
       "vshape_tension/p149/pivot",
-      3.5490674036736e-08
+      3.5490674068824e-08
     ],
     [
       "vshape_tension/p150/lambda",
-      1.6885529325417
+      1.6885529325855
     ],
     [
       "vshape_tension/p150/ctrl",
-      -0.031408489967149
+      -0.031408489408322
     ],
     [
       "vshape_tension/p150/res",
-      2.0489096641541e-07
+      1.9697472453117e-07
     ],
     [
       "vshape_tension/p150/iter",
@@ -9565,19 +9565,19 @@
     ],
     [
       "vshape_tension/p150/pivot",
-      3.5468134846358e-08
+      3.5468134878393e-08
     ],
     [
       "vshape_tension/p151/lambda",
-      1.7005453965037
+      1.7005453965475
     ],
     [
       "vshape_tension/p151/ctrl",
-      -0.031621097656945
+      -0.03162109709831
     ],
     [
       "vshape_tension/p151/res",
-      1.8719583749771e-07
+      1.9511207938194e-07
     ],
     [
       "vshape_tension/p151/iter",
@@ -9589,19 +9589,19 @@
     ],
     [
       "vshape_tension/p151/pivot",
-      3.5445635844948e-08
+      3.5445635876928e-08
     ],
     [
       "vshape_tension/p152/lambda",
-      1.7125378700091
+      1.7125378700529
     ],
     [
       "vshape_tension/p152/ctrl",
-      -0.03183357072679
+      -0.031833570168347
     ],
     [
       "vshape_tension/p152/res",
-      1.8998980522156e-07
+      1.8579885363579e-07
     ],
     [
       "vshape_tension/p152/iter",
@@ -9613,19 +9613,19 @@
     ],
     [
       "vshape_tension/p152/pivot",
-      3.5423176916208e-08
+      3.5423176948134e-08
     ],
     [
       "vshape_tension/p153/lambda",
-      1.724530353035
+      1.7245303530787
     ],
     [
       "vshape_tension/p153/ctrl",
-      -0.032045909416004
+      -0.032045908857751
     ],
     [
       "vshape_tension/p153/res",
-      2.0163133740425e-07
+      1.8812716007233e-07
     ],
     [
       "vshape_tension/p153/iter",
@@ -9637,19 +9637,19 @@
     ],
     [
       "vshape_tension/p153/pivot",
-      3.5400757944307e-08
+      3.540075797618e-08
     ],
     [
       "vshape_tension/p154/lambda",
-      1.7365228455582
+      1.736522845602
     ],
     [
       "vshape_tension/p154/ctrl",
-      -0.032258113963209
+      -0.032258113405147
     ],
     [
       "vshape_tension/p154/res",
-      2.0489096641541e-07
+      1.7974525690079e-07
     ],
     [
       "vshape_tension/p154/iter",
@@ -9661,19 +9661,19 @@
     ],
     [
       "vshape_tension/p154/pivot",
-      3.5378378813879e-08
+      3.5378378845699e-08
     ],
     [
       "vshape_tension/p155/lambda",
-      1.7485153475561
+      1.7485153475998
     ],
     [
       "vshape_tension/p155/ctrl",
-      -0.032470184606346
+      -0.032470184048473
     ],
     [
       "vshape_tension/p155/res",
-      1.7229467630386e-07
+      2.1280720829964e-07
     ],
     [
       "vshape_tension/p155/iter",
@@ -9685,19 +9685,19 @@
     ],
     [
       "vshape_tension/p155/pivot",
-      3.5356039410019e-08
+      3.5356039441785e-08
     ],
     [
       "vshape_tension/p156/lambda",
-      1.7605078590059
+      1.7605078590496
     ],
     [
       "vshape_tension/p156/ctrl",
-      -0.032682121582666
+      -0.032682121024985
     ],
     [
       "vshape_tension/p156/res",
-      1.8905848264694e-07
+      1.9604340195656e-07
     ],
     [
       "vshape_tension/p156/iter",
@@ -9709,19 +9709,19 @@
     ],
     [
       "vshape_tension/p156/pivot",
-      3.5333739618281e-08
+      3.5333739649994e-08
     ],
     [
       "vshape_tension/p157/lambda",
-      1.7725003798848
+      1.7725003799285
     ],
     [
       "vshape_tension/p157/ctrl",
-      -0.032893925128742
+      -0.032893924571249
     ],
     [
       "vshape_tension/p157/res",
-      1.7136335372925e-07
+      1.7834827303886e-07
     ],
     [
       "vshape_tension/p157/iter",
@@ -9733,19 +9733,19 @@
     ],
     [
       "vshape_tension/p157/pivot",
-      3.5311479324677e-08
+      3.5311479356338e-08
     ],
     [
       "vshape_tension/p158/lambda",
-      1.7844929101703
+      1.784492910214
     ],
     [
       "vshape_tension/p158/ctrl",
-      -0.033105595480463
+      -0.033105594923161
     ],
     [
       "vshape_tension/p158/res",
-      1.7927959561348e-07
+      1.9371509552002e-07
     ],
     [
       "vshape_tension/p158/iter",
@@ -9757,19 +9757,19 @@
     ],
     [
       "vshape_tension/p158/pivot",
-      3.5289258415673e-08
+      3.5289258447281e-08
     ],
     [
       "vshape_tension/p159/lambda",
-      1.7964854498399
+      1.7964854498835
     ],
     [
       "vshape_tension/p159/ctrl",
-      -0.033317132873047
+      -0.033317132315934
     ],
     [
       "vshape_tension/p159/res",
-      1.802109181881e-07
+      2.0209699869156e-07
     ],
     [
       "vshape_tension/p159/iter",
@@ -9781,19 +9781,19 @@
     ],
     [
       "vshape_tension/p159/pivot",
-      3.5267076778188e-08
+      3.5267076809743e-08
     ],
     [
       "vshape_tension/p160/lambda",
-      1.808477998871
+      1.8084779989147
     ],
     [
       "vshape_tension/p160/ctrl",
-      -0.033528537541034
+      -0.03352853698411
     ],
     [
       "vshape_tension/p160/res",
-      1.7182901501656e-07
+      1.6996636986732e-07
     ],
     [
       "vshape_tension/p160/iter",
@@ -9805,19 +9805,19 @@
     ],
     [
       "vshape_tension/p160/pivot",
-      3.5244934299589e-08
+      3.5244934331092e-08
     ],
     [
       "vshape_tension/p161/lambda",
-      1.8204705572415
+      1.8204705572851
     ],
     [
       "vshape_tension/p161/ctrl",
-      -0.033739809718292
+      -0.033739809161557
     ],
     [
       "vshape_tension/p161/res",
-      2.0954757928848e-07
+      1.8998980522156e-07
     ],
     [
       "vshape_tension/p161/iter",
@@ -9829,19 +9829,19 @@
     ],
     [
       "vshape_tension/p161/pivot",
-      3.5222830867694e-08
+      3.5222830899144e-08
     ],
     [
       "vshape_tension/p162/lambda",
-      1.8324631249289
+      1.8324631249725
     ],
     [
       "vshape_tension/p162/ctrl",
-      -0.033950949638025
+      -0.033950949081477
     ],
     [
       "vshape_tension/p162/res",
-      1.6344711184502e-07
+      1.9324943423271e-07
     ],
     [
       "vshape_tension/p162/iter",
@@ -9853,19 +9853,19 @@
     ],
     [
       "vshape_tension/p162/pivot",
-      3.5200766370764e-08
+      3.5200766402162e-08
     ],
     [
       "vshape_tension/p163/lambda",
-      1.8444557019111
+      1.8444557019547
     ],
     [
       "vshape_tension/p163/ctrl",
-      -0.034161957532765
+      -0.034161956976406
     ],
     [
       "vshape_tension/p163/res",
-      1.862645149231e-07
+      1.7182901501656e-07
     ],
     [
       "vshape_tension/p163/iter",
@@ -9877,19 +9877,19 @@
     ],
     [
       "vshape_tension/p163/pivot",
-      3.5178740697504e-08
+      3.517874072885e-08
     ],
     [
       "vshape_tension/p164/lambda",
-      1.8564482881659
+      1.8564482882095
     ],
     [
       "vshape_tension/p164/ctrl",
-      -0.034372833634385
+      -0.034372833078214
     ],
     [
       "vshape_tension/p164/res",
-      1.9790604710579e-07
+      1.7508864402771e-07
     ],
     [
       "vshape_tension/p164/iter",
@@ -9901,19 +9901,19 @@
     ],
     [
       "vshape_tension/p164/pivot",
-      3.515675373706e-08
+      3.5156753768354e-08
     ],
     [
       "vshape_tension/p165/lambda",
-      1.8684408836713
+      1.8684408837149
     ],
     [
       "vshape_tension/p165/ctrl",
-      -0.034583578174096
+      -0.034583577618111
     ],
     [
       "vshape_tension/p165/res",
-      1.8160790205002e-07
+      1.806765794754e-07
     ],
     [
       "vshape_tension/p165/iter",
@@ -9925,19 +9925,19 @@
     ],
     [
       "vshape_tension/p165/pivot",
-      3.5134805379017e-08
+      3.5134805410259e-08
     ],
     [
       "vshape_tension/p166/lambda",
-      1.8804334884053
+      1.8804334884489
     ],
     [
       "vshape_tension/p166/ctrl",
-      -0.034794191382449
+      -0.034794190826651
     ],
     [
       "vshape_tension/p166/res",
-      1.7415732145309e-07
+      1.7043203115463e-07
     ],
     [
       "vshape_tension/p166/iter",
@@ -9949,19 +9949,19 @@
     ],
     [
       "vshape_tension/p166/pivot",
-      3.5112895513395e-08
+      3.5112895544586e-08
     ],
     [
       "vshape_tension/p167/lambda",
-      1.892426102346
+      1.8924261023896
     ],
     [
       "vshape_tension/p167/ctrl",
-      -0.035004673489342
+      -0.035004672933731
     ],
     [
       "vshape_tension/p167/res",
-      1.7741695046425e-07
+      1.6810372471809e-07
     ],
     [
       "vshape_tension/p167/iter",
@@ -9973,19 +9973,19 @@
     ],
     [
       "vshape_tension/p167/pivot",
-      3.5091024030651e-08
+      3.509102406179e-08
     ],
     [
       "vshape_tension/p168/lambda",
-      1.9044187254716
+      1.9044187255151
     ],
     [
       "vshape_tension/p168/ctrl",
-      -0.03521502472402
+      -0.035215024168594
     ],
     [
       "vshape_tension/p168/res",
-      1.802109181881e-07
+      2.0535662770271e-07
     ],
     [
       "vshape_tension/p168/iter",
@@ -9997,19 +9997,19 @@
     ],
     [
       "vshape_tension/p168/pivot",
-      3.5069190821672e-08
+      3.5069190852759e-08
     ],
     [
       "vshape_tension/p169/lambda",
-      1.9164113577603
+      1.9164113578038
     ],
     [
       "vshape_tension/p169/ctrl",
-      -0.035425245315074
+      -0.035425244759835
     ],
     [
       "vshape_tension/p169/res",
-      1.9604340195656e-07
+      1.9185245037079e-07
     ],
     [
       "vshape_tension/p169/iter",
@@ -10021,19 +10021,19 @@
     ],
     [
       "vshape_tension/p169/pivot",
-      3.5047395777775e-08
+      3.5047395808811e-08
     ],
     [
       "vshape_tension/p170/lambda",
-      1.9284039991904
+      1.928403999234
     ],
     [
       "vshape_tension/p170/ctrl",
-      -0.035635335490452
+      -0.035635334935399
     ],
     [
       "vshape_tension/p170/res",
-      2.0395964384079e-07
+      1.7788261175156e-07
     ],
     [
       "vshape_tension/p170/iter",
@@ -10045,19 +10045,19 @@
     ],
     [
       "vshape_tension/p170/pivot",
-      3.5025638790706e-08
+      3.5025638821691e-08
     ],
     [
       "vshape_tension/p171/lambda",
-      1.9403966497405
+      1.940396649784
     ],
     [
       "vshape_tension/p171/ctrl",
-      -0.035845295477454
+      -0.035845294922587
     ],
     [
       "vshape_tension/p171/res",
-      1.6624107956886e-07
+      1.5087425708771e-07
     ],
     [
       "vshape_tension/p171/iter",
@@ -10069,19 +10069,19 @@
     ],
     [
       "vshape_tension/p171/pivot",
-      3.5003919752636e-08
+      3.500391978357e-08
     ],
     [
       "vshape_tension/p172/lambda",
-      1.9523893093889
+      1.9523893094324
     ],
     [
       "vshape_tension/p172/ctrl",
-      -0.036055125502737
+      -0.036055124948054
     ],
     [
       "vshape_tension/p172/res",
-      2.104789018631e-07
+      1.685693860054e-07
     ],
     [
       "vshape_tension/p172/iter",
@@ -10093,19 +10093,19 @@
     ],
     [
       "vshape_tension/p172/pivot",
-      3.4982238556158e-08
+      3.4982238587042e-08
     ],
     [
       "vshape_tension/p173/lambda",
-      1.9643819781141
+      1.9643819781577
     ],
     [
       "vshape_tension/p173/ctrl",
-      -0.036264825792319
+      -0.036264825237821
     ],
     [
       "vshape_tension/p173/res",
-      1.8207356333733e-07
+      1.9045546650887e-07
     ],
     [
       "vshape_tension/p173/iter",
@@ -10117,19 +10117,19 @@
     ],
     [
       "vshape_tension/p173/pivot",
-      3.496059509429e-08
+      3.4960595125123e-08
     ],
     [
       "vshape_tension/p174/lambda",
-      1.9763746558949
+      1.9763746559384
     ],
     [
       "vshape_tension/p174/ctrl",
-      -0.03647439657158
+      -0.036474396017266
     ],
     [
       "vshape_tension/p174/res",
-      1.5320256352425e-07
+      1.4854595065117e-07
     ],
     [
       "vshape_tension/p174/iter",
@@ -10141,19 +10141,19 @@
     ],
     [
       "vshape_tension/p174/pivot",
-      3.4938989260466e-08
+      3.4938989291248e-08
     ],
     [
       "vshape_tension/p175/lambda",
-      1.98836734271
+      1.9883673427534
     ],
     [
       "vshape_tension/p175/ctrl",
-      -0.036683838065263
+      -0.036683837511134
     ],
     [
       "vshape_tension/p175/res",
-      1.5925616025925e-07
+      1.7788261175156e-07
     ],
     [
       "vshape_tension/p175/iter",
@@ -10165,19 +10165,19 @@
     ],
     [
       "vshape_tension/p175/pivot",
-      3.4917420948537e-08
+      3.4917420979269e-08
     ],
     [
       "vshape_tension/p176/lambda",
-      2.0003600385379
+      2.0003600385814
     ],
     [
       "vshape_tension/p176/ctrl",
-      -0.03689315049748
+      -0.036893149943534
     ],
     [
       "vshape_tension/p176/res",
-      1.9650906324387e-07
+      2.0302832126617e-07
     ],
     [
       "vshape_tension/p176/iter",
@@ -10189,19 +10189,19 @@
     ],
     [
       "vshape_tension/p176/pivot",
-      3.4895890052772e-08
+      3.4895890083453e-08
     ],
     [
       "vshape_tension/p177/lambda",
-      2.0123527433578
+      2.0123527434012
     ],
     [
       "vshape_tension/p177/ctrl",
-      -0.037102334091714
+      -0.037102333537952
     ],
     [
       "vshape_tension/p177/res",
-      1.8207356333733e-07
+      1.8114224076271e-07
     ],
     [
       "vshape_tension/p177/iter",
@@ -10213,19 +10213,19 @@
     ],
     [
       "vshape_tension/p177/pivot",
-      3.487439646785e-08
+      3.4874396498481e-08
     ],
     [
       "vshape_tension/p178/lambda",
-      2.0243454571484
+      2.0243454571918
     ],
     [
       "vshape_tension/p178/ctrl",
-      -0.037311389070816
+      -0.037311388517237
     ],
     [
       "vshape_tension/p178/res",
-      1.9930303096771e-07
+      1.6205012798309e-07
     ],
     [
       "vshape_tension/p178/iter",
@@ -10237,19 +10237,19 @@
     ],
     [
       "vshape_tension/p178/pivot",
-      3.4852940088862e-08
+      3.4852940119443e-08
     ],
     [
       "vshape_tension/p179/lambda",
-      2.0363381798887
+      2.0363381799321
     ],
     [
       "vshape_tension/p179/ctrl",
-      -0.037520315657016
+      -0.037520315103621
     ],
     [
       "vshape_tension/p179/res",
-      1.9976869225502e-07
+      1.6298145055771e-07
     ],
     [
       "vshape_tension/p179/iter",
@@ -10261,19 +10261,19 @@
     ],
     [
       "vshape_tension/p179/pivot",
-      3.4831520811308e-08
+      3.4831520841839e-08
     ],
     [
       "vshape_tension/p180/lambda",
-      2.0483309115578
+      2.0483309116012
     ],
     [
       "vshape_tension/p180/ctrl",
-      -0.037729114071918
+      -0.037729113518705
     ],
     [
       "vshape_tension/p180/res",
-      1.5832483768463e-07
+      1.9092112779617e-07
     ],
     [
       "vshape_tension/p180/iter",
@@ -10285,19 +10285,19 @@
     ],
     [
       "vshape_tension/p180/pivot",
-      3.4810138531095e-08
+      3.4810138561576e-08
     ],
     [
       "vshape_tension/p181/lambda",
-      2.0603236521349
+      2.0603236521783
     ],
     [
       "vshape_tension/p181/ctrl",
-      -0.037937784536508
+      -0.037937783983477
     ],
     [
       "vshape_tension/p181/res",
-      1.564621925354e-07
+      1.5692785382271e-07
     ],
     [
       "vshape_tension/p181/iter",
@@ -10309,19 +10309,19 @@
     ],
     [
       "vshape_tension/p181/pivot",
-      3.4788793144534e-08
+      3.4788793174966e-08
     ],
     [
       "vshape_tension/p182/lambda",
-      2.0723164015991
+      2.0723164016425
     ],
     [
       "vshape_tension/p182/ctrl",
-      -0.038146327271149
+      -0.038146326718301
     ],
     [
       "vshape_tension/p182/res",
-      2.0070001482964e-07
+      1.4668330550194e-07
     ],
     [
       "vshape_tension/p182/iter",
@@ -10333,19 +10333,19 @@
     ],
     [
       "vshape_tension/p182/pivot",
-      3.476748454834e-08
+      3.4767484578723e-08
     ],
     [
       "vshape_tension/p183/lambda",
-      2.0843091599297
+      2.0843091599731
     ],
     [
       "vshape_tension/p183/ctrl",
-      -0.038354742495596
+      -0.038354741942929
     ],
     [
       "vshape_tension/p183/res",
-      1.4994293451309e-07
+      1.7182901501656e-07
     ],
     [
       "vshape_tension/p183/iter",
@@ -10357,19 +10357,19 @@
     ],
     [
       "vshape_tension/p183/pivot",
-      3.4746212639628e-08
+      3.4746212669961e-08
     ],
     [
       "vshape_tension/p184/lambda",
-      2.0963019271061
+      2.0963019271495
     ],
     [
       "vshape_tension/p184/ctrl",
-      -0.038563030428982
+      -0.038563029876498
     ],
     [
       "vshape_tension/p184/res",
-      1.8579885363579e-07
+      1.5553086996078e-07
     ],
     [
       "vshape_tension/p184/iter",
@@ -10381,19 +10381,19 @@
     ],
     [
       "vshape_tension/p184/pivot",
-      3.4724977315911e-08
+      3.4724977346195e-08
     ],
     [
       "vshape_tension/p185/lambda",
-      2.1082947031077
+      2.1082947031511
     ],
     [
       "vshape_tension/p185/ctrl",
-      -0.038771191289837
+      -0.038771190737534
     ],
     [
       "vshape_tension/p185/res",
-      1.7601996660233e-07
+      1.6205012798309e-07
     ],
     [
       "vshape_tension/p185/iter",
@@ -10405,19 +10405,19 @@
     ],
     [
       "vshape_tension/p185/pivot",
-      3.47037784751e-08
+      3.4703778505335e-08
     ],
     [
       "vshape_tension/p186/lambda",
-      2.1202874879139
+      2.1202874879573
     ],
     [
       "vshape_tension/p186/ctrl",
-      -0.038979225296077
+      -0.038979224743954
     ],
     [
       "vshape_tension/p186/res",
-      1.5506520867348e-07
+      1.9045546650887e-07
     ],
     [
       "vshape_tension/p186/iter",
@@ -10429,19 +10429,19 @@
     ],
     [
       "vshape_tension/p186/pivot",
-      3.4682616015501e-08
+      3.4682616045687e-08
     ],
     [
       "vshape_tension/p187/lambda",
-      2.1322802815044
+      2.1322802815478
     ],
     [
       "vshape_tension/p187/ctrl",
-      -0.039187132665014
+      -0.039187132113072
     ],
     [
       "vshape_tension/p187/res",
-      1.7834827303886e-07
+      1.6950070858002e-07
     ],
     [
       "vshape_tension/p187/iter",
@@ -10453,19 +10453,19 @@
     ],
     [
       "vshape_tension/p187/pivot",
-      3.4661489835812e-08
+      3.4661489865949e-08
     ],
     [
       "vshape_tension/p188/lambda",
-      2.1442730838588
+      2.1442730839021
     ],
     [
       "vshape_tension/p188/ctrl",
-      -0.039394913613353
+      -0.039394913061591
     ],
     [
       "vshape_tension/p188/res",
-      1.7136335372925e-07
+      1.8905848264694e-07
     ],
     [
       "vshape_tension/p188/iter",
@@ -10477,19 +10477,19 @@
     ],
     [
       "vshape_tension/p188/pivot",
-      3.4640399835123e-08
+      3.4640399865211e-08
     ],
     [
       "vshape_tension/p189/lambda",
-      2.1562658949566
+      2.1562658949999
     ],
     [
       "vshape_tension/p189/ctrl",
-      -0.039602568357203
+      -0.039602567805621
     ],
     [
       "vshape_tension/p189/res",
-      1.6344711184502e-07
+      1.7043203115463e-07
     ],
     [
       "vshape_tension/p189/iter",
@@ -10501,19 +10501,19 @@
     ],
     [
       "vshape_tension/p189/pivot",
-      3.4619345912911e-08
+      3.4619345942951e-08
     ],
     [
       "vshape_tension/p190/lambda",
-      2.1682587147778
+      2.1682587148211
     ],
     [
       "vshape_tension/p190/ctrl",
-      -0.039810097112069
+      -0.039810096560667
     ],
     [
       "vshape_tension/p190/res",
-      1.8486753106117e-07
+      1.8812716007233e-07
     ],
     [
       "vshape_tension/p190/iter",
@@ -10525,19 +10525,19 @@
     ],
     [
       "vshape_tension/p190/pivot",
-      3.4598327969042e-08
+      3.4598327999034e-08
     ],
     [
       "vshape_tension/p191/lambda",
-      2.1802515433022
+      2.1802515433454
     ],
     [
       "vshape_tension/p191/ctrl",
-      -0.040017500092861
+      -0.040017499541639
     ],
     [
       "vshape_tension/p191/res",
-      1.6205012798309e-07
+      1.6950070858002e-07
     ],
     [
       "vshape_tension/p191/iter",
@@ -10549,19 +10549,19 @@
     ],
     [
       "vshape_tension/p191/pivot",
-      3.4577345903768e-08
+      3.4577345933711e-08
     ],
     [
       "vshape_tension/p192/lambda",
-      2.1922443805096
+      2.1922443805528
     ],
     [
       "vshape_tension/p192/ctrl",
-      -0.040224777513893
+      -0.04022477696285
     ],
     [
       "vshape_tension/p192/res",
-      1.5785917639732e-07
+      1.6484409570694e-07
     ],
     [
       "vshape_tension/p192/iter",
@@ -10573,19 +10573,19 @@
     ],
     [
       "vshape_tension/p192/pivot",
-      3.4556399617722e-08
+      3.4556399647617e-08
     ],
     [
       "vshape_tension/p193/lambda",
-      2.20423722638
+      2.2042372264232
     ],
     [
       "vshape_tension/p193/ctrl",
-      -0.040431929588888
+      -0.040431929038024
     ],
     [
       "vshape_tension/p193/res",
-      1.5227124094963e-07
+      1.6577541828156e-07
     ],
     [
       "vshape_tension/p193/iter",
@@ -10597,19 +10597,19 @@
     ],
     [
       "vshape_tension/p193/pivot",
-      3.4535489011918e-08
+      3.4535489041765e-08
     ],
     [
       "vshape_tension/p194/lambda",
-      2.2162300808934
+      2.2162300809367
     ],
     [
       "vshape_tension/p194/ctrl",
-      -0.040638956530979
+      -0.040638955980294
     ],
     [
       "vshape_tension/p194/res",
-      1.7136335372925e-07
+      1.5506520867348e-07
     ],
     [
       "vshape_tension/p194/iter",
@@ -10621,19 +10621,19 @@
     ],
     [
       "vshape_tension/p194/pivot",
-      3.4514613987753e-08
+      3.4514614017553e-08
     ],
     [
       "vshape_tension/p195/lambda",
-      2.22822294403
+      2.2282229440733
     ],
     [
       "vshape_tension/p195/ctrl",
-      -0.040845858552708
+      -0.040845858002202
     ],
     [
       "vshape_tension/p195/res",
-      1.9418075680733e-07
+      1.5739351511002e-07
     ],
     [
       "vshape_tension/p195/iter",
@@ -10645,19 +10645,19 @@
     ],
     [
       "vshape_tension/p195/pivot",
-      3.4493774447e-08
+      3.4493774476751e-08
     ],
     [
       "vshape_tension/p196/lambda",
-      2.24021581577
+      2.2402158158132
     ],
     [
       "vshape_tension/p196/ctrl",
-      -0.041052635866037
+      -0.041052635315708
     ],
     [
       "vshape_tension/p196/res",
-      1.6298145055771e-07
+      1.7182901501656e-07
     ],
     [
       "vshape_tension/p196/iter",
@@ -10669,19 +10669,19 @@
     ],
     [
       "vshape_tension/p196/pivot",
-      3.4472970291805e-08
+      3.4472970321509e-08
     ],
     [
       "vshape_tension/p197/lambda",
-      2.2522086960935
+      2.2522086961367
     ],
     [
       "vshape_tension/p197/ctrl",
-      -0.041259288682338
+      -0.041259288132188
     ],
     [
       "vshape_tension/p197/res",
-      1.806765794754e-07
+      1.3737007975578e-07
     ],
     [
       "vshape_tension/p197/iter",
@@ -10693,19 +10693,19 @@
     ],
     [
       "vshape_tension/p197/pivot",
-      3.4452201424693e-08
+      3.4452201454349e-08
     ],
     [
       "vshape_tension/p198/lambda",
-      2.2642015849809
+      2.2642015850241
     ],
     [
       "vshape_tension/p198/ctrl",
-      -0.041465817212408
+      -0.041465816662434
     ],
     [
       "vshape_tension/p198/res",
-      1.7834827303886e-07
+      1.5273690223694e-07
     ],
     [
       "vshape_tension/p198/iter",
@@ -10717,19 +10717,19 @@
     ],
     [
       "vshape_tension/p198/pivot",
-      3.4431467748557e-08
+      3.4431467778166e-08
     ],
     [
       "vshape_tension/p199/lambda",
-      2.2761944824125
+      2.2761944824557
     ],
     [
       "vshape_tension/p199/ctrl",
-      -0.04167222166646
+      -0.041672221116663
     ],
     [
       "vshape_tension/p199/res",
-      1.6437843441963e-07
+      1.5599653124809e-07
     ],
     [
       "vshape_tension/p199/iter",
@@ -10741,19 +10741,19 @@
     ],
     [
       "vshape_tension/p199/pivot",
-      3.4410769166664e-08
+      3.4410769196225e-08
     ],
     [
       "vshape_tension/p200/lambda",
-      2.2881873883688
+      2.288187388412
     ],
     [
       "vshape_tension/p200/ctrl",
-      -0.041878502254132
+      -0.041878501704513
     ],
     [
       "vshape_tension/p200/res",
-      1.7508864402771e-07
+      1.6298145055771e-07
     ],
     [
       "vshape_tension/p200/iter",
@@ -10765,19 +10765,19 @@
     ],
     [
       "vshape_tension/p200/pivot",
-      3.4390105582645e-08
+      3.4390105612159e-08
     ],
     [
       "vshape_tension/p201/lambda",
-      2.3001803028303
+      2.3001803028734
     ],
     [
       "vshape_tension/p201/ctrl",
-      -0.042084659184491
+      -0.042084658635048
     ],
     [
       "vshape_tension/p201/res",
-      1.4947727322578e-07
+      1.6111880540848e-07
     ],
     [
       "vshape_tension/p201/iter",
@@ -10789,19 +10789,19 @@
     ],
     [
       "vshape_tension/p201/pivot",
-      3.4369476900502e-08
+      3.4369476929969e-08
     ],
     [
       "vshape_tension/p202/lambda",
-      2.3121732257775
+      2.3121732258206
     ],
     [
       "vshape_tension/p202/ctrl",
-      -0.042290692666025
+      -0.042290692116758
     ],
     [
       "vshape_tension/p202/res",
-      1.4714896678925e-07
+      1.5227124094963e-07
     ],
     [
       "vshape_tension/p202/iter",
@@ -10813,19 +10813,19 @@
     ],
     [
       "vshape_tension/p202/pivot",
-      3.4348883024599e-08
+      3.434888305402e-08
     ],
     [
       "vshape_tension/p203/lambda",
-      2.3241661571911
+      2.3241661572342
     ],
     [
       "vshape_tension/p203/ctrl",
-      -0.042496602906655
+      -0.042496602357565
     ],
     [
       "vshape_tension/p203/res",
-      1.7555430531502e-07
+      1.4714896678925e-07
     ],
     [
       "vshape_tension/p203/iter",
@@ -10837,15 +10837,15 @@
     ],
     [
       "vshape_tension/p203/pivot",
-      3.4328323859667e-08
+      3.432832388904e-08
     ],
     [
       "vshape_tension/p204/lambda",
-      2.3361590970518
+      2.3361590970949
     ],
     [
       "vshape_tension/p204/ctrl",
-      -0.042702390113738
+      -0.042702389564823
     ],
     [
       "vshape_tension/p204/res",
@@ -10861,19 +10861,19 @@
     ],
     [
       "vshape_tension/p204/pivot",
-      3.4307799310793e-08
+      3.430779934012e-08
     ],
     [
       "vshape_tension/p205/lambda",
-      2.3481520453403
+      2.3481520453834
     ],
     [
       "vshape_tension/p205/ctrl",
-      -0.042908054494057
+      -0.042908053945317
     ],
     [
       "vshape_tension/p205/res",
-      1.6624107956886e-07
+      1.6996636986732e-07
     ],
     [
       "vshape_tension/p205/iter",
@@ -10885,19 +10885,19 @@
     ],
     [
       "vshape_tension/p205/pivot",
-      3.4287309283428e-08
+      3.4287309312708e-08
     ],
     [
       "vshape_tension/p206/lambda",
-      2.3601450020374
+      2.3601450020805
     ],
     [
       "vshape_tension/p206/ctrl",
-      -0.043113596253838
+      -0.043113595705274
     ],
     [
       "vshape_tension/p206/res",
-      1.3737007975578e-07
+      1.4901161193848e-07
     ],
     [
       "vshape_tension/p206/iter",
@@ -10909,19 +10909,19 @@
     ],
     [
       "vshape_tension/p206/pivot",
-      3.426685368338e-08
+      3.4266853712614e-08
     ],
     [
       "vshape_tension/p207/lambda",
-      2.3721379671241
+      2.3721379671672
     ],
     [
       "vshape_tension/p207/ctrl",
-      -0.043319015598741
+      -0.043319015050352
     ],
     [
       "vshape_tension/p207/res",
-      1.4016404747963e-07
+      1.5925616025925e-07
     ],
     [
       "vshape_tension/p207/iter",
@@ -10933,19 +10933,19 @@
     ],
     [
       "vshape_tension/p207/pivot",
-      3.4246432416811e-08
+      3.4246432445999e-08
     ],
     [
       "vshape_tension/p208/lambda",
-      2.3841309405813
+      2.3841309406244
     ],
     [
       "vshape_tension/p208/ctrl",
-      -0.04352431273387
+      -0.043524312185655
     ],
     [
       "vshape_tension/p208/res",
-      1.4761462807655e-07
+      1.4388933777809e-07
     ],
     [
       "vshape_tension/p208/iter",
@@ -10957,19 +10957,19 @@
     ],
     [
       "vshape_tension/p208/pivot",
-      3.4226045390241e-08
+      3.4226045419383e-08
     ],
     [
       "vshape_tension/p209/lambda",
-      2.39612392239
+      2.3961239224331
     ],
     [
       "vshape_tension/p209/ctrl",
-      -0.043729487863768
+      -0.043729487315728
     ],
     [
       "vshape_tension/p209/res",
-      1.6763806343079e-07
+      1.4621764421463e-07
     ],
     [
       "vshape_tension/p209/iter",
@@ -10981,19 +10981,19 @@
     ],
     [
       "vshape_tension/p209/pivot",
-      3.420569251054e-08
+      3.4205692539636e-08
     ],
     [
       "vshape_tension/p210/lambda",
-      2.4081169125314
+      2.4081169125744
     ],
     [
       "vshape_tension/p210/ctrl",
-      -0.043934541192426
+      -0.04393454064456
     ],
     [
       "vshape_tension/p210/res",
-      1.5366822481155e-07
+      1.4621764421463e-07
     ],
     [
       "vshape_tension/p210/iter",
@@ -11005,19 +11005,19 @@
     ],
     [
       "vshape_tension/p210/pivot",
-      3.4185373684931e-08
+      3.418537371398e-08
     ],
     [
       "vshape_tension/p211/lambda",
-      2.4201099109864
+      2.4201099110294
     ],
     [
       "vshape_tension/p211/ctrl",
-      -0.04413947292328
+      -0.044139472375588
     ],
     [
       "vshape_tension/p211/res",
-      1.6577541828156e-07
+      1.443549990654e-07
     ],
     [
       "vshape_tension/p211/iter",
@@ -11029,19 +11029,19 @@
     ],
     [
       "vshape_tension/p211/pivot",
-      3.4165088820984e-08
+      3.4165088849988e-08
     ],
     [
       "vshape_tension/p212/lambda",
-      2.4321029177364
+      2.4321029177794
     ],
     [
       "vshape_tension/p212/ctrl",
-      -0.044344283259215
+      -0.044344282711696
     ],
     [
       "vshape_tension/p212/res",
-      1.6530975699425e-07
+      1.6577541828156e-07
     ],
     [
       "vshape_tension/p212/iter",
@@ -11053,19 +11053,19 @@
     ],
     [
       "vshape_tension/p212/pivot",
-      3.4144837826619e-08
+      3.4144837855577e-08
     ],
     [
       "vshape_tension/p213/lambda",
-      2.4440959327626
+      2.4440959328056
     ],
     [
       "vshape_tension/p213/ctrl",
-      -0.044548972402567
+      -0.044548971855221
     ],
     [
       "vshape_tension/p213/res",
-      1.5739351511002e-07
+      1.8300488591194e-07
     ],
     [
       "vshape_tension/p213/iter",
@@ -11077,19 +11077,19 @@
     ],
     [
       "vshape_tension/p213/pivot",
-      3.4124620610101e-08
+      3.4124620639013e-08
     ],
     [
       "vshape_tension/p214/lambda",
-      2.4560889560463
+      2.4560889560893
     ],
     [
       "vshape_tension/p214/ctrl",
-      -0.044753540555125
+      -0.044753540007953
     ],
     [
       "vshape_tension/p214/res",
-      1.5739351511002e-07
+      1.4575198292732e-07
     ],
     [
       "vshape_tension/p214/iter",
@@ -11101,19 +11101,19 @@
     ],
     [
       "vshape_tension/p214/pivot",
-      3.4104437080039e-08
+      3.4104437108906e-08
     ],
     [
       "vshape_tension/p215/lambda",
-      2.4680819875689
+      2.4680819876119
     ],
     [
       "vshape_tension/p215/ctrl",
-      -0.044957987918135
+      -0.044957987371134
     ],
     [
       "vshape_tension/p215/res",
-      1.564621925354e-07
+      1.6530975699425e-07
     ],
     [
       "vshape_tension/p215/iter",
@@ -11125,19 +11125,19 @@
     ],
     [
       "vshape_tension/p215/pivot",
-      3.4084287145386e-08
+      3.4084287174207e-08
     ],
     [
       "vshape_tension/p216/lambda",
-      2.4800750273119
+      2.4800750273549
     ],
     [
       "vshape_tension/p216/ctrl",
-      -0.045162314692295
+      -0.045162314145468
     ],
     [
       "vshape_tension/p216/res",
-      1.4295801520348e-07
+      1.5133991837502e-07
     ],
     [
       "vshape_tension/p216/iter",
@@ -11149,19 +11149,19 @@
     ],
     [
       "vshape_tension/p216/pivot",
-      3.4064170715434e-08
+      3.406417074421e-08
     ],
     [
       "vshape_tension/p217/lambda",
-      2.4920680752568
+      2.4920680752998
     ],
     [
       "vshape_tension/p217/ctrl",
-      -0.045366521077768
+      -0.045366520531112
     ],
     [
       "vshape_tension/p217/res",
-      1.3643875718117e-07
+      1.4249235391617e-07
     ],
     [
       "vshape_tension/p217/iter",
@@ -11173,19 +11173,19 @@
     ],
     [
       "vshape_tension/p217/pivot",
-      3.4044087699817e-08
+      3.4044087728548e-08
     ],
     [
       "vshape_tension/p218/lambda",
-      2.5040611313852
+      2.5040611314281
     ],
     [
       "vshape_tension/p218/ctrl",
-      -0.045570607274173
+      -0.045570606727691
     ],
     [
       "vshape_tension/p218/res",
-      1.7601996660233e-07
+      1.5832483768463e-07
     ],
     [
       "vshape_tension/p218/iter",
@@ -11197,19 +11197,19 @@
     ],
     [
       "vshape_tension/p218/pivot",
-      3.4024038008504e-08
+      3.4024038037191e-08
     ],
     [
       "vshape_tension/p219/lambda",
-      2.5160541956786
+      2.5160541957216
     ],
     [
       "vshape_tension/p219/ctrl",
-      -0.045774573480598
+      -0.045774572934286
     ],
     [
       "vshape_tension/p219/res",
-      1.4575198292732e-07
+      1.6298145055771e-07
     ],
     [
       "vshape_tension/p219/iter",
@@ -11221,19 +11221,19 @@
     ],
     [
       "vshape_tension/p219/pivot",
-      3.4004021551803e-08
+      3.4004021580445e-08
     ],
     [
       "vshape_tension/p220/lambda",
-      2.5280472681189
+      2.5280472681618
     ],
     [
       "vshape_tension/p220/ctrl",
-      -0.045978419895589
+      -0.045978419349449
     ],
     [
       "vshape_tension/p220/res",
-      1.4714896678925e-07
+      1.7601996660233e-07
     ],
     [
       "vshape_tension/p220/iter",
@@ -11245,19 +11245,19 @@
     ],
     [
       "vshape_tension/p220/pivot",
-      3.3984038240355e-08
+      3.3984038268951e-08
     ],
     [
       "vshape_tension/p221/lambda",
-      2.5400403486876
+      2.5400403487305
     ],
     [
       "vshape_tension/p221/ctrl",
-      -0.046182146717165
+      -0.046182146171197
     ],
     [
       "vshape_tension/p221/res",
-      1.5273690223694e-07
+      1.6111880540848e-07
     ],
     [
       "vshape_tension/p221/iter",
@@ -11269,19 +11269,19 @@
     ],
     [
       "vshape_tension/p221/pivot",
-      3.3964087985133e-08
+      3.3964088013685e-08
     ],
     [
       "vshape_tension/p222/lambda",
-      2.5520334373667
+      2.5520334374096
     ],
     [
       "vshape_tension/p222/ctrl",
-      -0.046385754142813
+      -0.046385753597015
     ],
     [
       "vshape_tension/p222/res",
-      1.4109537005424e-07
+      1.5599653124809e-07
     ],
     [
       "vshape_tension/p222/iter",
@@ -11293,19 +11293,19 @@
     ],
     [
       "vshape_tension/p222/pivot",
-      3.3944170697443e-08
+      3.3944170725951e-08
     ],
     [
       "vshape_tension/p223/lambda",
-      2.564026534138
+      2.5640265341809
     ],
     [
       "vshape_tension/p223/ctrl",
-      -0.046589242369487
+      -0.046589241823861
     ],
     [
       "vshape_tension/p223/res",
-      1.4901161193848e-07
+      1.5133991837502e-07
     ],
     [
       "vshape_tension/p223/iter",
@@ -11317,19 +11317,19 @@
     ],
     [
       "vshape_tension/p223/pivot",
-      3.3924286288922e-08
+      3.3924286317385e-08
     ],
     [
       "vshape_tension/p224/lambda",
-      2.5760196389835
+      2.5760196390264
     ],
     [
       "vshape_tension/p224/ctrl",
-      -0.04679261159362
+      -0.046792611048162
     ],
     [
       "vshape_tension/p224/res",
-      1.6298145055771e-07
+      1.7881393432617e-07
     ],
     [
       "vshape_tension/p224/iter",
@@ -11341,19 +11341,19 @@
     ],
     [
       "vshape_tension/p224/pivot",
-      3.3904434671532e-08
+      3.390443469995e-08
     ],
     [
       "vshape_tension/p225/lambda",
-      2.5880127518851
+      2.588012751928
     ],
     [
       "vshape_tension/p225/ctrl",
-      -0.046995862011116
+      -0.046995861465829
     ],
     [
       "vshape_tension/p225/res",
-      1.2991949915886e-07
+      1.3737007975578e-07
     ],
     [
       "vshape_tension/p225/iter",
@@ -11365,19 +11365,19 @@
     ],
     [
       "vshape_tension/p225/pivot",
-      3.3884615757563e-08
+      3.3884615785938e-08
     ],
     [
       "vshape_tension/p226/lambda",
-      2.600005872825
+      2.6000058728678
     ],
     [
       "vshape_tension/p226/ctrl",
-      -0.047198993817356
+      -0.047198993272239
     ],
     [
       "vshape_tension/p226/res",
-      1.625157892704e-07
+      1.5459954738617e-07
     ],
     [
       "vshape_tension/p226/iter",
@@ -11389,19 +11389,19 @@
     ],
     [
       "vshape_tension/p226/pivot",
-      3.3864829459632e-08
+      3.3864829487963e-08
     ],
     [
       "vshape_tension/p227/lambda",
-      2.6119990017851
+      2.6119990018279
     ],
     [
       "vshape_tension/p227/ctrl",
-      -0.047402007207202
+      -0.047402006662255
     ],
     [
       "vshape_tension/p227/res",
-      1.5133991837502e-07
+      1.3457611203194e-07
     ],
     [
       "vshape_tension/p227/iter",
@@ -11413,19 +11413,19 @@
     ],
     [
       "vshape_tension/p227/pivot",
-      3.3845075690677e-08
+      3.3845075718964e-08
     ],
     [
       "vshape_tension/p228/lambda",
-      2.6239921387477
+      2.6239921387905
     ],
     [
       "vshape_tension/p228/ctrl",
-      -0.047604902374996
+      -0.047604901830218
     ],
     [
       "vshape_tension/p228/res",
-      1.5785917639732e-07
+      1.7369166016579e-07
     ],
     [
       "vshape_tension/p228/iter",
@@ -11437,19 +11437,19 @@
     ],
     [
       "vshape_tension/p228/pivot",
-      3.3825354363959e-08
+      3.3825354392202e-08
     ],
     [
       "vshape_tension/p229/lambda",
-      2.635985283695
+      2.6359852837378
     ],
     [
       "vshape_tension/p229/ctrl",
-      -0.047807679514562
+      -0.047807678969953
     ],
     [
       "vshape_tension/p229/res",
-      1.5972182154655e-07
+      1.3737007975578e-07
     ],
     [
       "vshape_tension/p229/iter",
@@ -11461,19 +11461,19 @@
     ],
     [
       "vshape_tension/p229/pivot",
-      3.3805665393061e-08
+      3.380566542126e-08
     ],
     [
       "vshape_tension/p230/lambda",
-      2.6479784366092
+      2.6479784366521
     ],
     [
       "vshape_tension/p230/ctrl",
-      -0.048010338819209
+      -0.048010338274769
     ],
     [
       "vshape_tension/p230/res",
-      1.4295801520348e-07
+      1.5320256352425e-07
     ],
     [
       "vshape_tension/p230/iter",
@@ -11485,19 +11485,19 @@
     ],
     [
       "vshape_tension/p230/pivot",
-      3.3786008691882e-08
+      3.3786008720038e-08
     ],
     [
       "vshape_tension/p231/lambda",
-      2.6599715974728
+      2.6599715975156
     ],
     [
       "vshape_tension/p231/ctrl",
-      -0.048212880481733
+      -0.048212879937461
     ],
     [
       "vshape_tension/p231/res",
-      1.4575198292732e-07
+      1.6018748283386e-07
     ],
     [
       "vshape_tension/p231/iter",
@@ -11509,19 +11509,19 @@
     ],
     [
       "vshape_tension/p231/pivot",
-      3.3766384174642e-08
+      3.3766384202754e-08
     ],
     [
       "vshape_tension/p232/lambda",
-      2.6719647662681
+      2.6719647663109
     ],
     [
       "vshape_tension/p232/ctrl",
-      -0.048415304694418
+      -0.048415304150315
     ],
     [
       "vshape_tension/p232/res",
-      1.564621925354e-07
+      1.383014023304e-07
     ],
     [
       "vshape_tension/p232/iter",
@@ -11533,19 +11533,19 @@
     ],
     [
       "vshape_tension/p232/pivot",
-      3.3746791755873e-08
+      3.3746791783942e-08
     ],
     [
       "vshape_tension/p233/lambda",
-      2.6839579429776
+      2.6839579430204
     ],
     [
       "vshape_tension/p233/ctrl",
-      -0.048617611649039
+      -0.048617611105104
     ],
     [
       "vshape_tension/p233/res",
-      1.5180557966232e-07
+      1.4016404747963e-07
     ],
     [
       "vshape_tension/p233/iter",
@@ -11557,19 +11557,19 @@
     ],
     [
       "vshape_tension/p233/pivot",
-      3.3727231350426e-08
+      3.3727231378452e-08
     ],
     [
       "vshape_tension/p234/lambda",
-      2.6959511275837
+      2.6959511276265
     ],
     [
       "vshape_tension/p234/ctrl",
-      -0.048819801536861
+      -0.048819800993093
     ],
     [
       "vshape_tension/p234/res",
-      1.6437843441963e-07
+      1.6391277313232e-07
     ],
     [
       "vshape_tension/p234/iter",
@@ -11581,19 +11581,19 @@
     ],
     [
       "vshape_tension/p234/pivot",
-      3.3707702873462e-08
+      3.3707702901444e-08
     ],
     [
       "vshape_tension/p235/lambda",
-      2.7079443200691
+      2.7079443201119
     ],
     [
       "vshape_tension/p235/ctrl",
-      -0.049021874548646
+      -0.049021874005045
     ],
     [
       "vshape_tension/p235/res",
-      1.3038516044617e-07
+      1.3737007975578e-07
     ],
     [
       "vshape_tension/p235/iter",
@@ -11605,19 +11605,19 @@
     ],
     [
       "vshape_tension/p235/pivot",
-      3.3688206240455e-08
+      3.3688206268394e-08
     ],
     [
       "vshape_tension/p236/lambda",
-      2.7199375204164
+      2.7199375204591
     ],
     [
       "vshape_tension/p236/ctrl",
-      -0.049223830874649
+      -0.049223830331216
     ],
     [
       "vshape_tension/p236/res",
-      1.383014023304e-07
+      1.6065314412117e-07
     ],
     [
       "vshape_tension/p236/iter",
@@ -11629,19 +11629,19 @@
     ],
     [
       "vshape_tension/p236/pivot",
-      3.3668741367187e-08
+      3.3668741395083e-08
     ],
     [
       "vshape_tension/p237/lambda",
-      2.7319307286082
+      2.7319307286509
     ],
     [
       "vshape_tension/p237/ctrl",
-      -0.049425670704625
+      -0.049425670161359
     ],
     [
       "vshape_tension/p237/res",
-      1.564621925354e-07
+      1.2898817658424e-07
     ],
     [
       "vshape_tension/p237/iter",
@@ -11653,19 +11653,19 @@
     ],
     [
       "vshape_tension/p237/pivot",
-      3.3649308169751e-08
+      3.3649308197605e-08
     ],
     [
       "vshape_tension/p238/lambda",
-      2.7439239446273
+      2.74392394467
     ],
     [
       "vshape_tension/p238/ctrl",
-      -0.049627394227828
+      -0.049627393684729
     ],
     [
       "vshape_tension/p238/res",
-      1.4901161193848e-07
+      1.383014023304e-07
     ],
     [
       "vshape_tension/p238/iter",
@@ -11677,19 +11677,19 @@
     ],
     [
       "vshape_tension/p238/pivot",
-      3.3629906564548e-08
+      3.3629906592358e-08
     ],
     [
       "vshape_tension/p239/lambda",
-      2.7559171684565
+      2.7559171684992
     ],
     [
       "vshape_tension/p239/ctrl",
-      -0.049829001633013
+      -0.049829001090081
     ],
     [
       "vshape_tension/p239/res",
-      1.625157892704e-07
+      1.4062970876694e-07
     ],
     [
       "vshape_tension/p239/iter",
@@ -11701,19 +11701,19 @@
     ],
     [
       "vshape_tension/p239/pivot",
-      3.3610536468281e-08
+      3.3610536496049e-08
     ],
     [
       "vshape_tension/p240/lambda",
-      2.7679104000786
+      2.7679104001213
     ],
     [
       "vshape_tension/p240/ctrl",
-      -0.05003049310844
+      -0.050030492565673
     ],
     [
       "vshape_tension/p240/res",
-      1.1781230568886e-07
+      1.5832483768463e-07
     ],
     [
       "vshape_tension/p240/iter",
@@ -11725,7 +11725,7 @@
     ],
     [
       "vshape_tension/p240/pivot",
-      3.359119779796e-08
+      3.3591197825686e-08
     ],
     [
       "vshape_no_load/has_section",

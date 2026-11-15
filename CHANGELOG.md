@@ -4,6 +4,72 @@
 
 ## 2026-11-15
 
+### 新增：③a 起点同源修复 + 施工阶段共存核对 + 真实桥梁越过极值点
+
+用户选 `3a`：先做实质技术收口，再评估 B3 是否具备推 `Y` 条件。
+结论 **B3 仍 `P` 不 `Y`**（§2.5 的分支屈曲 / 初始缺陷 /
+材料非线性 / 施工阶段中间态稳定未收口）。
+
+- **修复 ② 登记的 `MODE=COMPLETION` 起点不同源缺陷**：
+  `fem_3d_nl.hpp` 的 `CableLengthResult3D` /
+  `ErectionGeometryResult3D` / `CompletionStateResult3D` 增加
+  `Model3D basisModel`，把与 `u0` 同源的最终模型（制造线形 +
+  迭代收敛后的 `L0`）回传给主链路；`cable_solver.cpp` 只在
+  `STABASIS=COMPLETION`（opt-in）且 `MODE=TENSION/COMPLETION` 时
+  用它装配 `F0` / `Fint(u0)`，`MODE=STATIC` 与悬索桥找形仍用主
+  链路 `m`；`formatCompletionStabilitySection()` 增加自由度结构
+  一致性检查，不一致写 `ERROR=invalid_initial_state`。
+  CB3D10 `RES0` 由 `3.1492e6 N` 降到 `7.4001e-3 N`
+  （`RES0/|F0|` `1.06 → 2.502e-9`），首步 λ 由负转正。
+- 连带改进：第 22 项 CTest 的 `vshape_tension`（`MODE=TENSION`）
+  起点 `RES0` 从 `0.0151 N` 降到 `2.84e-8 N`，λ 路径只有末位变化；
+  已重新冻结 `cases/vshape_tension_cable.txt` 与
+  `reference/cb3d20_completion_stability.json`（真实改进，不是浮点噪声）。
+- **第 24 项 CTest `completion_basis_3d`**（110 项检查）：4 个 case，
+  跨 `MODE` 独立锚点（`MODE=COMPLETION` 制造线形基准 vs
+  `MODE=STATIC` 设计线形 + 冻结 `L0` 基准逐点
+  `worst|dλ|=1.081e-6`、`worst|dΔCTRL|=3.131e-6 m`）、
+  默认零污染、以及 CB3D13 悬索桥 5 个 `[ERECTION*]` 段与
+  `[STABILITY]` **并列输出互不污染**（`RES0/|F0|=1.112e-9`、
+  26 个平衡点）。核对结论是「共存」，不是「每个施工阶段中间态
+  已具备全过程稳定分析」。
+- **第 25 项 CTest `bridge_limit_point_3d`**（140 项检查）：
+  BS 侧 `ansys_bridge_limit_point.py` /
+  `cases/run_cases_limit_point.py` / `CB3D22_limit_point_vs_ansys/`
+  在 CB3D21 同源桥上只缩塔截面（`TOWER_SCALE=0.012`）、增量荷载
+  改为塔顶 2009 节点 `+X`，构造稳定敏感研究构型。FEM 球面弧长
+  `NPOINT=553`、`λ_max=1.624941 @ dUX=0.200411`、下降段 207 步、
+  `λ_end=1.242938`；ANSYS `lp_arc` 两段 `ARCLEN`
+  `λ_max=1.622748 @ dUX=0.201182`，极值点 `dλ=1.349e-3`、
+  `dUX=3.850e-3`，两个 job 均 0 error。λ 在极值点后下降，
+  按单调量 `ΔUX` 插值 λ 逐点对拍（上升段 worst `5.493e-3`、
+  下降段 worst `2.054e-2`）。同源锚点：16 根索
+  `L0·(1+ε)` 与 ANSYS 弦长偏差 `2.43e-11 m`、`ε` 偏差 `1.83e-16`。
+- **构建口径**：历史冻结证据由 `mingw64/bin/g++.exe` 产出，
+  ③a 初版证据由 `ucrt64/bin/c++.exe` 产出，两套 CRT 的末位浮点
+  不同。第 24 项冻结证据已用规范 mingw64 构建重新生成并保持
+  严格逐字节重放；第 25 项（与 BS 算例目录共享 FEM 证据）改用
+  `tests/benchmark/replay_tolerance.py` 的结构化跨工具链比较
+  （`λ/CTRL/DS/PIVOT` 相对 `<1e-9`、`RES` 绝对 `<0.1 N`，
+  非逐点行与 STEP/ITER/CONVERGED 仍逐位一致）。
+  `run_tests.ps1` 新增 `-BuildDir` 参数（默认 `build`），
+  干净 Ninja 构建用 `_d_build`。`.gitignore` 排除 `_c_build/` /
+  `_d_build/`。
+- **全量回归**：`_d_build`（显式 `-DCMAKE_CXX_COMPILER=
+  C:/msys64/mingw64/bin/g++.exe`）全量编译后
+  `ctest` **25/25**、`run_tests.ps1 -BuildDir _d_build`
+  `ALL TESTS PASSED`。
+- 编号口径：`completion_basis_3d` 覆盖既有 CB3D10 / CB3D13，
+  黄金值改为 `case=CB3D10_BASIS_FIX` / `completion_basis_3d.json`；
+  `CB3D22` 专属于 BS 侧极限点算例与 FE 侧第 25 项。
+- **文档同步（③a 收尾）**：`USER_MANUAL.md` 补 §2.3 的 25 个 CTest /
+  `-BuildDir` / mingw64 工具链口径与 §9.10 `STABASIS=COMPLETION`
+  专项说明；`DEVELOPMENT_GUIDE.md` 更新 §6.3 测试索引、§7 工具链
+  浮点漂移教训、§10 `basisModel` 同源模型设计决策。BS 侧
+  `verify_completion_stability_3d.py::stage3_contract()` 新增
+  5 条断言锁住这四份 FE 文档（68 → 73 项），
+  `B类后续项接入规格.md` §6 第 18 条同步登记。
+
 ### 新增：真实斜拉桥成桥态两段对标（CB3D21，第十九次 / a 阶段 ②）
 
 - 承接 ① 的 `STABASIS=COMPLETION`：把同一条主链路 opt-in 放到**真实双塔

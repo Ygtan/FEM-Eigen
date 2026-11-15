@@ -387,6 +387,41 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(completion_bridge_3d_benchmark PROPERTIES
         TIMEOUT 900
         LABELS "benchmark")
+
+    # 第十九次 ③：MODE=COMPLETION 成桥态基准同源修复（CB3D10 / CB3D13）。② 登记的
+    # 缺陷是求解器按值收 Model3D、内部改写 L0 / 制造线形，主链路却拿外部
+    # 原模型算 F0 与 Fint(u0)（CB3D10 RES0=3.15 MN、首步 λ<0）。修复由
+    # basisModel 回传同源模型；本项冻结两条独立成桥态闭环
+    # （COMPLETION 制造线形基准 / STATIC 设计线形+冻结 L0 基准）的逐点
+    # λ / ΔCTRL 对拍、起点闭合、默认零污染，并核对 CB3D13 悬索桥
+    # 5 个 [ERECTION*] 施工阶段段与 [STABILITY] 共存且逐位一致。
+    # 完全离线、不跑 ANSYS。
+    add_test(NAME completion_basis_3d_benchmark
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/completion_basis_3d/compare_completion_basis_3d.py
+                     --bin ${CMAKE_CURRENT_BINARY_DIR}
+                     --cases ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/completion_basis_3d/cases
+                     --reference ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/completion_basis_3d/reference)
+    set_tests_properties(completion_basis_3d_benchmark PROPERTIES
+        TIMEOUT 900
+        LABELS "benchmark")
+
+    # 第十九次 ③a：真实斜拉桥越过极值点 / 下降段（CB3D22）。
+    # BS 侧 cases/CB3D22_limit_point_vs_ansys/ 的同源冻结证据：在 CB3D21
+    # 同源桥上只缩塔刚度、增量荷载改为塔顶 2009 节点 +X，靠 P-Δ 软化
+    # 产生 lambda_max 与下降段。本项完全离线，不重跑 ANSYS；判据覆盖
+    # 冻结证据哈希、黄金值自洽、16 索 L0 / INISTATE / ANSYS 弦长同源锚点、
+    # FEM 极值点物理判据、两段 ANSYS 求解证据、按 ΔUX 插值 λ 的
+    # FEM↔ANSYS 逐点对拍，以及当前二进制重放两个 .dat。
+    add_test(NAME bridge_limit_point_3d_benchmark
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/bridge_limit_point_3d/compare_bridge_limit_point_3d.py
+                     --bin ${CMAKE_CURRENT_BINARY_DIR}
+                     --cases ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/bridge_limit_point_3d/cases
+                     --reference ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/bridge_limit_point_3d/reference)
+    set_tests_properties(bridge_limit_point_3d_benchmark PROPERTIES
+        TIMEOUT 900
+        LABELS "benchmark")
 else()
     message(STATUS "未找到 Python3，跳过 .dat 逐字节回归 CTest")
 endif()

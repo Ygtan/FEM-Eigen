@@ -40,11 +40,25 @@
 | `frame_postbuckling_3d/` | `frame_postbuckling_3d_benchmark` | 共转 CR 梁刚接框架（Williams toggle 型）后屈曲全过程 vs `BEAM188 + ARCLEN` / 三套独立线性刚度锚点 | CB3D19 | **12513** |
 | `completion_stability_3d/` | `completion_stability_3d_benchmark` | **成桥态起点**全过程稳定：`STABASIS=COMPLETION` / `R = F0 + λ·Finc − Fint(u)` / V 形双索独立闭式 `λ(v)` 对拍 `STATIC` / `TENSION` | CB3D20（纯 FEM 侧） | **2963** |
 | `completion_bridge_3d/` | `completion_bridge_3d_benchmark` | **真实双塔三跨斜拉桥**成桥态两段 vs ANSYS（step1 恒载 + step2 增量荷载；荷载控制逐子步 + `ARCLEN` 终点交叉验证）/ 同源 `L0` + `INISTATE eps` 独立锚点 | CB3D21 | **2392** |
+| `completion_basis_3d/` | `completion_basis_3d_benchmark` | **第十九次 ③a**：`MODE=COMPLETION` 成桥态基准同源修复（`basisModel`）/ 跨 `MODE` 独立锚点 / 默认零污染 / CB3D13 五个 `[ERECTION*]` 段共存核对 | CB3D10、CB3D13 | **110** |
+| `bridge_limit_point_3d/` | `bridge_limit_point_3d_benchmark` | **第十九次 ③a**：真实斜拉桥**越过极值点 / 下降段** FEM 球面弧长 vs ANSYS 两段 `ARCLEN`；按 `ΔUX` 插值 `λ` 逐点对拍 / 16 索 `L0` + `INISTATE` + 弦长同源锚点 | CB3D22 | **140** |
 
 另有 4 个解析/内核单测（`analytical_exact_solutions_2d/3d`、
 `nonlinear_co_rotational_3d`、`shape_sensitivity_3d`）与 1 个
-`dat_byte_regression`，合计 **23 个 CTest**。当前实测全量
-`ctest` 23/23、`run_tests.ps1` `ALL TESTS PASSED`。
+`dat_byte_regression`：② 阶段为 23 个 CTest，③a 新增第 24 / 25 项后
+**合计 25 个 CTest**。当前实测全量 `ctest` 25/25、
+`run_tests.ps1 -BuildDir _d_build` `ALL TESTS PASSED`。
+
+> **构建工具链必须与冻结证据一致**：历史冻结输出全部由
+> `C:/msys64/mingw64/bin/g++.exe`（`-O3 -DNDEBUG`）产出。若改用
+> `C:/msys64/ucrt64/bin/c++.exe`，牛顿残差 / 模态向量的末位浮点会漂移，
+> 逐字节守卫会红（不是力学回归）。干净 configure 请显式指定编译器：
+> `cmake -S . -B _d_build -G Ninja -DCMAKE_BUILD_TYPE=Release
+> -DCMAKE_CXX_COMPILER=C:/msys64/mingw64/bin/g++.exe`。
+> 第 24 项冻结证据已用该规范工具链重新生成、保持严格逐字节重放；
+> 第 25 项的 FEM 证据与 BS 侧算例目录共享，改用
+> `tests/benchmark/replay_tolerance.py` 的结构化跨工具链比较
+> （`λ/CTRL/DS/PIVOT` 相对 `<1e-9`、`RES` 绝对 `<0.1 N`，其余行逐位一致）。
 
 各目录的 `README.md` 记录该阶段的建模口径、ANSYS APDL 语义、容差来源与
 已知边界；`nonlinear_ansys_3d/probes/` 归档 A~G 阶段全部 16 个 ANSYS 语义
@@ -57,41 +71,47 @@
 ## 从零复现（换机 / 重建）
 
 `build/` 及其 `CTestTestfile.cmake` 由 CMake 生成、被 `.gitignore` 排除，
-**不入库**。干净的 configure 会自动生成全部 23 条注册，不需要手工同步。
+**不入库**。干净的 configure 会自动生成全部 25 条注册，不需要手工同步。
 
 ```bash
-# MSYS2 / MinGW-w64 环境。生成器二选一，实测均可生成 23 条 add_test。
+# MSYS2 / MinGW-w64 环境。**必须显式锁定 mingw64 编译器**（见上方工具链说明），
+# 否则 CMake 可能挑到 ucrt64 的 c++.exe，逐字节守卫会红。
 export PATH="/c/msys64/usr/bin:/c/msys64/mingw64/bin:$PATH"
 
-# 方案 A：Ninja（推荐，路径处理最稳）
+# 方案 A：Ninja（推荐，路径处理最稳）——③a 全量回归实测用 _d_build
 cmake -G Ninja \
   -DCMAKE_MAKE_PROGRAM="C:/msys64/mingw64/bin/ninja.exe" \
+  -DCMAKE_CXX_COMPILER="C:/msys64/mingw64/bin/g++.exe" \
+  -DCMAKE_BUILD_TYPE=Release \
   -DPython3_EXECUTABLE="C:/Users/user/anaconda3/python.exe" \
-  -S D:/AI-work/FEM-Eigen -B D:/AI-work/FEM-Eigen/build_ninja
-cmake --build D:/AI-work/FEM-Eigen/build_ninja
-ctest --test-dir D:/AI-work/FEM-Eigen/build_ninja --output-on-failure
+  -S D:/AI-work/FEM-Eigen -B D:/AI-work/FEM-Eigen/_d_build
+cmake --build D:/AI-work/FEM-Eigen/_d_build -j2
+ctest --test-dir D:/AI-work/FEM-Eigen/_d_build --output-on-failure
 
 # 方案 B：MSYS Makefiles
 cmake -G "MSYS Makefiles" \
   -DCMAKE_MAKE_PROGRAM="C:/msys64/usr/bin/make.exe" \
+  -DCMAKE_CXX_COMPILER="C:/msys64/mingw64/bin/g++.exe" \
+  -DCMAKE_BUILD_TYPE=Release \
   -DPython3_EXECUTABLE="C:/Users/user/anaconda3/python.exe" \
   -S D:/AI-work/FEM-Eigen -B D:/AI-work/FEM-Eigen/build_msys
 ```
 
-**实测（2026-11-15，本机 MSYS2 / GCC 16.2）**：方案 A 干净 configure
-自动生成 **23 条 `add_test`**，`cmake --build -j 4` 编译产出
-**40 个 exe**（K 阶段 `beam_nl_probe` 为第 38 个、L 阶段
-`snap_probe` 为第 39 个；M 阶段只给 `cable_solver.exe` 加 opt-in
-分支、不新增 exe；N 阶段 `frame_probe` 为第 40 个；**第十九次 ① / ②
-都只改 `cable_solver.exe` / 两个头文件 / 冻结证据、不新增 exe**），
-全新目录 `ctest` **23/23 Passed**。即换机后无需手工同步
+**实测（2026-11-15，本机 MSYS2 / GCC 16.2 / mingw64）**：方案 A 干净
+configure 自动生成 **25 条 `add_test`**，`cmake --build -j2` 编译产出
+**全部 40 个 exe**（K 阶段 `beam_nl_probe`、L 阶段 `snap_probe`、N 阶段
+`frame_probe` 之后，第十九次 ① / ② / ③a 都只改 `cable_solver.exe` /
+头文件 / 冻结证据、不新增 exe），全新目录
+`ctest` **25/25 Passed**。即换机后无需手工同步
 `CTestTestfile.cmake`，也无需 ANSYS 许可即可全量回归；M 阶段主链路
 口径与数字见 `stable_path_3d/README.md`，N 阶段 CR 梁刚接框架
 后屈曲口径见 `frame_postbuckling_3d/README.md`，第十九次 ①
 成桥态起点口径见 `completion_stability_3d/README.md`，第十九次 ②
-真实斜拉桥两段对标口径见 `completion_bridge_3d/README.md`。
+真实斜拉桥两段对标口径见 `completion_bridge_3d/README.md`，③a 的
+同源修复与极值点 / 下降段口径见 `completion_basis_3d/README.md`、
+`bridge_limit_point_3d/README.md`。
 全量重编译在本机
-约需 11 分钟（头文件 `fem_3d_nl.hpp` 较大）；内存有限时建议 `-j 4`，
+约需 10 分钟（头文件 `fem_3d_nl.hpp` 较大）；内存有限时建议 `-j 2`，
 实测 `-j 8` 与其它任务并发会触发 `cc1plus.exe: out of memory`，与代码无关。
 
 > **本机历史坑**：旧 `build/` 缓存的生成器是 `MinGW Makefiles`，却把
@@ -101,8 +121,9 @@ cmake -G "MSYS Makefiles" \
 > `cable_solver.exe` 含 `[ERECTION_*]` 新段，日常回归仍可直接使用。
 
 ```powershell
-# 全量回归（PowerShell，输出 ASCII）
-powershell -ExecutionPolicy Bypass -File D:\AI-work\FEM-Eigen\run_tests.ps1
+# 全量回归（PowerShell，输出 ASCII）。-BuildDir 需指向与冻结证据同工具链的构建目录，
+# 默认 build；干净 Ninja 构建用 _d_build。
+powershell -ExecutionPolicy Bypass -File D:\AI-work\FEM-Eigen\run_tests.ps1 -BuildDir _d_build
 ```
 
 ## 新增一个 benchmark 的检查清单
@@ -116,4 +137,5 @@ powershell -ExecutionPolicy Bypass -File D:\AI-work\FEM-Eigen\run_tests.ps1
 4. `CMakeLists.txt` 里 `add_test(NAME ...)` + `set_tests_properties(...
    TIMEOUT 900 LABELS "benchmark")`，并在 `run_tests.ps1` 末尾追加一段。
 5. 本文件与对应目录 `README.md` 同步更新；跑一次 `ctest` 与
-   `run_tests.ps1` 确认 16→N 全绿。
+   `run_tests.ps1 -BuildDir <dir>` 确认全绿；若新增冻结输出，须用与历史
+   证据相同的 mingw64 工具链生成（见上方「构建工具链」说明）。

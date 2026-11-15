@@ -1,7 +1,17 @@
-﻿$env:PATH = "C:\msys64\mingw64\bin;C:\msys64\usr\bin;$env:PATH"
+﻿param(
+    [string]$BuildDir = "build"
+)
+
+$env:PATH = "C:\msys64\mingw64\bin;C:\msys64\usr\bin;$env:PATH"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
-# 统一使用构建目录 build（清理后已移除 build_cable/build_debug/build_local/build_make）
-$bin = Join-Path $root "build"
+# 默认仍是 build；干净 Ninja 构建在别的目录时用 -BuildDir 指定。
+# 离线 benchmark 的「同二进制重放逐行一致」判据要求 exe 与冻结证据同源，
+# 因此不能让本脚本悄悄指向修复前的旧 build/。
+if ([System.IO.Path]::IsPathRooted($BuildDir)) {
+    $bin = $BuildDir
+} else {
+    $bin = Join-Path $root $BuildDir
+}
 
 $tests = @(
   # 解析解断言：校验数值结果本身，而不只是"程序没崩"
@@ -539,6 +549,56 @@ if (Test-Path $cbScript) {
     }
 } else {
     Write-Host "[MISS] completion-state bridge benchmark script missing: $cbScript"
+    $failed++
+}
+
+# ---- MODE=COMPLETION 成桥态基准同源修复（CB3D10 / CB3D13，第十九次 ③）-----
+$bsScript = Join-Path $root "tests\benchmark\completion_basis_3d\compare_completion_basis_3d.py"
+$bsCases  = Join-Path $root "tests\benchmark\completion_basis_3d\cases"
+$bsRef    = Join-Path $root "tests\benchmark\completion_basis_3d\reference"
+if (Test-Path $bsScript) {
+    $py = Get-Command python -ErrorAction SilentlyContinue
+    if ($py) {
+        Write-Host ""
+        Write-Host "== Completion-state basis-model fix (COMPLETION vs STATIC cross-MODE anchor) =="
+        & python $bsScript --bin $bin --cases $bsCases --reference $bsRef
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[PASS] Completion-state basis-model benchmark"
+        } else {
+            Write-Host "[FAIL] Completion-state basis-model benchmark"
+            $failed++
+        }
+    } else {
+        Write-Host "[MISS] python not found, skip completion-state basis-model benchmark"
+        $failed++
+    }
+} else {
+    Write-Host "[MISS] completion-state basis-model benchmark script missing: $bsScript"
+    $failed++
+}
+
+# ---- 真实桥梁越过极值点 / 下降段（CB3D22 / 第十九次 ③a）-----------------
+$lpScript = Join-Path $root "tests\benchmark\bridge_limit_point_3d\compare_bridge_limit_point_3d.py"
+$lpCases  = Join-Path $root "tests\benchmark\bridge_limit_point_3d\cases"
+$lpRef    = Join-Path $root "tests\benchmark\bridge_limit_point_3d\reference"
+if (Test-Path $lpScript) {
+    $py = Get-Command python -ErrorAction SilentlyContinue
+    if ($py) {
+        Write-Host ""
+        Write-Host "== Real-bridge limit point / descending branch (FEM vs ANSYS ARCLEN, offline) =="
+        & python $lpScript --bin $bin --cases $lpCases --reference $lpRef
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[PASS] Bridge limit-point benchmark"
+        } else {
+            Write-Host "[FAIL] Bridge limit-point benchmark"
+            $failed++
+        }
+    } else {
+        Write-Host "[MISS] python not found, skip bridge limit-point benchmark"
+        $failed++
+    }
+} else {
+    Write-Host "[MISS] bridge limit-point benchmark script missing: $lpScript"
     $failed++
 }
 

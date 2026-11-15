@@ -75,6 +75,36 @@ python tests/regression/compare_regression.py --freeze --bin build --src . --bas
 （补线荷载梯形积分权重）两处有意变更后未同步基线，导致该项长期 3/37
 失败；已刷新并恢复 6/6 全绿，详见 CHANGELOG 当日条目。
 
+**③a（第十九次）之后的回归口径**：`tests/benchmark/` 下已合计
+**25 个 CTest**，全部由 `run_tests.ps1` 与 `ctest` 双入口覆盖。新增的第 24 项
+`completion_basis_3d_benchmark`（起点同源 + 施工阶段共存，110 项检查）与
+第 25 项 `bridge_limit_point_3d_benchmark`（真实桥梁越过极值点，140 项检查）
+都是**纯离线**回归：只读冻结证据与黄金值，必要时用当前二进制重放，
+不重跑 ANSYS。指定干净构建目录用 `-BuildDir` 参数：
+
+```powershell
+.\run_tests.ps1 -BuildDir _d_build
+ctest --test-dir _d_build --output-on-failure -j2
+```
+
+**构建工具链必须与冻结证据一致**：历史黄金值由
+`C:/msys64/mingw64/bin/g++.exe` 产出，混用 `ucrt64/bin/c++.exe` 会让
+`[STABILITY]` 的 `RES` / `PIVOT` 末位、`[MODAL]` 振型向量出现
+CRT / libm 级浮点漂移，逐字节重放会误报。干净 Ninja 构建请显式指定编译器：
+
+```powershell
+cmake -S . -B _d_build -G Ninja -DCMAKE_BUILD_TYPE=Release `
+  -DCMAKE_CXX_COMPILER="C:/msys64/mingw64/bin/g++.exe" `
+  -DPython3_EXECUTABLE="C:/Users/user/anaconda3/python.exe"
+cmake --build _d_build -j2
+```
+
+第 25 项与 BridgeStudio 算例目录共享 FEM 证据，其跨工具链重放由
+`tests/benchmark/replay_tolerance.py` 结构化比较（`LAMBDA/CTRL/DS/PIVOT`
+相对 `<1e-9`、`RES` 绝对 `<0.1 N`，非逐点行与 `STEP/ITER/CONVERGED`
+仍逐位一致）；冻结文件本身的 `sha256` 与黄金值自洽判据**不放宽**。
+`_c_build/` / `_d_build/` 已在 `.gitignore` 中排除，不入库。
+
 ## 3. 两套输入格式
 
 程序根据节点坐标维度自动区分二维/三维模型，二者关键字风格一致但有差异：
@@ -552,6 +582,49 @@ Newton    (I + G_full)·δ = -(ΔX + u)，G_full = du/dX
 
 优化轮数、收敛率、目标下降幅度都不构成规范意义上的设计合格判定。
 段格式、错误码与实测数值见 `input_format_3d.md` 的 `[OPT]` 专节。
+
+### 9.10 成桥态全过程稳定 opt-in（`STABASIS=COMPLETION`，③a 收口）
+
+`cable_solver` 的 `STABILITY=1` + `STABASIS=COMPLETION` 以**成桥态**
+为弧长法起点：残差口径是 `R(u,λ)=F0 + λ·Finc − Fint(u)`，`F0` 是
+成桥态恒定荷载，`Finc` 只来自 `*STABILITY_LOAD`，λ 与施工阶段荷载
+倍率不是同一个量。关键字与结果段见 `input_format_3d.md`。
+
+**③a 修复了 ② 登记的起点不同源缺陷**：`solveCompletionState3D()` /
+`iterateCableUnstrainedLengths()` 按值接收 `Model3D`，内部迭代会改写
+索 `L0` 与制造线形；主链路若仍拿外部原模型装配 `F0` / `Fint(u0)`，
+起点就不闭合（CB3D10 曾出现 `RES0=3.1492e6 N`、首步 λ 为负）。
+现在 `CableLengthResult3D` / `ErectionGeometryResult3D` /
+`CompletionStateResult3D` 都回传 `Model3D basisModel`（与 `u0` 同源的
+最终模型），`cable_solver.cpp` 仅在 opt-in 成桥态且
+`MODE=TENSION/COMPLETION` 时用它；`MODE=STATIC` 与悬索桥找形仍用
+主链路 `m`。修复后 CB3D10 `RES0=7.4001e-3 N`
+（`RES0/|F0|=2.502e-9`），`MODE=TENSION` 的第 22 项
+`vshape_tension` 起点 `RES0` 也从 `0.0151 N` 降到 `2.84e-8 N`
+（已重新冻结，是真实改进而非浮点噪声）。
+`formatCompletionStabilitySection()` 增加自由度结构一致性检查，
+不一致写 `ERROR=invalid_initial_state` 而不是静默给出错误路径。
+
+**能力与边界（如实登记）**：
+
+- 第 24 项 CTest 核对的是 CB3D13 悬索桥 5 个 `[ERECTION*]` 段与
+  `[STABILITY]` **并列输出、互不污染**（`RES0/|F0|=1.112e-9`、
+  26 个平衡点）。`*ERECTION` 是解析索多边形找形，**不提供每个施工
+  阶段中间态的 FEM 平衡态与一致切线刚度**；"共存" ≠ "施工阶段
+  中间态全过程稳定已实现"。
+- 第 25 项 CTest / BridgeStudio `CB3D22_limit_point_vs_ansys` 在同一座
+  斜拉桥上只缩塔截面实常数（`TOWER_SCALE=0.012`）、把增量荷载改为
+  塔顶 2009 节点 `+X`，用 P-Δ 软化产生真实极限点：FEM 球面弧长
+  `NPOINT=553`、`λ_max=1.624941 @ dUX=0.200411`、下降段 207 步；
+  ANSYS 18.0 `lp_arc` 两段 `ARCLEN` 得 `λ_max=1.622748`，
+  两个 job 均 0 error。因 λ 在极值点后下降，按单调量
+  `ΔUX` 插值 λ 逐点对拍。`One indefinite tangent matrix is detected`
+  是极值点附近的物理标志，不是求解失败。
+- **B3 仍 `P` 不 `Y`**：位移控制 / Riks、分支屈曲与分支切换、初始
+  缺陷、材料非线性、动力 snap-through、施工阶段中间态全过程稳定
+  均未闭环；③a 只收口「起点同源」「施工阶段段共存」「真实桥梁
+  越过极值点」三处。详见 BridgeStudio
+  `B类后续项接入规格.md` §2.5 / §2.6。
 
 ## 10. 输出与可视化
 

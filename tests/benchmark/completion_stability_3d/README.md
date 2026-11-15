@@ -69,10 +69,10 @@ dλ/dv|V0 = K_yy(V0)/PINC
 ```
 2963 checks + 18 strings + 18 criteria + 6 cases
 FEM CLI 复现 6/6（_cable.txt 除 elapsed_ms 逐行一致；_stability.txt 逐字节）
-独立闭式 worst|λ−λ_closed| = 1.505e-13 (STATIC) / 3.515e-08 (TENSION)
-          worst|λ·PINC−(P(v)−F0)| = 7.5e-08 N / 1.76e-02 N
+独立闭式 worst|λ−λ_closed| = 1.505e-13 (STATIC) / 2.795e-09 (TENSION)
+          worst|λ·PINC−(P(v)−F0)| = 7.5e-08 N / 1.397e-03 N
 起点自洽 CTRL0 ≡ [U](2,2)；F0_NORM ≡ |F0|；FINC_NORM ≡ PINC
-          RES0/|F0| = 1.2e-14 (STATIC) / 5.5e-09 (TENSION)
+          RES0/|F0| = 1.2e-14 (STATIC) / 1.03e-14 (TENSION，③a 重新冻结)
 默认零污染 既有 CB3D10 1257 行逐位一致（除 elapsed_ms）
           M 阶段 von Mises REFERENCE 基准 _stability.txt 逐字节一致
           *STABILITY_LOAD 不进 m.loads：默认态 U(2,2) 仍是 −0.1
@@ -95,6 +95,19 @@ python build_reference_completion.py --check
 
 `cases/*.dat` 与 `cases/*_cable.txt` 由同一份 `cable_solver.exe` 生成，
 没有第二份手工输入；本项不涉及 BridgeStudio 导出与 ANSYS `.inp`。
+
+> **③a 重新冻结（2026-11-15）**：③a 修复 `MODE=COMPLETION/TENSION`
+> 起点不同源缺陷时，`cable_solver.cpp` 在 `MODE=TENSION` 分支也改用
+> 同源 `basisModel` 装配 `F0` / `Fint(u0)`，因此
+> `vshape_tension` 的 `[STABILITY] RES0` 从 `0.0151 N` 降到
+> `2.84e-8 N`（`RES0/|F0|` 从 `5.5e-9` 降到 `1.03e-14`），
+> λ 路径仅末位变化（`LAMBDA_FINAL` 差 `4.3e-11`）。这是**修复带来的
+> 真实改进，不是浮点噪声**。已用规范 mingw64 工具链
+> `_d_build/cable_solver.exe` 重新生成 `cases/vshape_tension_cable.txt`
+> 并重新冻结 `reference/cb3d20_completion_stability.json`；
+> 其余 5 个 case 与修复后二进制仍逐字节一致（重放 6/6）。
+> 闭式 `λ(v)` 独立锚点、起点自洽、默认零污染等判据全部保持通过，
+> 黄金值项数仍为 2963 + 18 字符串 + 18 判据。
 
 ## 如实边界
 

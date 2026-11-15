@@ -67,3 +67,7 @@ tests/benchmark/nonlinear_ansys_3d/probes/*
 
 # ---- 临时 CMake configure 探针目录（验证 CMakeLists 语法用，跑完即删）----
 cmake_probe_*/
+
+# ---- 干净 Ninja 构建目录（离线全量回归用，不入库）----
+_c_build/
+_d_build/

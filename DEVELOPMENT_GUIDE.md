@@ -116,13 +116,45 @@ Newton-Raphson：`assembleState` 每步组装 `Fint/Fext` 与一致切线（轴�
 - `ansys/`：100m 简支梁，参考值为 ANSYS BEAM4 的欧拉-伯努利闭式解。
 - `bridge/`：80m 系杆拱，参考值来自用户提供的 ANSYS 结果（`bridge_tied_arch_80m_apdl_disp.txt`、`..._elemforce.txt`），`compare_bridge.py` 比对节点位移与单元内力。
 
-三者均接入 CTest（`analytical_exact_solutions_2d`、`analytical_exact_solutions_3d`、`dat_byte_regression`、`ansys_benchmark`、`bridge_benchmark`）与 `run_tests.ps1`。
+以上早期条目均接入 CTest 与 `run_tests.ps1`。**当前全量口径以
+`tests/benchmark/README.md` 为准：③a 之后合计 25 个 CTest**，
+`ctest` 与 `run_tests.ps1` 双入口覆盖，`run_tests.ps1 -BuildDir <dir>`
+可指向干净构建目录。③a 新增两项纯离线回归：
+
+- `completion_basis_3d/`（第 24 项，110 项检查）：`CB3D10_BASIS_FIX`，
+  4 个 case 覆盖 `MODE=COMPLETION` 起点同源、跨 `MODE` 独立锚点、
+  默认零污染，以及 CB3D13 `[ERECTION*]` 与 `[STABILITY]` 并列输出互不污染。
+  黄金值 `reference/completion_basis_3d.json`，不占用 `CB3D22` 编号。
+- `bridge_limit_point_3d/`（第 25 项，140 项检查）：真实斜拉桥越过
+  极限点 / 下降段与 ANSYS `ARCLEN` 对拍，FEM↔ANSYS 按单调量
+  `ΔUX` 插值 `λ` 逐点比较。黄金值
+  `reference/cb3d22_limit_point.json`，同源锚点 16 根索 `L0(1+ε)`。
+- `replay_tolerance.py`：跨工具链 `[STABILITY]` 重放的结构化比较模块。
+  只放宽「另一套 CRT 编译产物重放」这一步，冻结文件 `sha256` /
+  黄金值自洽 / 物理判据仍严格锁死。
+
+新增 benchmark 的通用做法：冻结原始 `.dat` / `.inp` / `.out` / `.csv`
+与 FEM 输出到 `cases/`，由 `build_reference_*.py` 从冻结证据**派生**
+黄金值（不重跑求解器），`compare_*.py` 做纯离线断言，
+再注册 `CMakeLists.txt` 的 `add_test` 与 `run_tests.ps1` 守卫，
+最后在 `tests/benchmark/README.md` 与主文档同步计数与口径。
 
 ## 7. 构建与工具链
 
-- 必须使用统一的 mingw64 工具链。编译器与 CHOLMOD/OpenBLAS 必须同属 `C:\msys64\mingw64`；混用 ucrt64 会导致 C 运行库不一致（历史上曾出现“PATH 陷阱”）。CHOLMOD 仅安装在 mingw64。
+- 必须使用统一的 mingw64 工具链。编译器与 CHOLMOD/OpenBLAS 必须同属 `C:\msys64\mingw64`；混用 ucrt64 会导致 C 运行库不一致（历史上曾出现"PATH 陷阱"）。CHOLMOD 仅安装在 mingw64。
+- **③a 补记（2026-11-15）**：混用 ucrt64 不只是"能否链接"的问题，还会造成
+  CRT / libm 级末位浮点漂移——同为 GCC 16.2 / `-O3 -DNDEBUG`，
+  `[STABILITY]` 的 `RES` / `PIVOT`、`[MODAL]` 的振型向量与牛顿残差
+  会变化，`M` 阶段 von Mises `REFERENCE` 也会漂移。③a 初版证据由
+  `ucrt64/bin/c++.exe` 产出，曾导致 `_c_build` 全量 CTest 6/25 失败；
+  用旧 `build/`（mingw64）重放同一 case 通过，确认不是代码回归。
+  处置：干净 Ninja 构建显式锁编译器
+  `-DCMAKE_CXX_COMPILER=C:/msys64/mingw64/bin/g++.exe`（`_d_build`）；
+  第 24 项证据重新冻结并恢复严格逐字节重放；第 25 项因与
+  BridgeStudio 算例目录共享 FEM 证据，改用 `replay_tolerance.py`
+  结构化比较。`_c_build/` / `_d_build/` 已加入 `.gitignore`。
 - CMake 目标：`fem_2d`（静态库）+ `fem_3d`（INTERFACE，纯头文件）+ 各 `example_*` + `test_2d` / `test_3d`。可选依赖：CHOLMOD（`FEM_USE_CHOLMOD`）、AMGCL。
-- 生成器：`MinGW Makefiles`；CMake 4.x 独立安装，`mingw32-make` 可用 CodeBlocks 自带或 MSYS2 `make`。
+- 生成器：`MinGW Makefiles`；CMake 4.x 独立安装，`mingw32-make` 可用 CodeBlocks 自带或 MSYS2 `make`。**离线全量回归推荐 Ninja 干净构建**（旧 `build/` 增量依赖扫描曾多次卡住），命令见 `tests/benchmark/README.md`。
 
 ## 8. 提交规范
 
@@ -155,3 +187,17 @@ Newton-Raphson：`assembleState` 每步组装 `Fint/Fext` 与一致切线（轴�
 - 输入向后兼容：新增关键字/字段一律带缺省值，旧 `*.dat` 不修改仍可运行。
 - 6 自由度与 7 自由度并存：不强行把 `BEAM` 扩成 7 自由度，新增 `BEAM7` 类型由用户选择，老路径零风险。
 - 求解器边界：二维非线性/施工阶段逻辑复杂，保留独立求解器，只在单元/自由度/内力层统一。
+- **③a：按值传递的迭代函数必须回传"同源模型"**。`solveCompletionState3D()` /
+  `iterateCableUnstrainedLengths()` 按值接收 `Model3D`，内部会迭代改写索
+  `L0` 与制造线形；只回传位移 `u` 而让调用方继续用外部原模型装配
+  `F0` / `Fint(u0)`，会造成起点不同源（CB3D10 `RES0=3.1492e6 N`、
+  首步 λ 为负）。处置是三个结果结构统一增加 `Model3D basisModel`，
+  由 `cable_solver.cpp` 的 `useStabilityModel` 只在
+  `STABASIS=COMPLETION` opt-in 且 `MODE=TENSION/COMPLETION` 时切换，
+  并在 `formatCompletionStabilitySection()` 做自由度结构一致性检查
+  （不一致写 `ERROR=invalid_initial_state`）。**默认路径零改动**，
+  悬索桥找形与 `MODE=STATIC` 仍用主链路 `m`。
+- **③a：能力矩阵不得靠改文档提前打勾**。③a 只收口起点同源、
+  施工阶段段共存、真实桥梁越过极值点三处；分支屈曲 / 分支切换、
+  初始缺陷、材料非线性、动力 snap-through、施工阶段中间态全过程
+  稳定仍未闭环，B3 在 `能力边界矩阵.md` 中**仍 `P` 不 `Y`**。

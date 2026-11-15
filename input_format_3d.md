@@ -681,11 +681,29 @@ I STEP=1 LAMBDA=0.02 CTRL=-0.00098 RES=2.2e-09 ITER=2 DS=0.002 PIVOT=0.98 CONVER
 step1 `TIME=1` 建成桥态、step2 荷载控制主 job 用
 `λ=(TIME−1)·LAMMAX` 与 `ΔUZ=UZ−UZ_step1` 逐子步对拍，
 `ARCLEN` job 只作终点交叉验证。**不用反力求和**（完整斜拉桥上
-`ΣRF,FZ` 随加载反而下降）。`MODE=COMPLETION` 索长迭代改写 `L0`
-导致 `u0` 与 `m` 不同源（CB3D10 实测 `RES0=3.15 MN`），② 用
-`STATIC` 绕开、缺陷登记为独立后续项；该算例路径单调硬化无极限点，
-施工阶段链路 / 分支屈曲 / 初始缺陷 / 材料非线性仍未覆盖，
-能力矩阵该行继续标 `P` 不标 `Y`。
+`ΣRF,FZ` 随加载反而下降）。② 时 `MODE=COMPLETION` 索长迭代改写
+`L0` 导致 `u0` 与 `m` 不同源（CB3D10 实测 `RES0=3.15 MN`），
+故用 `STATIC` 绕开并把缺陷登记为独立后续项。
+**第十九次 ③a（2026-11-15）已实质修复该缺陷**：
+`fem_3d_nl.hpp` 的 `CableLengthResult3D` /
+`ErectionGeometryResult3D` / `CompletionStateResult3D` 增加
+`Model3D basisModel`，`cable_solver.cpp` 在
+`STABASIS=COMPLETION` 且 `MODE=TENSION/COMPLETION` 时把与 `u0`
+同源的最终模型交给 `[STABILITY]` 装配（`MODE=STATIC` 与悬索桥
+找形仍用主链路模型），并加自由度结构一致性检查，不一致写
+`ERROR=invalid_initial_state`。CB3D10 `RES0/|F0|` 从 `1.06`
+降到 `2.502e-9`、首步 λ 由负转正；`MODE=TENSION` 的
+`vshape_tension` 起点也从 `RES0=0.0151 N` 改进到 `2.84e-8 N`。
+第 24 项 CTest（`tests/benchmark/completion_basis_3d/`）冻结
+4 个 case、110 项检查。③a 另在 CB3D13 上核对
+`[STABILITY]` 与 5 个 `[ERECTION*]` 段**并列输出、互不污染**
+（起点仍是成桥态，不是施工阶段中间态），并新增第 25 项 CTest
+（`tests/benchmark/bridge_limit_point_3d/`）：真实斜拉桥
+**越过极值点 / 下降段** FEM 球面弧长 vs ANSYS 两段 `ARCLEN`
+（CB3D22，FEM `λ_max=1.624941`、下降段 207 步；
+ANSYS `λ_max=1.622748`，两 job 0 error）。
+施工阶段中间态稳定 / 分支屈曲 / 初始缺陷 / 材料非线性
+仍未覆盖，能力矩阵该行继续标 `P` 不标 `Y`。
 
 ### 带约束成桥目标索力优化过程量（`[OPT]`）
 

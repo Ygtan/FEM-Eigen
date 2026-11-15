@@ -1426,6 +1426,11 @@ struct CableLengthResult3D {
     std::vector<double> u;           // 成桥态位移；其反号 = 需要的预抬高量
     IterationTrace3D trace;          // 逐轮过程留痕（只记录，不参与计算）
     NewtonTrace3D lastNewton;        // 收敛那一轮的内层 Newton 过程（透传给 CLI）
+    // 第十九次 ③：本函数按值接收 Model3D，内部会迭代改写索的 L0。
+    // 返回的 u 是相对**这个内部模型**的位移，调用方若拿外部原模型去算
+    // Fint(u) / 切线刚度就会不同源（实测 CB3D10 起点 RES0=3.15 MN）。
+    // 这里把最终模型一并回传，供 STABASIS=COMPLETION 做同源成桥态基准。
+    Model3D basisModel;
 };
 
 inline CableLengthResult3D iterateCableUnstrainedLengths(
@@ -1590,6 +1595,7 @@ inline CableLengthResult3D iterateCableUnstrainedLengths(
         for (const auto& e : m.elements)
             if (e.id == t.elem) { out.L0.push_back(e.L0); break; }
     }
+    out.basisModel = m;   // 与 out.u / out.L0 同源（含迭代收敛后的 L0）
     return out;
 }
 
@@ -2030,6 +2036,10 @@ struct ErectionGeometryResult3D {
     double maxClosureErr = 0.0;
     IterationTrace3D trace;          // 逐轮过程留痕（只记录，不参与计算）
     NewtonTrace3D lastNewton;        // 最后一次 evalGeom 的内层 Newton 过程
+    // 第十九次 ③：几何闭合把参考构形改成了制造线形 X0+ΔX，out.u 是相对
+    // 该构形的位移。回传最终模型（节点=制造线形、索 L0=下料长度），
+    // 使成桥态稳定路径的 F0 / Fint(u0) / 切线刚度与 u0 严格同源。
+    Model3D basisModel;
 };
 
 inline ErectionGeometryResult3D iterateErectionGeometry(Model3D m,
@@ -2290,6 +2300,7 @@ inline ErectionGeometryResult3D iterateErectionGeometry(Model3D m,
 
     out.camber = dX;
     out.erected = m.nodes;
+    out.basisModel = m;   // 节点 = 制造线形，L0 = 下料长度；与 out.u 同源
     return out;
 }
 
@@ -2333,6 +2344,10 @@ struct CompletionStateResult3D {
     double maxTensionErr = 0.0;
     IterationTrace3D trace;          // 透传制造线形几何闭合的逐轮过程
     NewtonTrace3D lastNewton;        // 透传收敛轮的内层 Newton 过程
+    // 第十九次 ③：与 out.u 同源的最终模型（制造线形 + 下料 L0）。
+    // solveCompletionState3D 按值接收 Model3D，调用方手里的模型仍是
+    // 设计线形 + .dat 原始 L0，不能直接拿来算成桥态起点的内力。
+    Model3D basisModel;
 };
 
 inline CompletionStateResult3D solveCompletionState3D(Model3D m,
@@ -2420,6 +2435,7 @@ inline CompletionStateResult3D solveCompletionState3D(Model3D m,
         out.maxTensionErr = std::max(out.maxTensionErr,
                                      std::abs(eg.tension[k] - Tst[k]) / Tst[k]);
     }
+    out.basisModel = eg.basisModel;   // 与 out.u 同源（制造线形 + 最终 L0）
     return out;
 }
 

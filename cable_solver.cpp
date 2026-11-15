@@ -487,11 +487,18 @@ int runStabilityMode(const std::string& dat, const Model3D& m,
 
 // ---- 第十九次 ①：成桥态起点的全过程稳定（STABASIS=COMPLETION）---------
 // 只在完整跑完找形 / 索长迭代 / 内层 Newton 之后调用；u0 是那次收敛的
-// 位移向量，m 是最终模型（含迭代定出的 L0）。恒定荷载 F0 与
-// fem_3d_nl.hpp::solveModel3DNonlinear 的 Fext **逐项同源**（节点荷载 +
-// 弹性支承 k·value + CABLE 自重两端各半），因此 Fint(u0) ≈ F0；
-// 增量荷载 Finc 只来自 *STABILITY_LOAD，不进 m.loads。两者分列，
-// 不合并成「一个 λ 放大全部荷载」。
+// 位移向量，m **必须是与 u0 同源的基准模型**（第十九次 ③ 修复）：
+//   · MODE=STATIC / 悬索桥找形：主链路的 m 就是求解时那份，直接用；
+//   · MODE=TENSION：iterateCableUnstrainedLengths 按值收模型并改写索 L0，
+//     必须用 CableLengthResult3D::basisModel；
+//   · MODE=COMPLETION：solveCompletionState3D 还会把参考构形改成制造线形
+//     X0+ΔX，必须用 CompletionStateResult3D::basisModel。
+// 用错模型时 u0 被叠到不同的参考构形上，Fint(u0) 与 F0 差一个恒载量级
+// （CB3D10 实测 RES0=3.15 MN、路径首步 λ 变负），属 ② 登记的缺陷。
+// 恒定荷载 F0 与 fem_3d_nl.hpp::solveModel3DNonlinear 的 Fext **逐项同源**
+// （节点荷载 + 弹性支承 k·value + CABLE 自重两端各半，自重用基准模型的
+// L0），因此 Fint(u0) ≈ F0；增量荷载 Finc 只来自 *STABILITY_LOAD，
+// 不进 m.loads。两者分列，不合并成「一个 λ 放大全部荷载」。
 std::string formatCompletionStabilitySection(
     const Model3D& m, const std::vector<double>& u0,
     const StabilityCfg& sc, bool completionConverged,
@@ -504,6 +511,10 @@ std::string formatCompletionStabilitySection(
         return stabilityErrorSection3D(hdr, "unsupported_path_method", basis);
     const int nd = dm.nDofs;
     if (static_cast<int>(u0.size()) != nd)
+        return stabilityErrorSection3D(hdr, "invalid_initial_state", basis);
+    // 第十九次 ③：基准模型自由度结构必须与主链路一致，否则 u0 的自由度
+    // 索引、F0 装配与 Fint(u0) 全部错位。不静默兜底，写已有错误段。
+    if (buildDofMap3D(m).nDofs != nd)
         return stabilityErrorSection3D(hdr, "invalid_initial_state", basis);
 
     std::vector<double> F0(static_cast<std::size_t>(nd), 0.0);
@@ -1296,6 +1307,13 @@ int main(int argc, char** argv) {
         double closureErr = 0.0, tensionErr = 0.0, elapsed = 0.0;
         std::vector<double> T(nc, 0.0), L0(nc, 0.0), chord(nc, 0.0), Ltar(nc, 0.0);
         std::vector<double> u;
+        // 第十九次 ③：成桥态稳定路径的**同源基准模型**。MODE=TENSION /
+        // COMPLETION 的求解器按值收模型并在内部改写 L0 / 参考构形，
+        // 回传的 basisModel 才与 u 同源；MODE=STATIC 与悬索桥找形的
+        // 主链路 m 本身就是求解时那份，不替换（默认路径零改动）。
+        // 只在 STABASIS=COMPLETION（opt-in）时使用，不影响其它输出。
+        Model3D stabilityModel;
+        bool useStabilityModel = false;
         std::map<int, Vec3> erected;
         std::vector<double> camber;
         std::string method = "given";
@@ -1457,6 +1475,11 @@ int main(int argc, char** argv) {
             u = r.u;
             tensionErr = r.maxTensionErr;
             closureErr = r.maxGeomErr;
+            // 索长迭代收敛后的 L0 只在 r.basisModel 里；u 也相对它求得。
+            if (completionBasis) {
+                stabilityModel = r.basisModel;
+                useStabilityModel = true;
+            }
             method = optApplied ? "ConstrainedOpt" : "target";
         } else if (cfg.mode == "COMPLETION") {
             std::vector<CompletionCable3D> cc;
@@ -1499,6 +1522,13 @@ int main(int argc, char** argv) {
             camber = r.camber;
             closureErr = r.maxClosureErr;
             tensionErr = r.maxTensionErr;
+            // ② 登记的缺陷在这里收口：solveCompletionState3D 把参考构形
+            // 改成制造线形 X0+ΔX、把 L0 改成下料长度，u0 相对的是那份模型。
+            // 用 r.basisModel 才能让 F0 / Fint(u0) / 切线刚度三者同源。
+            if (completionBasis) {
+                stabilityModel = r.basisModel;
+                useStabilityModel = true;
+            }
             method = optApplied ? "ConstrainedOpt"
                                 : (allAuto ? (cfg.minEnergy ? "MinBendingEnergy"
                                                             : "RigidSupport")
@@ -2127,12 +2157,15 @@ int main(int argc, char** argv) {
                 "[NEWTON]", "no_newton_solution").c_str(), f);
         // ---- 第十九次 ①：成桥态起点的全过程稳定（opt-in）--------------
         // 必须在 [NEWTON] / [LENGTH] / [BUCKLING] 之后、[END] 之前：
-        // 此时 m 是最终模型（L0 已由索长迭代定出）、u 是成桥态收敛位移、
-        // converged 是闭环收敛标志。STABILITY=0 或 STABASIS=REFERENCE
-        // 时整段不写，既有结果文件逐位不变。
+        // u 是成桥态收敛位移、converged 是闭环收敛标志。第十九次 ③ 起，
+        // 传给段的模型是**与 u 同源的基准模型**：TENSION / COMPLETION
+        // 用 stabilityModel（含最终 L0、COMPLETION 还含制造线形），
+        // STATIC / 悬索桥找形用主链路 m。STABILITY=0 或
+        // STABASIS=REFERENCE 时整段不写，既有结果文件逐位不变。
         if (completionBasis)
             std::fputs(formatCompletionStabilitySection(
-                m, u, cfg.stability, converged, dm).c_str(), f);
+                useStabilityModel ? stabilityModel : m,
+                u, cfg.stability, converged, dm).c_str(), f);
         std::fprintf(f, "[END]\n");
         std::fclose(f);
 
