@@ -492,5 +492,30 @@ if (Test-Path $fpScript) {
     $failed++
 }
 
+# ---- 成桥态起点全过程稳定（CB3D20 / 第十九次 ①）------------------------
+$csScript = Join-Path $root "tests\benchmark\completion_stability_3d\compare_completion_stability_3d.py"
+$csCases  = Join-Path $root "tests\benchmark\completion_stability_3d\cases"
+$csRef    = Join-Path $root "tests\benchmark\completion_stability_3d\reference"
+if (Test-Path $csScript) {
+    $py = Get-Command python -ErrorAction SilentlyContinue
+    if ($py) {
+        Write-Host ""
+        Write-Host "== Completion-state arc-length stability benchmark (FEM self-consistency + closed-form oracle) =="
+        & python $csScript --bin $bin --cases $csCases --reference $csRef
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[PASS] Completion-state stability benchmark"
+        } else {
+            Write-Host "[FAIL] Completion-state stability benchmark"
+            $failed++
+        }
+    } else {
+        Write-Host "[MISS] python not found, skip completion-state stability benchmark"
+        $failed++
+    }
+} else {
+    Write-Host "[MISS] completion-state stability benchmark script missing: $csScript"
+    $failed++
+}
+
 if ($failed -eq 0) { Write-Host "ALL TESTS PASSED" } else { Write-Host "$failed TEST(S) FAILED"; exit 1 }
 

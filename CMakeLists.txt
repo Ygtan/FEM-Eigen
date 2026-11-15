@@ -357,6 +357,21 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(frame_postbuckling_3d_benchmark PROPERTIES
         TIMEOUT 900
         LABELS "benchmark")
+
+    # 成桥态起点全过程稳定（CB3D20 / 第十九次 ①）：STABASIS=COMPLETION
+    # 把弧长路径起点换成成桥态收敛位移 u0 + 恒定荷载 F0，
+    # R = F0 + lambda*Finc - Fint(u)。V 形双索单自由度体系的不读求解器
+    # 闭式 lambda(v) 逐点对拍 MODE=STATIC / TENSION 两条成桥态闭环，
+    # 2963 项冻结黄金值 + 默认零污染 + 4 类 ERROR 负例。不跑 ANSYS。
+    add_test(NAME completion_stability_3d_benchmark
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/completion_stability_3d/compare_completion_stability_3d.py
+                     --bin ${CMAKE_CURRENT_BINARY_DIR}
+                     --cases ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/completion_stability_3d/cases
+                     --reference ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/completion_stability_3d/reference)
+    set_tests_properties(completion_stability_3d_benchmark PROPERTIES
+        TIMEOUT 900
+        LABELS "benchmark")
 else()
     message(STATUS "未找到 Python3，跳过 .dat 逐字节回归 CTest")
 endif()

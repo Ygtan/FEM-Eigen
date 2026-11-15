@@ -98,6 +98,8 @@
 //     [BUCKLING] ...                   本内核只写 ERROR=nonlinear_state_not_supported
 //     [LENGTH] KIND/STATUS/…/I/E/J     索长迭代 / 几何闭合逐轮过程
 //               （cable_length_output_3d.hpp；无外层迭代时写 ERROR 段）
+//     [STABILITY] ...                  STABASIS=COMPLETION 时：BASIS=completion_state
+//               （第十九次 ①；默认全关，REFERENCE 基准走独立 _stability.txt）
 //     [END]
 //
 // 编译：随 CMake 一起（目标 cable_solver）。
@@ -114,11 +116,13 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <set>
 #include <sstream>
 #include <string>
+#include <tuple>
 #include <vector>
 
 using namespace fem;
@@ -234,6 +238,11 @@ struct CableReq {
 // （那是成桥态几何闭合容差与外层迭代上限），避免悄悄改掉既有算例默认值。
 struct StabilityCfg {
     bool enabled = false;
+    // 第十九次 ①：REFERENCE = 参考构形（第十七次口径，直接 return 到
+    // 独立 _stability.txt）；COMPLETION = 先走完成桥态闭环，再把
+    // [STABILITY] BASIS=completion_state 挂在主链路结果文件 [END] 前。
+    // 默认 REFERENCE，保证既有 STABILITY=1 输出逐位不变。
+    std::string basis = "REFERENCE";
     std::string pathMethod = "SPHERE";
     int ctrlNode = 0;          // 0 = 未给，内核回 invalid_control_dof
     int ctrlDof = 2;
@@ -242,6 +251,9 @@ struct StabilityCfg {
     double stabTol = 1.0e-7;
     int maxPathStep = 400, stabIter = 30;
     int strain = 0;            // 0=工程应变 1=对数应变
+    // *STABILITY_LOAD 的增量荷载（node dof value）。**不进 m.loads**：
+    // readModel3D 会静默忽略本段，成桥态恒载 F0 因此不被增量荷载污染。
+    std::vector<std::tuple<int, int, double>> incLoads;
 };
 
 struct Cfg {
@@ -350,6 +362,7 @@ Cfg readCfg(const std::string& path) {
                 else if (key == "STABITER") c.stability.stabIter = std::max(1, std::stoi(val));
                 else if (key == "STABTOL") c.stability.stabTol = std::stod(val);
                 else if (key == "STRAIN") c.stability.strain = std::stoi(val);
+                else if (key == "STABASIS") c.stability.basis = upper(val);
                 else std::fprintf(stderr, "[警告] *CABLE_BRIDGE 未知关键字: %s\n", kv.c_str());
             }
         } else if (sec == "CABLE") {
@@ -359,6 +372,15 @@ Cfg readCfg(const std::string& path) {
                 ss >> r.tension;          // 可缺省
                 c.cables.push_back(r);
             }
+        } else if (sec == "STABILITY_LOAD") {
+            // 第十九次 ①：增量参考荷载 Finc。**不进 m.loads** ——
+            // readModel3D 静默忽略本段，成桥态恒载 F0 因此不被污染。
+            // 格式与 *CLOAD 一致：<node> <dof> <value>，重复 (node,dof) 累加。
+            std::istringstream ss(line);
+            int nd = 0, dof = 0;
+            double val = 0.0;
+            if (ss >> nd >> dof >> val)
+                c.stability.incLoads.emplace_back(nd, dof, val);
         } else if (sec == "SUSP_BRIDGE") {
             std::istringstream ss(line);
             std::string kv;
@@ -418,7 +440,11 @@ int runStabilityMode(const std::string& dat, const Model3D& m,
 
     std::string section;
     bool converged = false;
-    if (sc.pathMethod != "SPHERE") {
+    if (sc.basis != "REFERENCE" && sc.basis != "COMPLETION") {
+        // 第十九次 ①：不静默把未知基准降级成参考构形。
+        section = stabilityErrorSection3D("[STABILITY]",
+            "unsupported_stability_basis", "unknown");
+    } else if (sc.pathMethod != "SPHERE") {
         section = stabilityErrorSection3D("[STABILITY]", "unsupported_path_method");
     } else {
         ArcLengthOptions3D opt;
@@ -457,6 +483,94 @@ int runStabilityMode(const std::string& dat, const Model3D& m,
                 "结果: %s\n", sc.pathMethod.c_str(), converged ? 1 : 0,
                 outPath.c_str());
     return converged ? 0 : 3;
+}
+
+// ---- 第十九次 ①：成桥态起点的全过程稳定（STABASIS=COMPLETION）---------
+// 只在完整跑完找形 / 索长迭代 / 内层 Newton 之后调用；u0 是那次收敛的
+// 位移向量，m 是最终模型（含迭代定出的 L0）。恒定荷载 F0 与
+// fem_3d_nl.hpp::solveModel3DNonlinear 的 Fext **逐项同源**（节点荷载 +
+// 弹性支承 k·value + CABLE 自重两端各半），因此 Fint(u0) ≈ F0；
+// 增量荷载 Finc 只来自 *STABILITY_LOAD，不进 m.loads。两者分列，
+// 不合并成「一个 λ 放大全部荷载」。
+std::string formatCompletionStabilitySection(
+    const Model3D& m, const std::vector<double>& u0,
+    const StabilityCfg& sc, bool completionConverged,
+    const DofMap3D& dm) {
+    const std::string hdr = "[STABILITY]";
+    const std::string basis = "completion_state";
+    if (!completionConverged)
+        return stabilityErrorSection3D(hdr, "completion_not_converged", basis);
+    if (sc.pathMethod != "SPHERE")
+        return stabilityErrorSection3D(hdr, "unsupported_path_method", basis);
+    const int nd = dm.nDofs;
+    if (static_cast<int>(u0.size()) != nd)
+        return stabilityErrorSection3D(hdr, "invalid_initial_state", basis);
+
+    std::vector<double> F0(static_cast<std::size_t>(nd), 0.0);
+    std::vector<double> Finc(static_cast<std::size_t>(nd), 0.0);
+    for (const auto& [node, dof, val] : m.loads) {
+        const int d = dm.safeDof(node, dof - 1);
+        if (d >= 0) F0[static_cast<std::size_t>(d)] += val;
+    }
+    for (const auto& c : m.constraints) {
+        if (c.k <= 0.0) continue;
+        const int d = dm.safeDof(c.node, c.dof - 1);
+        if (d >= 0) F0[static_cast<std::size_t>(d)] += c.k * c.value;
+    }
+    for (const auto& e : m.elements) {
+        if (e.type != "CABLE" || e.w <= 0.0) continue;
+        const double Lc = (e.L0 > 0.0) ? e.L0
+                                       : (m.nodes.at(e.n2) - m.nodes.at(e.n1)).norm();
+        const double half = -0.5 * e.w * Lc;
+        const int d1 = dm.safeDof(e.n1, 2), d2 = dm.safeDof(e.n2, 2);
+        if (d1 >= 0) F0[static_cast<std::size_t>(d1)] += half;
+        if (d2 >= 0) F0[static_cast<std::size_t>(d2)] += half;
+    }
+    for (const auto& [node, dof, val] : sc.incLoads) {
+        const int d = dm.safeDof(node, dof - 1);
+        if (d >= 0) Finc[static_cast<std::size_t>(d)] += val;
+    }
+    double f0n = 0.0, fincn = 0.0;
+    for (double x : F0) f0n += x * x;
+    for (double x : Finc) fincn += x * x;
+    f0n = std::sqrt(f0n);
+    fincn = std::sqrt(fincn);
+    if (fincn <= 0.0)
+        return stabilityErrorSection3D(hdr, "zero_incremental_load", basis);
+
+    ArcLengthOptions3D opt;
+    opt.ds0 = sc.ds0;
+    opt.dsMin = sc.dsMin;
+    opt.dsMax = sc.dsMax;
+    opt.psi = sc.psi;
+    opt.tolForce = sc.stabTol;
+    opt.maxSteps = sc.maxPathStep;
+    opt.maxIter = sc.stabIter;
+    opt.ctrlNode = sc.ctrlNode;
+    opt.ctrlDof = sc.ctrlDof;
+    opt.ctrlTarget = sc.ctrlTarget;
+    opt.strainMeasure = sc.strain;
+    ArcLengthState3D st;
+    st.u0 = u0;
+    st.F0 = F0;
+    st.Finc = Finc;
+    try {
+        const ArcLengthResult3D r = solveArcLengthPath3D(m, opt, st);
+        if (r.points.empty() || r.steps <= 0)
+            return stabilityErrorSection3D(hdr,
+                r.error.empty() ? "no_equilibrium_point" : r.error, basis);
+        StabilityStateHeader3D sh;
+        sh.hasState = true;
+        const int ctrl = dm.safeDof(opt.ctrlNode, opt.ctrlDof - 1);
+        sh.ctrl0 = (ctrl >= 0 && ctrl < static_cast<int>(u0.size()))
+                 ? u0[static_cast<std::size_t>(ctrl)] : 0.0;
+        sh.f0Norm = f0n;
+        sh.fincNorm = fincn;
+        return formatStabilitySection3D(r, opt, hdr, basis, sh);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[STABILITY] 成桥态路径求解异常: %s\n", e.what());
+        return stabilityErrorSection3D(hdr, "solver_exception", basis);
+    }
 }
 
 const Element3D* findElem(const Model3D& m, int id) {
@@ -1023,11 +1137,22 @@ int main(int argc, char** argv) {
         Model3D m = readModel3D(dat);          // 参考构形（只读副本，后续传值）
 
         // ---- B3：STABILITY=1 独立 opt-in 模式（默认全关）----------------
-        // 在参考构形上做球面弧长法全过程跟踪，与索承体系成桥态闭环完全
-        // 解耦：不要求 CABLE、不做找形 / 索长迭代 / [OPT]。STABILITY=0 时
-        // 下面这行不执行，既有路径与全部结果文件逐位不变。
-        if (cfg.stability.enabled)
-            return runStabilityMode(dat, m, cfg.stability);
+        // STABASIS=REFERENCE（默认，第十七次口径）：在参考构形上做球面
+        // 弧长法全过程跟踪，与成桥态闭环完全解耦，直接 return 到独立的
+        // <stem>_stability.txt。STABASIS=COMPLETION（第十九次 ①）：**不
+        // 提前 return**，继续走完找形 / 索长迭代 / 内层 Newton，拿到成桥态
+        // 收敛位移 u0 后再在 [END] 前挂 [STABILITY] BASIS=completion_state。
+        // STABILITY=0 时整段不执行，既有路径与全部结果文件逐位不变。
+        const bool completionBasis = cfg.stability.enabled
+                                  && cfg.stability.basis == "COMPLETION";
+        if (cfg.stability.enabled) {
+            if (completionBasis) {
+                // 落到下方主链路；段在结果文件 [END] 前由
+                // formatCompletionStabilitySection() 写出。
+            } else {
+                return runStabilityMode(dat, m, cfg.stability);
+            }
+        }
 
         // ---- 悬索桥：先找形，再走成桥态闭环 ----
         // 找形会改写 m.nodes 的主缆高程（设计线形 = 恒载索形），这是悬索桥
@@ -2000,6 +2125,14 @@ int main(int argc, char** argv) {
         else
             std::fputs(newtonErrorSection3D(
                 "[NEWTON]", "no_newton_solution").c_str(), f);
+        // ---- 第十九次 ①：成桥态起点的全过程稳定（opt-in）--------------
+        // 必须在 [NEWTON] / [LENGTH] / [BUCKLING] 之后、[END] 之前：
+        // 此时 m 是最终模型（L0 已由索长迭代定出）、u 是成桥态收敛位移、
+        // converged 是闭环收敛标志。STABILITY=0 或 STABASIS=REFERENCE
+        // 时整段不写，既有结果文件逐位不变。
+        if (completionBasis)
+            std::fputs(formatCompletionStabilitySection(
+                m, u, cfg.stability, converged, dm).c_str(), f);
         std::fprintf(f, "[END]\n");
         std::fclose(f);
 

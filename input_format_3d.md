@@ -622,6 +622,59 @@ I STEP=1 LAMBDA=0.0031 CTRL=-0.0029 RES=4.2e-09 ITER=3 DS=0.01 PIVOT=0.98 CONVER
   `BASIS=reference_configuration` 明示路径基于参考构形，不等于成桥态
   闭环已具备全过程稳定分析。
 
+#### 第十九次 ①：成桥态起点基准（`STABASIS=COMPLETION`）
+
+新增第 14 个键 `STABASIS`，默认 `REFERENCE`（**上节口径逐位不变**）：
+
+| 键 / 段 | 默认 | 含义 |
+| --- | --- | --- |
+| `STABASIS` | `REFERENCE` | `REFERENCE` = 参考构形基准（上节）；`COMPLETION` = 成桥态起点基准；其它值写 `ERROR=unsupported_stability_basis`，不静默降级 |
+| `*STABILITY_LOAD` | 空 | 增量参考荷载 `Finc`，格式与 `*CLOAD` 一致：`<node> <dof> <value>`，重复 `(node,dof)` 累加。**不进 `m.loads`**（`readModel3D` 静默忽略本段），成桥态恒载 `F0` 因此不被污染 |
+
+`STABASIS=COMPLETION` 时 `cable_solver.exe` **不提前 return**：先完整走完
+找形 / 索长迭代 / 内层 Newton，拿到成桥态收敛位移 `u0` 与最终模型 `m`
+（含迭代定出的 `L0`），再在**主链路**结果文件 `[END]` 前写
+`[STABILITY] BASIS=completion_state`。平衡方程推广为
+
+```text
+R(u,λ) = F0 + λ·Finc − Fint(u) = 0,   u(0) = u0
+duᵀdu + ψ²dλ² = ds²                （弧长约束仍对 du，未改）
+```
+
+`F0` 与 `fem_3d_nl.hpp::solveModel3DNonlinear` 的 `Fext` **逐项同源**
+（节点荷载 + 弹性支承 `k·value` + `CABLE` 自重两端各半），故
+`Fint(u0) ≈ F0`；`Finc` 只来自 `*STABILITY_LOAD`。段内 `CTRL` 一律是
+**相对起点的控制位移增量**（参考构形起点为 0，与既有输出逐位一致），
+`CTRLTARGET` 也按增量判定，避免成桥态已有位移让第一步就误终止。
+
+```text
+[STABILITY]
+KIND=spherical_arc_length STATUS=ok BASIS=completion_state PATHMETHOD=SPHERE
+NSTEP=412 NPOINT=413 CONVERGED=1 CTRLNODE=2 CTRLDOF=2 STRAIN=0 PSI=1
+STATE CTRL0=-0.1 F0_NORM=2760825.56 FINC_NORM=500000 RES0=3.1e-09
+LAMBDA_FINAL=1.84 ERROR=none
+I STEP=0 LAMBDA=0 CTRL=0 RES=3.1e-09 ITER=0 DS=0.002 PIVOT=1 CONVERGED=1
+I STEP=1 LAMBDA=0.02 CTRL=-0.00098 RES=2.2e-09 ITER=2 DS=0.002 PIVOT=0.98 CONVERGED=1
+```
+
+`STATE` 行只在 `completion_state` 基准出现：`CTRL0 = u0(ctrl)` 用于与
+`[U]` 段自洽对拍，`F0_NORM` / `FINC_NORM` 是两份荷载的范数，
+`RES0 = |F0 − Fint(u0)|` 是**起点闭合残差**（不是补 0 的占位）。
+新增 4 类 `ERROR=` 码：`zero_incremental_load`（`*STABILITY_LOAD` 为空
+或全 0）、`unsupported_stability_basis`、`completion_not_converged`
+（成桥态闭环未收敛，不拿未收敛位移当起点）、`invalid_initial_state`
+（`u0` / `F0` / `Finc` 长度与自由度数不符）。
+
+**两种 λ 不是同一个量**：`BASIS=reference_configuration` 的 λ 放大
+**总参考荷载**、`u(0)=0`；`BASIS=completion_state` 的 λ 只放大
+**增量荷载**、`u(0)=u0` 且 `F0` 不随 λ 缩放。报告与计算书必须分列，
+不得互相冒充。ANSYS 对标必须是「先建成桥态、再在成桥态上做 `ARCLEN`」
+的两段口径，单段 `ARCLEN` 只对应参考构形基准。第 22 项 CTest
+（`tests/benchmark/completion_stability_3d/`）用 V 形双索单自由度体系的
+独立闭式 `λ(v)=[P(v)−F0]/Pinc` 逐点对拍 `MODE=STATIC` / `MODE=TENSION`
+两种成桥态闭环；真实桥梁算例的 ANSYS 两段对标仍属后续阶段，
+能力矩阵该行继续标 `P` 不标 `Y`。
+
 ### 带约束成桥目标索力优化过程量（`[OPT]`）
 
 段格式与口径定义在 `cable_opt_3d.hpp`。`OPTIMIZE=1` 时内核先解一个带箱

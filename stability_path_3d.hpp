@@ -1,16 +1,23 @@
 // stability_path_3d.hpp — 三维共转结构的球面弧长法平衡路径跟踪
 //
 // 独立 opt-in 能力，不改 fem_3d_nl.hpp::solveModel3DNonlinear（仍是荷载
-// 控制 Newton）、不改 NonlinearOptions3D 默认值、不接入 cable_solver.cpp
-// 主链路。因此 B 类规格里「主链路尚未接入非线性稳定全过程」的如实边界
-// 仍然成立；本文件只服务于独立的科研级对标探针 snap_probe.cpp。
+// 控制 Newton）、不改 NonlinearOptions3D 默认值。第十七次起以
+// `STABILITY=1` 接入 cable_solver.exe 的**参考构形**独立模式；第十九次 ①
+// 起另以 `STABASIS=COMPLETION` 接入**成桥态起点**模式（见下方
+// ArcLengthState3D）。两种基准都是 opt-in，默认全关、默认行为逐位不变。
 //
 // 力学口径：完全复用 fem_3d_nl.hpp 的 CR 单元内力与解析一致切线
 // （crMakeElemData / crElementInternal），支持 TRUSS / CABLE / BEAM /
 // BEAM7。唯一新增的是把荷载因子 lambda 当作未知量的增广系统：
 //
-//     R(u,lam) = lam * Fref - Fint(u) = 0                    (nd 个方程)
-//     du^T du + psi^2 * dlam^2 = ds^2                        (Crisfield 球面约束)
+//     参考构形基准：R(u,lam) = lam * Fref - Fint(u) = 0,   u(0) = 0
+//     成桥态基准：  R(u,lam) = F0 + lam * Finc - Fint(u) = 0, u(0) = u0
+//     du^T du + psi^2 * dlam^2 = ds^2         (Crisfield 球面约束，恒对 du)
+//
+// 成桥态基准里 F0 是**不随 λ 缩放**的恒定荷载（成桥态恒载 + 弹性支承
+// 预置 + 索自重），Finc 是 `*STABILITY_LOAD` 给出的增量荷载；两者必须
+// 分列，不能合并成「一个 λ 放大全部荷载」。λ 也因此只放大增量荷载，
+// 与参考构形基准的 λ（总参考荷载放大倍数）**不是同一个量**。
 //
 // 每个校正迭代解两次线性系统（同一次 LU 分解、两个右端项）：
 //     K * duR = R ,   K * duF = Fref ,   du = duR + dlam * duF
@@ -51,6 +58,17 @@ struct ArcLengthOptions3D {
     int strainMeasure = 0;
 };
 
+// ---- 第十九次 ①：成桥态起点的初态 ------------------------------------
+// 三个向量都按 buildDofMap3D(m) 的自由度序排列；**全空** = 参考构形基准，
+// 与第十七 / 十八次逐位一致（这是第 19/20/21 项 CTest 不漂移的保证）。
+// 只要给了一个，三个都必须给齐且长度等于 nd，否则返回
+// invalid_initial_state，绝不静默截断或补 0。
+struct ArcLengthState3D {
+    std::vector<double> u0;    // 成桥态收敛位移（路径起点）
+    std::vector<double> F0;    // 恒定荷载，不随 λ 缩放
+    std::vector<double> Finc;  // 增量参考荷载，λ 只放大这一份
+};
+
 struct ArcLengthPoint3D {
     int step = 0;
     double lambda = 0.0;
@@ -69,10 +87,12 @@ struct ArcLengthResult3D {
     std::vector<double> u;                    // 终点位移向量
     std::vector<ArcLengthPoint3D> points;    // 逐平衡点路径
     std::string error;                       // 失败原因（空 = 正常）
+    double res0 = 0.0;   // 第十九次 ①：起点闭合残差 |F0 − Fint(u0)|（自由 dof）
 };
 
 inline ArcLengthResult3D solveArcLengthPath3D(const Model3D& m,
-                                              const ArcLengthOptions3D& opt = {}) {
+                                              const ArcLengthOptions3D& opt = {},
+                                              const ArcLengthState3D& st = {}) {
     ArcLengthResult3D out;
     const DofMap3D dm = buildDofMap3D(m);
     const int nd = dm.nDofs;
@@ -104,22 +124,41 @@ inline ArcLengthResult3D solveArcLengthPath3D(const Model3D& m,
         else cvals[std::distance(cdofs.begin(), it)] = c.value;
     }
 
-    // ---- 参考外荷载向量 Fref ----
+    // ---- 参考外荷载向量 Fref -------------------------------------------
+    // 默认（st 全空）：与 fem_3d_nl.hpp::solveModel3DNonlinear 的 Fext
+    // 逐项同源 —— 节点荷载 + 弹性支承预置 + CABLE 自重两端各半。
+    // 成桥态基准：F0 走 st.F0、Finc 走 st.Finc，二者由调用方按同一口径
+    // 装配；F0 不随 λ 缩放，λ 只放大 Finc。
+    const bool hasState = !st.u0.empty() || !st.F0.empty() || !st.Finc.empty();
+    if (hasState &&
+        (static_cast<int>(st.u0.size()) != nd ||
+         static_cast<int>(st.F0.size()) != nd ||
+         static_cast<int>(st.Finc.size()) != nd)) {
+        out.error = "invalid_initial_state";
+        return out;
+    }
     Eigen::VectorXd Fref = Eigen::VectorXd::Zero(nd);
-    for (const auto& ld : m.loads) {
-        const int d = dm.safeDof(std::get<0>(ld), std::get<1>(ld) - 1);
-        if (d >= 0) Fref(d) += std::get<2>(ld);
+    if (!st.Finc.empty()) {
+        for (int i = 0; i < nd; ++i) Fref(i) = st.Finc[static_cast<std::size_t>(i)];
+    } else {
+        for (const auto& ld : m.loads) {
+            const int d = dm.safeDof(std::get<0>(ld), std::get<1>(ld) - 1);
+            if (d >= 0) Fref(d) += std::get<2>(ld);
+        }
+        for (const auto& s : springs) Fref(s.dof) += s.k * s.val;
+        for (const auto& e : m.elements) {
+            if (e.type != "CABLE" || e.w <= 0.0) continue;
+            const double Lc = (e.L0 > 0.0) ? e.L0
+                                           : (m.nodes.at(e.n2) - m.nodes.at(e.n1)).norm();
+            const double half = -0.5 * e.w * Lc;
+            const int d1 = dm.safeDof(e.n1, 2), d2 = dm.safeDof(e.n2, 2);
+            if (d1 >= 0) Fref(d1) += half;
+            if (d2 >= 0) Fref(d2) += half;
+        }
     }
-    for (const auto& s : springs) Fref(s.dof) += s.k * s.val;
-    for (const auto& e : m.elements) {
-        if (e.type != "CABLE" || e.w <= 0.0) continue;
-        const double Lc = (e.L0 > 0.0) ? e.L0
-                                       : (m.nodes.at(e.n2) - m.nodes.at(e.n1)).norm();
-        const double half = -0.5 * e.w * Lc;
-        const int d1 = dm.safeDof(e.n1, 2), d2 = dm.safeDof(e.n2, 2);
-        if (d1 >= 0) Fref(d1) += half;
-        if (d2 >= 0) Fref(d2) += half;
-    }
+    Eigen::VectorXd F0 = Eigen::VectorXd::Zero(nd);
+    if (!st.F0.empty())
+        for (int i = 0; i < nd; ++i) F0(i) = st.F0[static_cast<std::size_t>(i)];
     const double Fnorm = Fref.norm();
     if (Fnorm <= 0.0) {
         out.error = "zero_reference_load";
@@ -139,6 +178,8 @@ inline ArcLengthResult3D solveArcLengthPath3D(const Model3D& m,
     for (int d : cdofs) FrefD(d) = 0.0;
 
     Eigen::VectorXd u = Eigen::VectorXd::Zero(nd);
+    if (!st.u0.empty())
+        for (int i = 0; i < nd; ++i) u(i) = st.u0[static_cast<std::size_t>(i)];
     for (std::size_t i = 0; i < cdofs.size(); ++i) u(cdofs[i]) = cvals[i];
 
     // ---- 组装 Fint 与一致切线 K（稠密，探针规模足够）----
@@ -197,6 +238,21 @@ inline ArcLengthResult3D solveArcLengthPath3D(const Model3D& m,
         return out;
     }
 
+    // 段内 CTRL 一律是**相对起点的控制位移增量**：参考构形基准起点为 0，
+    // 与既有输出逐位一致；成桥态基准起点为 u0(ctrl)，避免把成桥态已有
+    // 位移误当增量，也避免终止判据在第一步就误触发。
+    const double ctrlDisp0 = u(ctrl);
+    // 起点闭合残差 |F0 − Fint(u0)|：成桥态 u0 应是 F0 的平衡解，这里如实
+    // 记录差值而不是补 0，供 STATE RES0= 与下游自洽对拍。
+    if (hasState) {
+        Eigen::VectorXd Fint0, R0;
+        Eigen::MatrixXd K0tmp;
+        assemble(u, Fint0, K0tmp);
+        R0 = F0 - Fint0;
+        for (int d : cdofs) R0(d) = 0.0;
+        out.res0 = R0.norm();
+    }
+
     Eigen::PartialPivLU<Eigen::MatrixXd> lu;
     Eigen::VectorXd Fint, R, Rd, duR, duF;
     Eigen::MatrixXd K, rhs, X;
@@ -220,7 +276,8 @@ inline ArcLengthResult3D solveArcLengthPath3D(const Model3D& m,
     ArcLengthPoint3D p0;
     p0.step = 0;
     p0.lambda = 0.0;
-    p0.ctrlDisp = u(ctrl);
+    p0.ctrlDisp = u(ctrl) - ctrlDisp0;
+    p0.residual = out.res0;   // 成桥态基准 = 起点闭合残差；参考构形 = 0
     p0.ds = ds;
     p0.converged = true;
     out.points.push_back(p0);
@@ -251,7 +308,7 @@ inline ArcLengthResult3D solveArcLengthPath3D(const Model3D& m,
         double resNorm = 0.0;
         for (; iter < opt.maxIter; ++iter) {
             assemble(uT, Fint, K);
-            R = lamT * Fref - Fint;
+            R = F0 + lamT * Fref - Fint;
             Rd = R;
             impose(K, Rd);
             lu.compute(K);
@@ -313,7 +370,7 @@ inline ArcLengthResult3D solveArcLengthPath3D(const Model3D& m,
         ArcLengthPoint3D p;
         p.step = step;
         p.lambda = lambda;
-        p.ctrlDisp = u(ctrl);
+        p.ctrlDisp = u(ctrl) - ctrlDisp0;
         p.residual = resNorm;
         p.ds = ds;
         p.pivotRatio = piv;
@@ -322,7 +379,7 @@ inline ArcLengthResult3D solveArcLengthPath3D(const Model3D& m,
         out.points.push_back(p);
         out.steps = step;
 
-        if (std::abs(u(ctrl)) >= opt.ctrlTarget ||
+        if (std::abs(u(ctrl) - ctrlDisp0) >= opt.ctrlTarget ||
             std::abs(lambda) >= opt.lambdaLimit) {
             out.converged = true;
             break;

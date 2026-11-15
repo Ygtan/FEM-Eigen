@@ -2,6 +2,58 @@
 
 本文件记录 FEM-Eigen 项目的新增功能和主要修改内容。
 
+## 2026-11-15
+
+### 新增：成桥态起点的全过程稳定分析（`STABASIS=COMPLETION`，第十九次 / a 阶段 ①）
+
+- 用户按「先 b 后 a」完成 b（CB3D19）后选 **a1 三阶段**，本轮只交付 ①：
+  规格/守卫先行 + FE 内核与主链路 opt-in + 第 22 项 CTest。
+  ②（真实桥梁 ANSYS 两段对标）与 ③（B3 推 `Y`）**尚未做**，能力矩阵
+  B3 该行**仍 `P` 不标 `Y`**。
+- `stability_path_3d.hpp` 新增 `ArcLengthState3D`（`u0` / `F0` / `Finc`），
+  给 `solveArcLengthPath3D` 加**带默认值的第三参数**。平衡方程从
+  `R = λ·Fref − Fint(u)` 推广为 `R = F0 + λ·Finc − Fint(u)`、`u(0)=u0`；
+  Crisfield 球面弧长约束仍对 `du`，一致切线与 `crElementInternal` 完全复用。
+  段内 `CTRL` 改成**相对起点的控制位移增量**、`CTRLTARGET` 也按增量判定；
+  参考构形基准起点为 0，**第 19/20/21 项 CTest 与全部冻结输出逐位不变**。
+  `ArcLengthResult3D::res0` 记录起点闭合残差 `|F0 − Fint(u0)|`，不补 0。
+- `stability_output_3d.hpp` 给 `formatStabilitySection3D` /
+  `stabilityErrorSection3D` 增加带默认值的 `basis` 参数，新增
+  `StabilityStateHeader3D`。`completion_state` 段多一行
+  `STATE CTRL0= / F0_NORM= / FINC_NORM= / RES0=`，`CTRL0` 可与 `[U]` 自洽对拍。
+  `BASIS=reference_configuration` 与 `BASIS=completion_state` 的 λ
+  **不是同一个量**（前者放大总参考荷载、后者只放大增量荷载），段里分列。
+- `cable_solver.cpp` 新增 `STABASIS`（默认 `REFERENCE`）与独立段
+  `*STABILITY_LOAD`（`node dof value`，**不进 `m.loads`**，成桥态恒载 `F0`
+  不被增量荷载污染）。`STABASIS=COMPLETION` 时**不提前 return**，先走完
+  找形 / 索长迭代 / 内层 Newton，再在主链路 `[END]` 前写
+  `[STABILITY] BASIS=completion_state`；`[U]` / `[NEWTON]` / `[LENGTH]` /
+  `[BUCKLING] ERROR=nonlinear_state_not_supported` 全部保留。
+  `F0` 与 `solveModel3DNonlinear` 的 `Fext` 逐项同源。新增 4 类 `ERROR=`：
+  `zero_incremental_load` / `unsupported_stability_basis` /
+  `completion_not_converged` / `invalid_initial_state`。
+  `fem_3d_nl.hpp` 仍是荷载控制 Newton、`NonlinearOptions3D` 默认值零改动。
+- 新增 `tests/benchmark/completion_stability_3d/`：V 形双索单自由度体系
+  （`B=2.0`、`H=0.6`、参考构形带预拉 `L0=0.995·hypot(B,H)`），
+  `MODE=STATIC`（显式 `L0`）与 `MODE=TENSION`（索长迭代命中 `T*`）
+  两条成桥态闭环各 241 个平衡点。独立闭式
+  `λ(v)=[P(v)−F0]/PINC` 逐点对拍 `worst|dλ|=1.505e-13` / `3.515e-08`；
+  第二套独立锚点 `K_yy(V0)` 与中心差分 `dP/dv` 相对差 `3.964e-10`，
+  路径首点割线斜率 `51.156` 对解析 `51.150`。
+  冻结 **2963 checks + 18 strings + 18 criteria + 6 cases**，另含
+  「无增量荷载 / 未知基准 / 成桥态未收敛 / 默认零污染」四类负例。
+- 默认零污染实测：既有 CB3D10 结果文件 1257 行除 `elapsed_ms` 逐位一致、
+  M 阶段 von Mises `REFERENCE` 基准 `_stability.txt` 逐字节一致、
+  `*STABILITY_LOAD` 存在时默认态 `[U](2,2)` 仍是 `−0.1`（未混进 `m.loads`）。
+- `CMakeLists.txt` / `run_tests.ps1` 注册第 22 项 CTest（离线、不跑 ANSYS）；
+  `input_format_3d.md` 新增「成桥态起点基准」小节（第 14 个键、
+  `*STABILITY_LOAD` 段、`STATE` 行、4 类错误码、两种 λ 分列口径）；
+  `tests/benchmark/README.md` 同步 21→**22 个 CTest**（exe 仍 **40**，
+  本轮不新增 exe）。BridgeStudio 侧新增
+  `verify_completion_stability_3d.py`（32/32 纯离线守卫），并更新
+  `stability_3d.py` 唯一解析器（ERROR 段 `BASIS` 通配、`STATE` 行解析、
+  4 类中文错误码、`BOUNDARY_NOTE` 分列两种基准）。
+
 ## 2026-11-14
 
 ### 新增：共转 CR 梁刚接框架后屈曲独立对标（`frame_probe.exe`，第十八次 / N 阶段）
