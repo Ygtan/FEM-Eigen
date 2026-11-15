@@ -672,7 +672,19 @@ I STEP=1 LAMBDA=0.02 CTRL=-0.00098 RES=2.2e-09 ITER=2 DS=0.002 PIVOT=0.98 CONVER
 的两段口径，单段 `ARCLEN` 只对应参考构形基准。第 22 项 CTest
 （`tests/benchmark/completion_stability_3d/`）用 V 形双索单自由度体系的
 独立闭式 `λ(v)=[P(v)−F0]/Pinc` 逐点对拍 `MODE=STATIC` / `MODE=TENSION`
-两种成桥态闭环；真实桥梁算例的 ANSYS 两段对标仍属后续阶段，
+两种成桥态闭环。**第十九次 ②（2026-11-15）** 已把真实斜拉桥
+（CB3D21，50 节点 / 63 单元 / 16 索）的 ANSYS 两段对标接入
+`tests/benchmark/completion_bridge_3d/`（第 23 项 CTest，2392 项
+黄金值）：`BridgeStudio/ansys_bridge_completion.py` 用 `MODE=STATIC`
++ 显式 `L0` 同源生成 FEM `.dat` 与 ANSYS `.inp`（16 根索
+`L0 = L_design/(1+EPS0)`、`INISTATE eps ≡ EPS0`），
+step1 `TIME=1` 建成桥态、step2 荷载控制主 job 用
+`λ=(TIME−1)·LAMMAX` 与 `ΔUZ=UZ−UZ_step1` 逐子步对拍，
+`ARCLEN` job 只作终点交叉验证。**不用反力求和**（完整斜拉桥上
+`ΣRF,FZ` 随加载反而下降）。`MODE=COMPLETION` 索长迭代改写 `L0`
+导致 `u0` 与 `m` 不同源（CB3D10 实测 `RES0=3.15 MN`），② 用
+`STATIC` 绕开、缺陷登记为独立后续项；该算例路径单调硬化无极限点，
+施工阶段链路 / 分支屈曲 / 初始缺陷 / 材料非线性仍未覆盖，
 能力矩阵该行继续标 `P` 不标 `Y`。
 
 ### 带约束成桥目标索力优化过程量（`[OPT]`）

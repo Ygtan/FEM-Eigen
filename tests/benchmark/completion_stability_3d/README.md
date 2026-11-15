@@ -109,4 +109,5 @@ python build_reference_completion.py --check
   **不是补 0 的占位**；`CTRL` 是相对成桥态的位移增量，不是绝对位移。
 - 验收三阶段表与四条硬口径见
   `BridgeStudio/B类后续项接入规格.md` §2.6；纯离线守卫
-  `BridgeStudio/verify_completion_stability_3d.py`（32/32）。
+  `BridgeStudio/verify_completion_stability_3d.py`（① 时 32/32；
+  ② 阶段扩展 `stage2_contract()` 后为 47/47）。

@@ -517,5 +517,30 @@ if (Test-Path $csScript) {
     $failed++
 }
 
+# ---- 真实斜拉桥成桥态两段对标（CB3D21 / 第十九次 ②）----------------------
+$cbScript = Join-Path $root "tests\benchmark\completion_bridge_3d\compare_completion_bridge_3d.py"
+$cbCases  = Join-Path $root "tests\benchmark\completion_bridge_3d\cases"
+$cbRef    = Join-Path $root "tests\benchmark\completion_bridge_3d\reference"
+if (Test-Path $cbScript) {
+    $py = Get-Command python -ErrorAction SilentlyContinue
+    if ($py) {
+        Write-Host ""
+        Write-Host "== Completion-state bridge stability vs ANSYS two-step benchmark =="
+        & python $cbScript --bin $bin --cases $cbCases --reference $cbRef
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[PASS] Completion-state bridge two-step benchmark"
+        } else {
+            Write-Host "[FAIL] Completion-state bridge two-step benchmark"
+            $failed++
+        }
+    } else {
+        Write-Host "[MISS] python not found, skip completion-state bridge benchmark"
+        $failed++
+    }
+} else {
+    Write-Host "[MISS] completion-state bridge benchmark script missing: $cbScript"
+    $failed++
+}
+
 if ($failed -eq 0) { Write-Host "ALL TESTS PASSED" } else { Write-Host "$failed TEST(S) FAILED"; exit 1 }
 

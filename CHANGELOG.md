@@ -4,6 +4,50 @@
 
 ## 2026-11-15
 
+### 新增：真实斜拉桥成桥态两段对标（CB3D21，第十九次 / a 阶段 ②）
+
+- 承接 ① 的 `STABASIS=COMPLETION`：把同一条主链路 opt-in 放到**真实双塔
+  三跨斜拉桥**（50 节点 / 63 单元 / 16 索，与 CB3D10 同几何 / 材料 /
+  恒载），与 ANSYS 18.0「step1 恒载成桥态 + step2 增量荷载」两段求解
+  端到端对拍。② 完成后 B3 能力矩阵**仍 `P` 不标 `Y`**（③ 才推 `Y`）。
+- BridgeStudio 侧新增 `ansys_bridge_completion.py`（唯一数据源
+  `COMPLETION_CFG + EPS0=8e-4 + PINC=1e6 + LAMMAX=4.55`）与
+  `cases/run_cases_completion.py`（`--generate-only` / `--sync-to` /
+  `--sync-only`）：同一份 `ModelSpec3D(mode=STATIC, 设计线形)` 同时生成
+  FEM `.dat`（16 根索显式 `L0 = L_design/(1+EPS0)`、
+  `STABASIS=COMPLETION` 键、`*STABILITY_LOAD`）与 ANSYS 两段 `.inp`
+  （`INISTATE,DEFINE,...,EPEL,X,eps ≡ EPS0`，step1 `TIME=1`，
+  step2 `F_orig → F_orig − LAMMAX·PINC`）。
+- 物理定标（四个探针已归档到 `completion_stability_3d/probes/`）：
+  **不用反力求和**——完整斜拉桥 50 个 `F` / 34 个约束节点上
+  `ΣRF,FZ` 随加载反而下降；荷载控制主 job `cs_load` 用
+  `λ=(TIME−1)·LAMMAX` 与 `ΔUZ=UZ−UZ_step1` 对 FEM `[STABILITY]`
+  逐子步插值对拍，`ARCLEN` job `cs_arc` 的 `TIME` 不是 λ、只比终点。
+  两个 job 都恰有 2 个 `SOLVE`、2 条 `F,1016,FZ`、16 条 `INISTATE`。
+- **已知缺陷（独立后续项，② 未修）**：`MODE=COMPLETION` 的索长迭代
+  会改写 `m.elements[*].L0`，与收敛位移 `u0` 不同源（CB3D10 实测
+  `RES0=3.15 MN`）；② 用 `MODE=STATIC` + 显式 `L0` 绕开，
+  `RES0=7.97e-3 N` 与 `[NEWTON] RESLAST=5.96e-3 N` 同量级。
+- 新增 `tests/benchmark/completion_bridge_3d/`：第 **23** 项 CTest
+  `completion_bridge_3d_benchmark`，**2392 checks + 12 strings +
+  35 criteria + 4 cases**；离线重跑 `cable_solver.exe` 复现 2 个 `.dat`
+  （除 `elapsed_ms` 外逐行一致），同源独立锚点（16 根索
+  `L0*(1+EPS0) ≡ 设计弦长`、`INISTATE eps` 偏差 `1.83e-16`、
+  `F_end` 偏差 `3.31e-7 N`）、默认零污染（既有 CB3D10 / von Mises
+  REFERENCE 逐位不变）、报告 `ALL CHECKS PASSED`、两 job 0 error。
+  实测 28 子步 `worst|ΔUZ| = 1.85e-5 m`（容差 `1e-4`）、
+  初始斜率相对差 `1.37e-4`、`ARCLEN` 与荷载控制终点
+  `|d| = 6.9e-8 m`；`--live-ansys` 临时目录复跑两 job
+  `max|d| = 0 / 1e-11`，不覆写冻结 CSV。
+- `CMakeLists.txt` / `run_tests.ps1` 注册第 23 项；本机 `ctest` 23/23、
+  `run_tests.ps1` `ALL TESTS PASSED`、干净 Ninja 自动生成
+  23 条 `add_test` / 40 个 exe。同步 `tests/benchmark/README.md`
+  （22→23 CTest）与 BridgeStudio 六份文档 / 守卫。
+- 如实边界：CB3D21 路径**单调硬化、无极限点**，ANSYS 荷载控制即可
+  覆盖全程；越过极限点 / 下降段能力由 L / N 阶段独立基准题与
+  FEM 球面弧长内核证明。施工阶段链路、分支屈曲 / 初始缺陷 /
+  材料非线性仍未覆盖。
+
 ### 新增：成桥态起点的全过程稳定分析（`STABASIS=COMPLETION`，第十九次 / a 阶段 ①）
 
 - 用户按「先 b 后 a」完成 b（CB3D19）后选 **a1 三阶段**，本轮只交付 ①：

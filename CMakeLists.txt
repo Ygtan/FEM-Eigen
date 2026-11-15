@@ -372,6 +372,21 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(completion_stability_3d_benchmark PROPERTIES
         TIMEOUT 900
         LABELS "benchmark")
+
+    # 真实斜拉桥成桥态两段对标（CB3D21 / 第十九次 ②）：50 节点 / 63 单元 /
+    # 16 索，FEM STABASIS=COMPLETION 与 ANSYS 180「step1 恒载成桥态 +
+    # step2 增量荷载」逐子步对拍。荷载控制主 job 用 lambda=(TIME-1)*LAMMAX，
+    # ARCLEN job 只作终点交叉验证；2392 项冻结黄金值 + 同源 L0/INISTATE
+    # 独立锚点 + 默认零污染。CTest 本身完全离线、不需要 ANSYS 许可。
+    add_test(NAME completion_bridge_3d_benchmark
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/completion_bridge_3d/compare_completion_bridge_3d.py
+                     --bin ${CMAKE_CURRENT_BINARY_DIR}
+                     --cases ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/completion_bridge_3d/cases
+                     --reference ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/completion_bridge_3d/reference)
+    set_tests_properties(completion_bridge_3d_benchmark PROPERTIES
+        TIMEOUT 900
+        LABELS "benchmark")
 else()
     message(STATUS "未找到 Python3，跳过 .dat 逐字节回归 CTest")
 endif()

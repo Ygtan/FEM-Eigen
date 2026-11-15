@@ -39,26 +39,28 @@
 | `stable_path_3d/` | `stable_path_3d_benchmark` | B3 主链路 `STABILITY=1` opt-in vs CB3D17 冻结路径 / von Mises 闭式解析锚点 | CB3D18 | **3311** |
 | `frame_postbuckling_3d/` | `frame_postbuckling_3d_benchmark` | 共转 CR 梁刚接框架（Williams toggle 型）后屈曲全过程 vs `BEAM188 + ARCLEN` / 三套独立线性刚度锚点 | CB3D19 | **12513** |
 | `completion_stability_3d/` | `completion_stability_3d_benchmark` | **成桥态起点**全过程稳定：`STABASIS=COMPLETION` / `R = F0 + λ·Finc − Fint(u)` / V 形双索独立闭式 `λ(v)` 对拍 `STATIC` / `TENSION` | CB3D20（纯 FEM 侧） | **2963** |
+| `completion_bridge_3d/` | `completion_bridge_3d_benchmark` | **真实双塔三跨斜拉桥**成桥态两段 vs ANSYS（step1 恒载 + step2 增量荷载；荷载控制逐子步 + `ARCLEN` 终点交叉验证）/ 同源 `L0` + `INISTATE eps` 独立锚点 | CB3D21 | **2392** |
 
 另有 4 个解析/内核单测（`analytical_exact_solutions_2d/3d`、
 `nonlinear_co_rotational_3d`、`shape_sensitivity_3d`）与 1 个
-`dat_byte_regression`，合计 **22 个 CTest**。当前实测全量
-`ctest` 22/22、`run_tests.ps1` `ALL TESTS PASSED`。
+`dat_byte_regression`，合计 **23 个 CTest**。当前实测全量
+`ctest` 23/23、`run_tests.ps1` `ALL TESTS PASSED`。
 
 各目录的 `README.md` 记录该阶段的建模口径、ANSYS APDL 语义、容差来源与
 已知边界；`nonlinear_ansys_3d/probes/` 归档 A~G 阶段全部 16 个 ANSYS 语义
 探测脚本，`beam_nl_ansys_3d/probes/`、`snap_through_ansys_3d/probes/`
 与 `frame_postbuckling_3d/probes/` 归档 J/K/L/N 阶段物理诊断脚本，
 `completion_stability_3d/probes/` 归档第十九次 ① 的冻结 cases 生成器
+与 ② 阶段的四个 ANSYS 两段求解物理诊断探针
 （只入库 `.py` / `.md`，不进 CTest）。
 
 ## 从零复现（换机 / 重建）
 
 `build/` 及其 `CTestTestfile.cmake` 由 CMake 生成、被 `.gitignore` 排除，
-**不入库**。干净的 configure 会自动生成全部 22 条注册，不需要手工同步。
+**不入库**。干净的 configure 会自动生成全部 23 条注册，不需要手工同步。
 
 ```bash
-# MSYS2 / MinGW-w64 环境。生成器二选一，实测均可生成 22 条 add_test。
+# MSYS2 / MinGW-w64 环境。生成器二选一，实测均可生成 23 条 add_test。
 export PATH="/c/msys64/usr/bin:/c/msys64/mingw64/bin:$PATH"
 
 # 方案 A：Ninja（推荐，路径处理最稳）
@@ -77,16 +79,18 @@ cmake -G "MSYS Makefiles" \
 ```
 
 **实测（2026-11-15，本机 MSYS2 / GCC 16.2）**：方案 A 干净 configure
-自动生成 **22 条 `add_test`**，`cmake --build -j 4` 编译产出
+自动生成 **23 条 `add_test`**，`cmake --build -j 4` 编译产出
 **40 个 exe**（K 阶段 `beam_nl_probe` 为第 38 个、L 阶段
 `snap_probe` 为第 39 个；M 阶段只给 `cable_solver.exe` 加 opt-in
-分支、不新增 exe；N 阶段 `frame_probe` 为第 40 个；**第十九次 ①
-同样只改 `cable_solver.exe` / 两个头文件、不新增 exe**），
-全新目录 `ctest` **22/22 Passed**。即换机后无需手工同步
+分支、不新增 exe；N 阶段 `frame_probe` 为第 40 个；**第十九次 ① / ②
+都只改 `cable_solver.exe` / 两个头文件 / 冻结证据、不新增 exe**），
+全新目录 `ctest` **23/23 Passed**。即换机后无需手工同步
 `CTestTestfile.cmake`，也无需 ANSYS 许可即可全量回归；M 阶段主链路
 口径与数字见 `stable_path_3d/README.md`，N 阶段 CR 梁刚接框架
 后屈曲口径见 `frame_postbuckling_3d/README.md`，第十九次 ①
-成桥态起点口径见 `completion_stability_3d/README.md`。全量重编译在本机
+成桥态起点口径见 `completion_stability_3d/README.md`，第十九次 ②
+真实斜拉桥两段对标口径见 `completion_bridge_3d/README.md`。
+全量重编译在本机
 约需 11 分钟（头文件 `fem_3d_nl.hpp` 较大）；内存有限时建议 `-j 4`，
 实测 `-j 8` 与其它任务并发会触发 `cc1plus.exe: out of memory`，与代码无关。
 
