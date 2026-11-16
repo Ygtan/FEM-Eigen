@@ -2550,6 +2550,12 @@ struct NLStageResult3D {
     NewtonTrace3D newton;   // 本阶段全量平衡的内层 Newton 过程（每阶段一段）
     DofMap3D dm;
     std::vector<double> u;
+    // 第二十次 ③b：本阶段平衡态的**同源模型**（只含已激活单元、累计阶段
+    // 荷载、当前 L0、constrainDisconnected3D 补过的约束）。u 是相对这份
+    // 模型求解出来的，调用方要拿它做切线刚度 / 弧长起点时必须用这一份，
+    // 不能拿全阶段的 m 或成桥态 basisModel（第十九次 ③ 同源缺陷同理）。
+    // 默认路径只是多一次拷贝，既有输出逐位不变。
+    Model3D model;
     std::map<int, double> cableForce;
     std::map<int, double> cableL0;
     // 键是单元号，值是 i 端、j 端。只含本阶段激活的梁。
@@ -2762,6 +2768,7 @@ inline std::vector<NLStageResult3D> solveModel3DStagesNonlinear(
         row.converged = tuned && r.converged;
         row.dm = buildDofMap3D(mc);
         row.u = r.u;
+        row.model = mc;   // 第二十次 ③b：与 row.u 同源的阶段中间态模型
         row.cableL0 = L0state;
         std::map<int, std::string> kind;
         for (const auto& e : mc.elements) kind[e.id] = e.type;

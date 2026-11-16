@@ -602,5 +602,35 @@ if (Test-Path $lpScript) {
     $failed++
 }
 
+# ---- 施工阶段中间态起点的全过程稳定（CB3D23 / 第二十次 ③b）-----------
+# STABASIS=STAGE STAGEID=2：起点是 solveModel3DStagesNonlinear() 的阶段 2
+# 共转列式全量平衡态（u0 = u_stage、F0 = 该阶段累计恒载、Finc 只来自
+# *STABILITY_LOAD），BASIS=stage_state 与 completion_state 分列。
+# 15 份冻结证据 + 两个 ANSYS 18.0 job（0 error）纯离线比对，
+# 含负例 ERROR=stage_not_found 与当前二进制重放逐字节一致。
+$ssScript = Join-Path $root "tests\benchmark\stage_stability_3d\compare_stage_state_3d.py"
+$ssCases  = Join-Path $root "tests\benchmark\stage_stability_3d\cases"
+$ssRef    = Join-Path $root "tests\benchmark\stage_stability_3d\reference"
+if (Test-Path $ssScript) {
+    $py = Get-Command python -ErrorAction SilentlyContinue
+    if ($py) {
+        Write-Host ""
+        Write-Host "== Construction-stage intermediate-state stability (FEM vs ANSYS, offline) =="
+        & python $ssScript --bin $bin --cases $ssCases --reference $ssRef
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[PASS] Stage-state stability benchmark"
+        } else {
+            Write-Host "[FAIL] Stage-state stability benchmark"
+            $failed++
+        }
+    } else {
+        Write-Host "[MISS] python not found, skip stage-state stability benchmark"
+        $failed++
+    }
+} else {
+    Write-Host "[MISS] stage-state stability benchmark script missing: $ssScript"
+    $failed++
+}
+
 if ($failed -eq 0) { Write-Host "ALL TESTS PASSED" } else { Write-Host "$failed TEST(S) FAILED"; exit 1 }
 

@@ -422,6 +422,28 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(bridge_limit_point_3d_benchmark PROPERTIES
         TIMEOUT 900
         LABELS "benchmark")
+
+    # 第二十次 ③b：施工阶段中间态起点的全过程稳定（CB3D23）。
+    # STABASIS=STAGE STAGEID=2 把弧长路径起点换成 solveModel3DStagesNonlinear()
+    # 的阶段 2 共转列式全量平衡态 u_stage 与同源 NLStageResult3D::model，
+    # F0 为该阶段累计恒定荷载、Finc 只来自 *STABILITY_LOAD；
+    # [STAGES] + STAGE= / BASIS=stage_state 与另两种基准分列。
+    # BS 侧 cases/CB3D23_stage_state_vs_ansys/ 的 15 份同源冻结证据：
+    # 4 节点 3 杆 TRUSS 浅拱、两个 ANSYS 18.0 job（st_load 荷载控制 /
+    # st_arc ARCLEN），step1 TIME=1 求同一阶段平衡态、step2 λ=TIME−1，
+    # 按 |ΔUY| 插值 λ 逐点对拍。本项完全离线，不重跑 ANSYS；判据覆盖
+    # 冻结证据哈希、黄金值自洽、起点闭合 / 非零初态 / 阶段递进、
+    # APDL N/E/F/D 同源锚点、负例 ERROR=stage_not_found，
+    # 以及当前二进制重放两个 .dat 的逐字节一致性（mingw64 同工具链）。
+    add_test(NAME stage_stability_3d_benchmark
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/stage_stability_3d/compare_stage_state_3d.py
+                     --bin ${CMAKE_CURRENT_BINARY_DIR}
+                     --cases ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/stage_stability_3d/cases
+                     --reference ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/stage_stability_3d/reference)
+    set_tests_properties(stage_stability_3d_benchmark PROPERTIES
+        TIMEOUT 900
+        LABELS "benchmark")
 else()
     message(STATUS "未找到 Python3，跳过 .dat 逐字节回归 CTest")
 endif()

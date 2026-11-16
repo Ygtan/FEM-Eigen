@@ -117,7 +117,8 @@ Newton-Raphson：`assembleState` 每步组装 `Fint/Fext` 与一致切线（轴�
 - `bridge/`：80m 系杆拱，参考值来自用户提供的 ANSYS 结果（`bridge_tied_arch_80m_apdl_disp.txt`、`..._elemforce.txt`），`compare_bridge.py` 比对节点位移与单元内力。
 
 以上早期条目均接入 CTest 与 `run_tests.ps1`。**当前全量口径以
-`tests/benchmark/README.md` 为准：③a 之后合计 25 个 CTest**，
+`tests/benchmark/README.md` 为准：③a 之后合计 25 个 CTest，
+③b 新增第 26 项后合计 26 个 CTest**，
 `ctest` 与 `run_tests.ps1` 双入口覆盖，`run_tests.ps1 -BuildDir <dir>`
 可指向干净构建目录。③a 新增两项纯离线回归：
 
@@ -132,6 +133,13 @@ Newton-Raphson：`assembleState` 每步组装 `Fint/Fext` 与一致切线（轴�
 - `replay_tolerance.py`：跨工具链 `[STABILITY]` 重放的结构化比较模块。
   只放宽「另一套 CRT 编译产物重放」这一步，冻结文件 `sha256` /
   黄金值自洽 / 物理判据仍严格锁死。
+- `stage_stability_3d/`（③b 第 26 项，214 项检查）：`STABASIS=STAGE
+  STAGEID=2` 把路径起点放到施工阶段中间态，FEM↔ANSYS 按 `|ΔUY|`
+  插值 `λ` 逐点比较；`[STAGES]` / `STAGE=` 证明选中的是中间态，
+  负例 `ERROR=stage_not_found` 不降级。黄金值
+  `reference/cb3d23_stage_state.json`。冻结证据与历史黄金值同为
+  mingw64 工具链，故重放要求**严格逐字节一致**（不走
+  `replay_tolerance.py`）。
 
 新增 benchmark 的通用做法：冻结原始 `.dat` / `.inp` / `.out` / `.csv`
 与 FEM 输出到 `cases/`，由 `build_reference_*.py` 从冻结证据**派生**
@@ -201,3 +209,23 @@ Newton-Raphson：`assembleState` 每步组装 `Fint/Fext` 与一致切线（轴�
   施工阶段段共存、真实桥梁越过极值点三处；分支屈曲 / 分支切换、
   初始缺陷、材料非线性、动力 snap-through、施工阶段中间态全过程
   稳定仍未闭环，B3 在 `能力边界矩阵.md` 中**仍 `P` 不 `Y`**。
+- **③b：施工阶段链路也必须回传"同源模型"**。③a 已让
+  `solveCompletionState3D()` 等按值迭代函数回传 `basisModel`，
+  但 `solveModel3DStagesNonlinear()` 的 `NLStageResult3D` 仍只回传
+  `u` / `dm` / `cableL0` / 激活集合；若主链路拿外部原模型装配
+  `F0` / `Fint(u_stage)`，中间态起点同样不闭合。处置是给
+  `NLStageResult3D` 增加 `Model3D model` 并在每阶段写
+  `row.model = mc`，由 `runStageStabilityMode()` 用
+  `pick->model` 同时装配 `F0`、`Fint` 与弧长路径。
+  **不要把 `STAGE` 混进 `COMPLETION` 分支**：两者基准模型不同，
+  输出文件（`<stem>_stage_stability.txt` vs 主链路结果文件）、
+  `BASIS`（`stage_state` vs `completion_state`）、`[STAGES]` 段
+  都必须分列；未知 `STAGEID` 写 `ERROR=stage_not_found`，
+  不得静默降级成成桥态或参考构形。
+- **③b：不得靠一个 opt-in 研究构型把 B3 涂成 `Y`**。CB3D23 是
+  4 节点 3 杆 `TRUSS` 浅拱，两侧同源加 `UX` 导向约束消除一阶
+  运动机构、轴向应变取约 `2e-4` 避开 `LINK180` Almansi 应变差异；
+  它证明的是「起点可放到施工阶段中间态」，不是真实桥梁施工阶段
+  全过程稳定。§2.5 的位移控制 / Riks、分支屈曲与分支切换、
+  初始缺陷、材料非线性、动力 snap-through 仍未闭环，
+  **B3 仍 `P` 不 `Y`**。

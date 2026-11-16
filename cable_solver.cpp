@@ -119,6 +119,7 @@
 #include <cmath>
 #include <cstdio>
 #include <fstream>
+#include <iomanip>   // 第二十次 ③b：[STAGES] 摘要用 setprecision
 #include <set>
 #include <sstream>
 #include <string>
@@ -251,6 +252,9 @@ struct StabilityCfg {
     double stabTol = 1.0e-7;
     int maxPathStep = 400, stabIter = 30;
     int strain = 0;            // 0=工程应变 1=对数应变
+    // 第二十次 ③b：STABASIS=STAGE 时指定取哪个施工阶段中间态。
+    // <=0 表示未给，写 ERROR=stage_id_missing，不静默退化成成桥态。
+    int stageId = -1;
     // *STABILITY_LOAD 的增量荷载（node dof value）。**不进 m.loads**：
     // readModel3D 会静默忽略本段，成桥态恒载 F0 因此不被增量荷载污染。
     std::vector<std::tuple<int, int, double>> incLoads;
@@ -363,6 +367,7 @@ Cfg readCfg(const std::string& path) {
                 else if (key == "STABTOL") c.stability.stabTol = std::stod(val);
                 else if (key == "STRAIN") c.stability.strain = std::stoi(val);
                 else if (key == "STABASIS") c.stability.basis = upper(val);
+                else if (key == "STAGEID") c.stability.stageId = std::stoi(val);
                 else std::fprintf(stderr, "[警告] *CABLE_BRIDGE 未知关键字: %s\n", kv.c_str());
             }
         } else if (sec == "CABLE") {
@@ -440,7 +445,8 @@ int runStabilityMode(const std::string& dat, const Model3D& m,
 
     std::string section;
     bool converged = false;
-    if (sc.basis != "REFERENCE" && sc.basis != "COMPLETION") {
+    if (sc.basis != "REFERENCE" && sc.basis != "COMPLETION"
+        && sc.basis != "STAGE") {
         // 第十九次 ①：不静默把未知基准降级成参考构形。
         section = stabilityErrorSection3D("[STABILITY]",
             "unsupported_stability_basis", "unknown");
@@ -482,6 +488,177 @@ int runStabilityMode(const std::string& dat, const Model3D& m,
     std::printf("cable_solver: mode=STABILITY pathmethod=%s converged=%d "
                 "结果: %s\n", sc.pathMethod.c_str(), converged ? 1 : 0,
                 outPath.c_str());
+    return converged ? 0 : 3;
+}
+
+// ---- 第二十次 ③b：施工阶段中间态起点的全过程稳定 ------------------------
+// STABASIS=STAGE + STAGEID=<id> 是独立 opt-in。三种基准必须分列：
+//   · REFERENCE：u0=0，参考构形上 λ 放大全部荷载；
+//   · COMPLETION：u0=成桥态收敛位移，F0=成桥态恒载；
+//   · STAGE：u0=指定施工阶段的共转列式全量平衡位移，F0=该阶段累计
+//     恒定荷载，基准模型只含**该阶段已激活**单元与当前 L0。
+// 三者共用 stability_path_3d.hpp 的球面弧长法与一致切线刚度，但起点与
+// 基准模型不同；[STAGES] 段逐阶段留痕，证明选中的确实是中间态。
+// *STABILITY_LOAD 只提供 Finc，不进任何阶段荷载，默认路径零改动。
+int runStageStabilityMode(const std::string& dat, const Model3D& m,
+                          const Cfg& cfg) {
+    const StabilityCfg& sc = cfg.stability;
+    std::string stem = dat;
+    const std::size_t dot = stem.find_last_of('.');
+    if (dot != std::string::npos) stem = stem.substr(0, dot);
+    const std::string outPath = stem + "_stage_stability.txt";
+    const std::string basis = "stage_state";
+
+    std::string stagesBlock;
+    std::string section;
+    bool converged = false;
+    auto fail = [&](const char* code) {
+        section = stabilityErrorSection3D("[STABILITY]", code, basis);
+    };
+
+    if (sc.pathMethod != "SPHERE") {
+        fail("unsupported_path_method");
+    } else if (m.stages.empty()) {
+        fail("no_stage_definition");
+    } else if (sc.stageId <= 0) {
+        fail("stage_id_missing");
+    } else {
+        NonlinearOptions3D nl;
+        nl.loadSteps = cfg.nlSteps;
+        nl.maxIter = cfg.newton;
+        nl.tolForce = 1e-8;
+        nl.verbose = cfg.verbose;
+        try {
+            const std::vector<NLStageResult3D> stages =
+                solveModel3DStagesNonlinear(m, nl);
+            std::ostringstream sb;
+            sb << std::setprecision(14) << "[STAGES]\nNSTAGE="
+               << stages.size() << "\n";
+            for (const auto& s : stages) {
+                double un = 0.0;
+                for (double x : s.u) un += x * x;
+                sb << "S ID=" << s.id
+                   << " CONVERGED=" << (s.converged ? 1 : 0)
+                   << " NELEM=" << s.model.elements.size()
+                   << " NDLOAD=" << s.model.loads.size()
+                   << " NDOF=" << s.dm.nDofs
+                   << " U_NORM=" << std::sqrt(un) << "\n";
+            }
+            stagesBlock = sb.str();
+
+            const NLStageResult3D* pick = nullptr;
+            for (const auto& s : stages)
+                if (s.id == sc.stageId) { pick = &s; break; }
+            if (!pick) {
+                fail("stage_not_found");
+            } else if (!pick->converged) {
+                fail("stage_not_converged");
+            } else {
+                const DofMap3D dm = buildDofMap3D(pick->model);
+                const int nd = dm.nDofs;
+                if (nd <= 0 || static_cast<int>(pick->u.size()) != nd
+                    || pick->dm.nDofs != nd) {
+                    fail("invalid_initial_state");
+                } else {
+                    // F0 与 fem_3d_nl.hpp::solveModel3DNonlinear 的 Fext
+                    // 逐项同源：节点荷载 + 弹性支承 k·value + CABLE 自重
+                    // 两端各半。阶段荷载已经在 pick->model.loads 里累计好，
+                    // 不能再叠加 *STABILITY_LOAD（那是 Finc）。
+                    std::vector<double> F0(static_cast<std::size_t>(nd), 0.0);
+                    std::vector<double> Finc(static_cast<std::size_t>(nd), 0.0);
+                    for (const auto& [node, dof, val] : pick->model.loads) {
+                        const int d = dm.safeDof(node, dof - 1);
+                        if (d >= 0) F0[static_cast<std::size_t>(d)] += val;
+                    }
+                    for (const auto& c : pick->model.constraints) {
+                        if (c.k <= 0.0) continue;
+                        const int d = dm.safeDof(c.node, c.dof - 1);
+                        if (d >= 0) F0[static_cast<std::size_t>(d)] += c.k * c.value;
+                    }
+                    for (const auto& e : pick->model.elements) {
+                        if (e.type != "CABLE" || e.w <= 0.0) continue;
+                        const double Lc = (e.L0 > 0.0)
+                            ? e.L0
+                            : (pick->model.nodes.at(e.n2)
+                               - pick->model.nodes.at(e.n1)).norm();
+                        const double half = -0.5 * e.w * Lc;
+                        const int d1 = dm.safeDof(e.n1, 2);
+                        const int d2 = dm.safeDof(e.n2, 2);
+                        if (d1 >= 0) F0[static_cast<std::size_t>(d1)] += half;
+                        if (d2 >= 0) F0[static_cast<std::size_t>(d2)] += half;
+                    }
+                    for (const auto& [node, dof, val] : sc.incLoads) {
+                        const int d = dm.safeDof(node, dof - 1);
+                        if (d >= 0) Finc[static_cast<std::size_t>(d)] += val;
+                    }
+                    double f0n = 0.0, fincn = 0.0;
+                    for (double x : F0) f0n += x * x;
+                    for (double x : Finc) fincn += x * x;
+                    f0n = std::sqrt(f0n);
+                    fincn = std::sqrt(fincn);
+                    if (fincn <= 0.0) {
+                        fail("zero_incremental_load");
+                    } else {
+                        ArcLengthOptions3D opt;
+                        opt.ds0 = sc.ds0;
+                        opt.dsMin = sc.dsMin;
+                        opt.dsMax = sc.dsMax;
+                        opt.psi = sc.psi;
+                        opt.tolForce = sc.stabTol;
+                        opt.maxSteps = sc.maxPathStep;
+                        opt.maxIter = sc.stabIter;
+                        opt.ctrlNode = sc.ctrlNode;
+                        opt.ctrlDof = sc.ctrlDof;
+                        opt.ctrlTarget = sc.ctrlTarget;
+                        opt.strainMeasure = sc.strain;
+                        ArcLengthState3D st;
+                        st.u0 = pick->u;
+                        st.F0 = F0;
+                        st.Finc = Finc;
+                        const ArcLengthResult3D r =
+                            solveArcLengthPath3D(pick->model, opt, st);
+                        if (r.points.empty() || r.steps <= 0) {
+                            fail(r.error.empty() ? "no_equilibrium_point"
+                                                 : r.error.c_str());
+                        } else {
+                            StabilityStateHeader3D sh;
+                            sh.hasState = true;
+                            const int ctrl =
+                                dm.safeDof(opt.ctrlNode, opt.ctrlDof - 1);
+                            sh.ctrl0 = (ctrl >= 0
+                                && ctrl < static_cast<int>(pick->u.size()))
+                                ? pick->u[static_cast<std::size_t>(ctrl)] : 0.0;
+                            sh.f0Norm = f0n;
+                            sh.fincNorm = fincn;
+                            sh.stageId = pick->id;
+                            sh.stageElems =
+                                static_cast<int>(pick->model.elements.size());
+                            sh.stageDofs = nd;
+                            section = formatStabilitySection3D(
+                                r, opt, "[STABILITY]", basis, sh);
+                            converged = r.converged && r.error.empty();
+                        }
+                    }
+                }
+            }
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "[STABILITY] 施工阶段路径求解异常: %s\n",
+                         e.what());
+            fail("solver_exception");
+        }
+    }
+
+    std::FILE* f = std::fopen(outPath.c_str(), "w");
+    if (!f) throw std::runtime_error("无法写出稳定路径结果: " + outPath);
+    std::fputs(stagesBlock.c_str(), f);
+    std::fputs(bucklingErrorSection3D(
+        "[BUCKLING]", "nonlinear_state_not_supported").c_str(), f);
+    std::fputs(section.c_str(), f);
+    std::fprintf(f, "[END]\n");
+    std::fclose(f);
+    std::printf("cable_solver: mode=STAGE_STABILITY stageid=%d "
+                "converged=%d 结果: %s\n",
+                sc.stageId, converged ? 1 : 0, outPath.c_str());
     return converged ? 0 : 3;
 }
 
@@ -1153,13 +1330,20 @@ int main(int argc, char** argv) {
         // <stem>_stability.txt。STABASIS=COMPLETION（第十九次 ①）：**不
         // 提前 return**，继续走完找形 / 索长迭代 / 内层 Newton，拿到成桥态
         // 收敛位移 u0 后再在 [END] 前挂 [STABILITY] BASIS=completion_state。
+        // STABASIS=STAGE（第二十次 ③b）：也提前 return，但走的是
+        // solveModel3DStagesNonlinear 的指定施工阶段中间态，输出到独立的
+        // <stem>_stage_stability.txt，BASIS=stage_state 与另两种分列。
         // STABILITY=0 时整段不执行，既有路径与全部结果文件逐位不变。
         const bool completionBasis = cfg.stability.enabled
                                   && cfg.stability.basis == "COMPLETION";
+        const bool stageBasis = cfg.stability.enabled
+                             && cfg.stability.basis == "STAGE";
         if (cfg.stability.enabled) {
             if (completionBasis) {
                 // 落到下方主链路；段在结果文件 [END] 前由
                 // formatCompletionStabilitySection() 写出。
+            } else if (stageBasis) {
+                return runStageStabilityMode(dat, m, cfg);
             } else {
                 return runStabilityMode(dat, m, cfg.stability);
             }

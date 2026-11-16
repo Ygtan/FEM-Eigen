@@ -58,6 +58,11 @@ struct StabilityStateHeader3D {
     double ctrl0 = 0.0;     // u0(ctrl)：成桥态起点的绝对控制位移
     double f0Norm = 0.0;    // |F0|
     double fincNorm = 0.0;  // |Finc|
+    // 第二十次 ③b：施工阶段中间态起点。stageId < 0 时**不输出任何行**，
+    // 既有 completion_state / reference_configuration 调用逐位不变。
+    int stageId = -1;
+    int stageElems = 0;     // 该阶段激活单元数（不是全桥单元数）
+    int stageDofs = 0;      // 该阶段自由度数
 };
 
 inline std::string formatStabilitySection3D(
@@ -81,6 +86,12 @@ inline std::string formatStabilitySection3D(
            << " F0_NORM=" << sh.f0Norm
            << " FINC_NORM=" << sh.fincNorm
            << " RES0=" << r.res0 << "\n";
+    // 第二十次 ③b：只有 STABASIS=STAGE 才写这行，证明起点是某个施工
+    // 阶段中间态（已激活单元数 / 自由度数），不是成桥态、也不是参考构形。
+    if (sh.stageId >= 0)
+        ss << "STAGE=" << sh.stageId
+           << " NELEM=" << sh.stageElems
+           << " NDOF=" << sh.stageDofs << "\n";
     ss << "LAMBDA_FINAL=" << r.lambda
        << " ERROR=" << (r.error.empty() ? "none" : r.error) << "\n";
     for (const auto& p : r.points) {

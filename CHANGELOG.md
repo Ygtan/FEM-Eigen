@@ -4,6 +4,95 @@
 
 ## 2026-11-15
 
+### 新增：③b 施工阶段中间态起点的全过程稳定（CB3D23，第二十次）
+
+用户 `按建议做`：继续 ③ 的 §2.5 边界收口，先做**施工阶段中间态
+全过程稳定**，并补齐 Python 依赖。B3 结论**仍 `P` 不 `Y`**——本轮
+只交付一个 `STABASIS=STAGE` opt-in 研究构型算例，§2.5 的位移控制 /
+Riks、分支屈曲与分支切换、初始缺陷、材料非线性、动力 snap-through
+仍未闭环，且算例是 3 杆 `TRUSS` 浅拱而非真实桥梁施工阶段。
+
+- **同源阶段模型回传**：`fem_3d_nl.hpp::NLStageResult3D` 增加
+  `Model3D model`，`solveModel3DStagesNonlinear()` 每阶段求解后写
+  `row.model = mc`。此前只回传 `u` / `dm` / `cableL0` 与激活集合，
+  主链路无法用与 `u_stage` 同源的模型装配 `F0` / `Fint(u0)`。
+  这是 ③a `basisModel` 设计决策在施工阶段链路上的对应补齐。
+- **主链路独立 opt-in**：`cable_solver.cpp` 新增
+  `STABASIS=STAGE` + `STAGEID=<id>`（第 15 个 `*CABLE_BRIDGE` 键）与
+  `runStageStabilityMode()`：先逐阶段跑共转列式全量平衡，按
+  `STAGEID` 选中 `(pick->model, pick->u)`，再以 `u0 = u_stage` 走
+  Crisfield 球面弧长路径；`F0` 取该阶段累计节点荷载 + 弹性支承 +
+  CABLE 自重，`Finc` 只来自 `*STABILITY_LOAD`。未知阶段写
+  `ERROR=stage_not_found`，**不静默降级**成成桥态或参考构形。
+  输出文件 `<stem>_stage_stability.txt`，`[STAGES]` 逐阶段摘要 +
+  `[STABILITY] BASIS=stage_state` + `STAGE=<id> NELEM=<n> NDOF=<n>`；
+  `stability_output_3d.hpp::StabilityStateHeader3D` 增加
+  `stageId` / `stageElems` / `stageDofs`，只在 `stageId >= 0` 时写
+  `STAGE=` 行，其余两种基准输出逐位不变。
+  三种 `BASIS`（`reference_configuration` / `completion_state` /
+  `stage_state`）继续分列。
+- **BS 侧同源导出与正式算例**：`ansys_stage_stability.py`（唯一
+  常量表 `CASE_ID=cb3d23_stage_state`）与
+  `cases/run_cases_stage_state.py`（`--generate-only` /
+  `--check-only` / `--sync-to` / `--sync-only`）生成 4 节点 / 3 根
+  `TRUSS` 浅拱的 FEM `.dat` 与两个 ANSYS `.inp`。3 个施工阶段
+  （`STAGE_ACTIVE={1:[1,3], 2:[2], 3:[]}`），`STAGEID=2` 取
+  3 杆全激活、阶段 3 荷载未施加的**中间态**。两侧同源给节点 2/3
+  加 `UX` 导向约束，消除 4 平动自由度 / 3 杆长约束的一阶运动机构
+  （否则 ANSYS 报 `Sparse solver minimum pivot`）。阶段荷载 /
+  `PINC` / `CTRLTARGET` 取到轴向应变约 `2e-4`，避免 10 倍档下
+  ANSYS `LINK180` 默认 Almansi 应变与 FEM 共转工程应变的系统性差异。
+  `step1 TIME=1` 求同一阶段平衡态，`step2` 用
+  `F_end = F_orig + LAMMAX·PINC`、`TIME = 1 + LAMMAX`，故
+  `λ = TIME − 1`，不靠反力求和；`st_load` 荷载控制、
+  `st_arc` `ARCLEN` 交叉验证，按递增自变量 `|ΔUY|` 插值 `λ` 对拍。
+- **正式结果**：`[STAGES] [1,2,3]`、`STAGE=2 NELEM=3 NDOF=12`、
+  起点 `RES0/|F0|=6.34e-13`、`CTRL0=-0.000952173872`（非零初态）、
+  FEM `NPOINT=134` / `λ_end=2.57577583` / `|ΔUY|_end=0.00502513021`；
+  两个 ANSYS job 均 0 error，`st_load` 27 点
+  `worst|Δλ|=0.005124 mean=0.001891`、`st_arc` 25 点
+  `worst|Δλ|=0.005109 mean=0.001881`，共同区间覆盖 FEM 路径
+  99.7%。负例 `STAGEID=99` 写 `ERROR=stage_not_found` 且无平衡点。
+  BS 报告 `72 checks, 0 failed`。
+- **第 26 项 CTest `stage_stability_3d_benchmark`**（214 项检查）：
+  `tests/benchmark/stage_stability_3d/` 冻结 15 份证据 + 黄金值
+  `reference/cb3d23_stage_state.json`（由
+  `build_reference_stage_state.py` 从冻结证据派生，不重跑 FEM/ANSYS）。
+  `compare_stage_state_3d.py` 五层判据：证据 `sha256` / 字节数、
+  黄金值自洽、物理判据、同源 APDL 锚点 / 两段 ANSYS 证据 /
+  FEM↔ANSYS 逐点对拍、当前二进制重放两个 `.dat` **逐字节一致**
+  （证据与历史黄金值同为 mingw64 工具链，故不放宽为
+  `replay_tolerance.py`）。`CMakeLists.txt` 与 `run_tests.ps1`
+  已注册，`tests/benchmark/README.md` 更新为合计 26 个 CTest。
+- **依赖补齐**：`anastruct 1.7.1` / `python-docx 1.2.0` /
+  `pypdf 7.1.0`（清华镜像；默认 PyPI 走代理报
+  `ProxyError 502 Bad Gateway` 与 wheel 文件占用）。补齐前 53 个
+  BS 守卫有 25 项因缺依赖 / 会话态失败，补齐后 51/53。余下两项是
+  **与 ③b 力学无关的历史遗留 / 环境适配**，均按等价口径修正并在
+  `B类后续项接入规格.md` §6 第 19 条登记：
+  `verify_app.py` 的 `AppTest.session_state` 在 Streamlit 1.45.1
+  改为 `SafeSessionState`（只支持 `in` / `[]`，不再有 `dict.get()`），
+  新增 `_ssget()` 用 `in` + `[]` 严格等价替换 12 处旧写法，
+  **功能断言一字未放宽**；`verify_opt_2d.py` 的「`## 2026-11-12`
+  必须在 CHANGELOG 前 12 行」是 ③a 起过时的**位置**断言
+  （当日小节持续追加到顶部），改为锁「该日期小节仍完整在档」，
+  其余判据不放宽。修正后 `verify_opt_2d.py` 286/286，另 4 个 ③b
+  关键守卫全绿（`verify_completion_stability_3d.py` 100/100、
+  `verify_b_class_spec.py` 185/185、`verify_capability_matrix.py`
+  282/282、`verify_stability_3d.py` 30/30）。
+- **UI 兼容修复（与力学无关，但影响真实界面）**：`_ssget()` 让
+  `verify_app.py` 从「第 202 行直接崩溃」恢复为可跑完，也**暴露出
+  原本被崩溃掩盖的 7 条界面失败**——Streamlit 1.45.1 明确禁止
+  `Expanders may not be nested inside other expanders`，
+  `ui_3d.py` 的「与 MIDAS 互导」外层 `st.expander` 内嵌
+  `_interop_block()` 的 `c1/c2.expander`。最小修复是把外层改为
+  普通 `st.container()` + 一行 `caption`（保留内层 4 个折叠块、
+  全部按钮 / 下载 / 试算功能与守卫断言，仅去掉「互导整块可折叠」
+  这一层包装）。修复后 `verify_app.py` **109/109 通过**
+  （此前 script run 中断，后续断言根本没跑到，63/70 只是已执行部分）。
+  这是业务 UI 与新版 Streamlit 的兼容性问题，不是 ③b 引入，
+  不涉及任何力学判据或能力矩阵；如实登记，不放宽断言。
+
 ### 新增：③a 起点同源修复 + 施工阶段共存核对 + 真实桥梁越过极值点
 
 用户选 `3a`：先做实质技术收口，再评估 B3 是否具备推 `Y` 条件。

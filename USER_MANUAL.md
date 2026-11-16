@@ -80,7 +80,10 @@ python tests/regression/compare_regression.py --freeze --bin build --src . --bas
 `completion_basis_3d_benchmark`（起点同源 + 施工阶段共存，110 项检查）与
 第 25 项 `bridge_limit_point_3d_benchmark`（真实桥梁越过极值点，140 项检查）
 都是**纯离线**回归：只读冻结证据与黄金值，必要时用当前二进制重放，
-不重跑 ANSYS。指定干净构建目录用 `-BuildDir` 参数：
+不重跑 ANSYS。**③b（第二十次）新增第 26 项**
+`stage_stability_3d_benchmark`（施工阶段中间态起点全过程稳定，
+214 项检查）后合计 **26 个 CTest**，同样是纯离线回归。
+指定干净构建目录用 `-BuildDir` 参数：
 
 ```powershell
 .\run_tests.ps1 -BuildDir _d_build
@@ -625,6 +628,49 @@ Newton    (I + G_full)·δ = -(ΔX + u)，G_full = du/dX
   均未闭环；③a 只收口「起点同源」「施工阶段段共存」「真实桥梁
   越过极值点」三处。详见 BridgeStudio
   `B类后续项接入规格.md` §2.5 / §2.6。
+
+### 9.11 施工阶段中间态全过程稳定 opt-in（`STABASIS=STAGE`，③b）
+
+③a 之前所有 `[STABILITY]` 路径的起点都是**成桥态**：即便模型里带
+`*STAGE` / `*STAGE_LOAD`，它们也只与 `[STABILITY]` 并列输出，并不
+改变弧长法的初始状态。③b 增加第三种基准
+`STABASIS=STAGE STAGEID=<id>`，把起点放到指定施工阶段的**共转列式
+全量平衡态**：
+
+```text
+R(u,λ) = F0 + λ·Finc − Fint(u),   u(0) = u_stage
+```
+
+`u_stage` 来自 `fem_3d_nl.hpp::solveModel3DStagesNonlinear()` 逐阶段
+求解（每阶段只含已激活单元、累计阶段荷载、当前 `L0`）；为此
+`NLStageResult3D` 新增 `Model3D model` 回传，让 `F0` 与 `Fint(u0)`
+用的是与 `u_stage` 同源的模型。`Finc` 仍只取自 `*STABILITY_LOAD`。
+`STAGEID` 找不到对应阶段时写 `ERROR=stage_not_found`，**不静默
+降级**为成桥态或参考构形。
+
+输出独立写成 `<stem>_stage_stability.txt`，段头为
+`[STAGES]`（逐阶段 `S ID=... NELEM=... NDOF=... U_NORM=...`）+ 
+`[STABILITY] BASIS=stage_state` 的 `STAGE=<id> NELEM=<n> NDOF=<n>` 行。
+三种 `BASIS` 必须分列：`reference_configuration` 的 `u(0)=0` 且 λ 放大
+全部参考荷载；`completion_state` 的 `u(0)=u0`（成桥态）且 `F0` 恒定；
+`stage_state` 的 `u(0)=u_stage` 且 `F0` 是**该阶段累计**恒定荷载。
+
+第 26 项 CTest / BridgeStudio `CB3D23_stage_state_vs_ansys` 用 4 节点
+3 杆 `TRUSS` 浅拱的三阶段构型验证该口径：阶段 1 激活边杆、
+阶段 2 激活中杆、阶段 3 追加荷载，`STAGEID=2` 取 `NELEM=3 NDOF=12`
+的中间态（`CTRL0=-0.000952173872` 非零、`RES0/|F0|=6.34e-13`）。
+ANSYS 18.0 用 `step1 TIME=1` 求同一阶段平衡态、`step2` 以
+`λ = TIME − 1` 施加增量荷载；两个 job 均 0 error，按 `|ΔUY|` 插值
+λ 逐点对拍 `worst|Δλ|≈0.0051`。两侧同源给节点 2/3 加 `UX` 导向
+约束以消除一阶运动机构，并把轴向应变控制在约 `2e-4`，避免
+`LINK180` 默认 Almansi 应变与共转工程应变的系统性差异。
+关键字与结果段见 `input_format_3d.md`。
+
+**能力与边界（如实登记）**：`STAGE` 是独立 opt-in，默认路径输出
+逐位不变；CB3D23 是研究构型而非真实桥梁施工阶段，也不覆盖 CR 梁 /
+索的真实施工工序。位移控制 / Riks、分支屈曲与分支切换、初始缺陷、
+材料非线性、动力 snap-through 仍未闭环，因此 **B3 仍 `P` 不 `Y`**。
+详见 BridgeStudio `B类后续项接入规格.md` §2.5 / §2.6。
 
 ## 10. 输出与可视化
 

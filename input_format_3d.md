@@ -702,8 +702,81 @@ step1 `TIME=1` 建成桥态、step2 荷载控制主 job 用
 **越过极值点 / 下降段** FEM 球面弧长 vs ANSYS 两段 `ARCLEN`
 （CB3D22，FEM `λ_max=1.624941`、下降段 207 步；
 ANSYS `λ_max=1.622748`，两 job 0 error）。
-施工阶段中间态稳定 / 分支屈曲 / 初始缺陷 / 材料非线性
-仍未覆盖，能力矩阵该行继续标 `P` 不标 `Y`。
+
+#### 第二十次 ③b：施工阶段中间态起点基准（`STABASIS=STAGE`）
+
+新增第 15 个键 `STAGEID`，并把 `STABASIS` 的取值扩到第三种
+`STAGE`（**REFERENCE / COMPLETION 两种口径逐位不变**）：
+
+| 键 / 段 | 默认 | 含义 |
+| --- | --- | --- |
+| `STABASIS` | `REFERENCE` | `REFERENCE` = 参考构形；`COMPLETION` = 成桥态起点；`STAGE` = 指定施工阶段中间态起点；其它值写 `ERROR=unsupported_stability_basis` |
+| `STAGEID` | `-1` | 只在使用 `STABASIS=STAGE` 时读取；按 `*STAGE` / `*STAGE_LOAD` 的阶段编号查找。**找不到该阶段写 `ERROR=stage_not_found`**，不静默降级为成桥态或参考构形 |
+
+`STABASIS=STAGE` 时 `cable_solver.exe` 走独立的
+`runStageStabilityMode()`：先用 `solveModel3DStagesNonlinear()`
+逐阶段求**真实共转列式全量平衡态**（每阶段只含已激活单元、累计
+阶段荷载、当前 `L0`），按 `STAGEID` 取出
+`NLStageResult3D` 的 `(u, model, dm)`，再装配
+`R(u,λ) = F0 + λ·Finc − Fint(u)`，`u(0) = u_stage`。
+`F0` 来自 `pick->model.loads` + 弹性支承 `k·value` + CABLE 自重，
+`Finc` 仍只来自 `*STABILITY_LOAD`。`fem_3d_nl.hpp::NLStageResult3D`
+为此新增 `Model3D model` 字段并在每阶段求解后回传，使基准模型与
+`u_stage` 同源（对应 ③a 的 `basisModel` 设计决策）。
+
+结果文件为 `<stem>_stage_stability.txt`（不是
+`<stem>_stability.txt` / 主链路结果文件），段顺序为
+`[STAGES]` → `[BUCKLING]` → `[STABILITY]` → `[END]`：
+
+```text
+[STAGES]
+NSTAGE=3
+S ID=1 CONVERGED=1 NELEM=2 NDLOAD=2 NDOF=12 U_NORM=0.0013465772038272
+S ID=2 CONVERGED=1 NELEM=3 NDLOAD=2 NDOF=12 U_NORM=0.0013465772038272
+S ID=3 CONVERGED=1 NELEM=3 NDLOAD=2 NDOF=12 U_NORM=0.0020237470517885
+[BUCKLING]
+NMODES=0 NDOF=0 BASIS=linear_elastic
+ERROR=nonlinear_state_not_supported
+[STABILITY]
+KIND=spherical_arc_length STATUS=ok BASIS=stage_state PATHMETHOD=SPHERE
+NSTEP=133 NPOINT=134 CONVERGED=1 CTRLNODE=2 CTRLDOF=2 STRAIN=0 PSI=1
+STATE CTRL0=-0.00095217387221742 F0_NORM=14142.135623731 FINC_NORM=28284.271247462 RES0=8.9649516028116e-09
+STAGE=2 NELEM=3 NDOF=12
+LAMBDA_FINAL=2.5757758309031 ERROR=none
+I STEP=0 LAMBDA=0 CTRL=0 RES=8.9649516028116e-09 ITER=0 DS=0.01 PIVOT=1 CONVERGED=1
+...
+[END]
+```
+
+`STAGE=` 行只在 `stageId >= 0` 时出现，`NELEM` / `NDOF` 取自选中
+阶段的同源模型；`[STAGES]` 的 `NELEM` 逐阶段留痕，用来证明选中的
+确实是**中间态**（例如阶段 1 `NELEM=2` → 阶段 2 `NELEM=3`）。
+`STATE` 行口径与 `completion_state` 相同：`CTRL0 = u0(ctrl)` 是
+阶段中间态已有的控制位移（非零），`RES0 = |F0 − Fint(u0)|` 是
+起点闭合残差；段内 `CTRL` 仍是**相对起点的增量**。
+三种 `BASIS` 的 λ 与起点各不相同，报告与计算书必须分列：
+
+| `BASIS` | 起点 `u(0)` | λ 放大的荷载 |
+| --- | --- | --- |
+| `reference_configuration` | `0` | 全部参考荷载 |
+| `completion_state` | 成桥态 `u0` | 仅 `*STABILITY_LOAD` 增量荷载，成桥态 `F0` 恒定 |
+| `stage_state` | 指定施工阶段 `u_stage` | 仅 `*STABILITY_LOAD` 增量荷载，该阶段累计 `F0` 恒定 |
+
+ANSYS 对标仍是「先求同一阶段平衡态（`step1 TIME=1`），再在
+该状态上加载」的两段口径：`step2` 写
+`F_end = F_orig + LAMMAX·PINC` 且 `TIME = 1 + LAMMAX`，
+因此 `λ = TIME − 1`（不用反力求和）。第 26 项 CTest
+（`tests/benchmark/stage_stability_3d/`，214 项检查）用 CB3D23
+的 15 份冻结证据离线守卫该口径，含 `STAGEID=99` 负例
+`ERROR=stage_not_found` 与当前二进制逐字节重放。
+
+**如实边界**：`STAGE` 是独立 opt-in（默认 `REFERENCE`、
+`STABILITY=0` 输出逐位不变）；CB3D23 是 4 节点 / 3 杆 `TRUSS`
+浅拱研究构型，不是真实桥梁施工阶段，两侧同源加 `UX` 导向约束
+消除一阶运动机构；轴向应变取约 `2e-4` 以避开 `LINK180` 默认
+Almansi 应变与 FEM 共转工程应变的系统性差异。位移控制 / Riks、
+分支屈曲与分支切换、初始缺陷、材料非线性、动力 snap-through
+仍未覆盖，能力矩阵该行继续标 `P` 不标 `Y`（§2.5 / §2.6）。
 
 ### 带约束成桥目标索力优化过程量（`[OPT]`）
 
