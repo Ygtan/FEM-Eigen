@@ -118,7 +118,8 @@ Newton-Raphson：`assembleState` 每步组装 `Fint/Fext` 与一致切线（轴�
 
 以上早期条目均接入 CTest 与 `run_tests.ps1`。**当前全量口径以
 `tests/benchmark/README.md` 为准：③a 之后合计 25 个 CTest，
-③b 新增第 26 项后合计 26 个 CTest**，
+③b 新增第 26 项后合计 26 个 CTest，Riks 闭环新增第 27 项后
+合计 27 个 CTest**，
 `ctest` 与 `run_tests.ps1` 双入口覆盖，`run_tests.ps1 -BuildDir <dir>`
 可指向干净构建目录。③a 新增两项纯离线回归：
 
@@ -140,6 +141,14 @@ Newton-Raphson：`assembleState` 每步组装 `Fint/Fext` 与一致切线（轴�
   `reference/cb3d23_stage_state.json`。冻结证据与历史黄金值同为
   mingw64 工具链，故重放要求**严格逐字节一致**（不走
   `replay_tolerance.py`）。
+- `riks_stage_stability_3d/`（第二十次 Riks 闭环，第 27 项，63 项守卫）：
+  `PATHMETHOD=RIKS` 仅在 `STABASIS=STAGE` 入口 opt-in，是
+  Wempner–Riks 正交轨迹（校正增量与上一收敛步正交、`dλ` 线性唯一解），
+  与 ANSYS `ARCLEN` / ABAQUS `RIKS` 的球面型不同源。闭式 `λ(v)`
+  逐点核验 + SPHERE/RIKS 同问题双方法交叉 + CB3D23 跨基准终点锚点
+  + 未知方法负例 + 当前二进制逐字节重放。黄金值
+  `reference/cb3d24_riks_stage.json`（3109 checks + 20 criteria）。
+  默认 `SPHERE` 与 REFERENCE / COMPLETION 入口零改动。
 
 新增 benchmark 的通用做法：冻结原始 `.dat` / `.inp` / `.out` / `.csv`
 与 FEM 输出到 `cases/`，由 `build_reference_*.py` 从冻结证据**派生**

@@ -632,5 +632,170 @@ if (Test-Path $ssScript) {
     $failed++
 }
 
+# ---- Wempner–Riks 正交轨迹（PATHMETHOD=RIKS，仅 STAGE 起点 opt-in）----
+# 每轮校正增量与上一收敛步正交，dλ 由线性方程唯一确定；与球面弧长
+# 跟踪同一 R(u,λ)=0，作「同问题、双方法」交叉验证。闭式 von Mises
+# 两杆 λ(v) 逐点核验 + CB3D23 跨基准终点 + 未知方法负例 + 二进制重放。
+$rkScript = Join-Path $root "tests\benchmark\riks_stage_stability_3d\compare_riks_stage_3d.py"
+$rkCases  = Join-Path $root "tests\benchmark\riks_stage_stability_3d\cases"
+$rkRef    = Join-Path $root "tests\benchmark\riks_stage_stability_3d\reference"
+if (Test-Path $rkScript) {
+    $py = Get-Command python -ErrorAction SilentlyContinue
+    if ($py) {
+        Write-Host ""
+        Write-Host "== Wempner-Riks orthogonal path at STAGE start (offline) =="
+        & python $rkScript --bin $bin --cases $rkCases --reference $rkRef
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[PASS] Riks stage-state stability benchmark"
+        } else {
+            Write-Host "[FAIL] Riks stage-state stability benchmark"
+            $failed++
+        }
+    } else {
+        Write-Host "[MISS] python not found, skip Riks stage-state stability benchmark"
+        $failed++
+    }
+} else {
+    Write-Host "[MISS] Riks stage-state stability benchmark script missing: $rkScript"
+    $failed++
+}
+
+# ---- 第二十一次力学①：位移控制 / 线搜索（opt-in，默认全关）----
+# 控制 DOF 位移增量驱动、λ 由线性约束唯一确定；Armijo 回溯线搜索保持位移
+# 约束、不改变平衡路径。von Mises 两杆闭式 P(v) 逐点锚点 + 线搜索/无线搜索
+# 同路径 + 细步 λ_max→λ_cr + 奇异控制 DOF 负例 + 二进制逐字节重放。
+$dcScript = Join-Path $root "tests\benchmark\displacement_control_3d\compare_displacement_control_3d.py"
+$dcCases  = Join-Path $root "tests\benchmark\displacement_control_3d\cases"
+$dcRef    = Join-Path $root "tests\benchmark\displacement_control_3d\reference"
+if (Test-Path $dcScript) {
+    $py = Get-Command python -ErrorAction SilentlyContinue
+    if ($py) {
+        Write-Host ""
+        Write-Host "== Displacement control + line search (offline) =="
+        & python $dcScript --bin $bin --cases $dcCases --reference $dcRef
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[PASS] Displacement control + line search benchmark"
+        } else {
+            Write-Host "[FAIL] Displacement control + line search benchmark"
+            $failed++
+        }
+    } else {
+        Write-Host "[MISS] python not found, skip displacement control benchmark"
+        $failed++
+    }
+} else {
+    Write-Host "[MISS] displacement control benchmark script missing: $dcScript"
+    $failed++
+}
+
+# ---- 第二十一次力学②：初始缺陷形态 / 幅值 / 缺陷敏感性（opt-in，默认全关）----
+# 线性屈曲模态生成无应力缺陷场；幅值→λ_max 单调 + 反对称模态对称破缺 +
+# 独立闭式 P(v) 锚点 + IMPMODE 越界负例 + IMPERF=0 零污染 + 二进制逐字节重放。
+$ipScript = Join-Path $root "tests\benchmark\initial_imperfection_3d\compare_imperfection_3d.py"
+$ipCases  = Join-Path $root "tests\benchmark\initial_imperfection_3d\cases"
+$ipRef    = Join-Path $root "tests\benchmark\initial_imperfection_3d\reference"
+if (Test-Path $ipScript) {
+    $py = Get-Command python -ErrorAction SilentlyContinue
+    if ($py) {
+        Write-Host ""
+        Write-Host "== Initial imperfection + sensitivity (offline) =="
+        & python $ipScript --bin $bin --cases $ipCases --reference $ipRef
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[PASS] Initial imperfection + sensitivity benchmark"
+        } else {
+            Write-Host "[FAIL] Initial imperfection + sensitivity benchmark"
+            $failed++
+        }
+    } else {
+        Write-Host "[MISS] python not found, skip initial imperfection benchmark"
+        $failed++
+    }
+} else {
+    Write-Host "[MISS] initial imperfection benchmark script missing: $ipScript"
+    $failed++
+}
+
+# ---- 第二十一次力学③：材料非线性本构接入 3D CR 梁（opt-in，默认 ELASTIC）----
+# 单轴应力-应变平台 + 矩形截面塑性铰逐阶段屈服 + 混凝土受拉开裂 +
+# 弹性段纤维 vs Kl12 逐位对齐 + 独立 Python 纤维积分锚点 + 二进制逐字节重放。
+$mnScript = Join-Path $root "tests\benchmark\material_nonlinear_3d\compare_material_nl_3d.py"
+$mnCases  = Join-Path $root "tests\benchmark\material_nonlinear_3d\cases"
+$mnRef    = Join-Path $root "tests\benchmark\material_nonlinear_3d\reference"
+if (Test-Path $mnScript) {
+    $py = Get-Command python -ErrorAction SilentlyContinue
+    if ($py) {
+        Write-Host ""
+        Write-Host "== Material nonlinear CR beam (offline) =="
+        & python $mnScript --bin $bin --cases $mnCases --reference $mnRef
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[PASS] Material nonlinear CR beam benchmark"
+        } else {
+            Write-Host "[FAIL] Material nonlinear CR beam benchmark"
+            $failed++
+        }
+    } else {
+        Write-Host "[MISS] python not found, skip material nonlinear benchmark"
+        $failed++
+    }
+} else {
+    Write-Host "[MISS] material nonlinear benchmark script missing: $mnScript"
+    $failed++
+}
+
+# ---- 第二十一次力学④：分岔点检测与分支切换（opt-in，默认 BIFURC=0）----
+# 高拱 von Mises 桁架反对称分岔闭式锚点 + pivotRatio/一致切线特征值确认
+# + 模态扰动切换分支 + 三类负例 + 二进制逐字节重放。FEM 自洽，离线。
+$bfScript = Join-Path $root "tests\benchmark\bifurcation_switch_3d\compare_bifurcation_3d.py"
+$bfCases  = Join-Path $root "tests\benchmark\bifurcation_switch_3d\cases"
+$bfRef    = Join-Path $root "tests\benchmark\bifurcation_switch_3d\reference"
+if (Test-Path $bfScript) {
+    $py = Get-Command python -ErrorAction SilentlyContinue
+    if ($py) {
+        Write-Host ""
+        Write-Host "== Bifurcation detection & branch switching (offline) =="
+        & python $bfScript --bin $bin --cases $bfCases --reference $bfRef
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[PASS] Bifurcation switching benchmark"
+        } else {
+            Write-Host "[FAIL] Bifurcation switching benchmark"
+            $failed++
+        }
+    } else {
+        Write-Host "[MISS] python not found, skip bifurcation benchmark"
+        $failed++
+    }
+} else {
+    Write-Host "[MISS] bifurcation benchmark script missing: $bfScript"
+    $failed++
+}
+
+# ---- 第二十一次力学⑤：动力 snap-through（opt-in，默认 DYN=0）----
+# 一致/集中质量矩阵 + Newmark-beta 隐式时程；独立 SDOF RK4 时程锚点
+# + 低于静力极限的动力跃越 + 荷载时程/阻尼/质量敏感性 + 负例 + 逐字节重放。
+# 独立新模块，不改静力链；FEM 自洽，离线。
+$dyScript = Join-Path $root "tests\benchmark\dynamic_snapthrough_3d\compare_dynamic_3d.py"
+$dyCases  = Join-Path $root "tests\benchmark\dynamic_snapthrough_3d\cases"
+$dyRef    = Join-Path $root "tests\benchmark\dynamic_snapthrough_3d\reference"
+if (Test-Path $dyScript) {
+    $py = Get-Command python -ErrorAction SilentlyContinue
+    if ($py) {
+        Write-Host ""
+        Write-Host "== Dynamic snap-through / Newmark-beta (offline) =="
+        & python $dyScript --bin $bin --cases $dyCases --reference $dyRef
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[PASS] Dynamic snap-through benchmark"
+        } else {
+            Write-Host "[FAIL] Dynamic snap-through benchmark"
+            $failed++
+        }
+    } else {
+        Write-Host "[MISS] python not found, skip dynamic benchmark"
+        $failed++
+    }
+} else {
+    Write-Host "[MISS] dynamic benchmark script missing: $dyScript"
+    $failed++
+}
+
 if ($failed -eq 0) { Write-Host "ALL TESTS PASSED" } else { Write-Host "$failed TEST(S) FAILED"; exit 1 }
 

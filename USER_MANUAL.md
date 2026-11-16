@@ -82,7 +82,10 @@ python tests/regression/compare_regression.py --freeze --bin build --src . --bas
 都是**纯离线**回归：只读冻结证据与黄金值，必要时用当前二进制重放，
 不重跑 ANSYS。**③b（第二十次）新增第 26 项**
 `stage_stability_3d_benchmark`（施工阶段中间态起点全过程稳定，
-214 项检查）后合计 **26 个 CTest**，同样是纯离线回归。
+214 项检查）；同次 Riks 闭环再新增第 27 项
+`riks_stage_stability_3d_benchmark`（STAGE 起点的 Wempner–Riks
+正交轨迹，闭式 + 双方法交叉，63 项守卫）后合计 **27 个 CTest**，
+同样是纯离线回归。
 指定干净构建目录用 `-BuildDir` 参数：
 
 ```powershell

@@ -1,0 +1,11 @@
+# 第二十一次力学②：初始缺陷形态 / 幅值 / 缺陷敏感性
+# von Mises 两杆浅桁架；缺陷源 = 线性屈曲模态，无应力几何偏差（L0 同步）。
+# IMPERF=0 关闭；IMPMODE=0 对称竖向（幅值→λ_max 单调）；IMPMODE=1 反对称横向（对称破缺）。
+G vm E=2.1e11 A=0.001 B=2.0 H=0.5 PREF=2.0e6 TOL=1.0e-7 MAXSTEPS=800 MAXITER=30 VMAX=1.0 DSMAX=0.1 DSMIN=1.0e-7
+C imp_off    vm DS=0.005 PSI=1.0 IMPERF=0 TAG=off
+C imp_a0     vm DS=0.005 PSI=1.0 IMPERF=1 IMPMODE=0 IMPAMP=0 TAG=a0
+C imp_a1     vm DS=0.005 PSI=1.0 IMPERF=1 IMPMODE=0 IMPAMP=0.005 TAG=a1
+C imp_a2     vm DS=0.005 PSI=1.0 IMPERF=1 IMPMODE=0 IMPAMP=0.01 TAG=a2
+C imp_a3     vm DS=0.005 PSI=1.0 IMPERF=1 IMPMODE=0 IMPAMP=0.02 TAG=a3
+C imp_anti   vm DS=0.005 PSI=1.0 IMPERF=1 IMPMODE=1 IMPAMP=0.01 TAG=anti
+C imp_badmode vm DS=0.005 PSI=1.0 IMPERF=1 IMPMODE=9 IMPAMP=0.01 TAG=badmode

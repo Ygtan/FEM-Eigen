@@ -2,6 +2,165 @@
 
 本文件记录 FEM-Eigen 项目的新增功能和主要修改内容。
 
+## 2026-11-16
+
+### 收口：第二十二次 —— B3 非线性稳定全过程由 P 推 Y（任务 #165）
+
+用户任务链 `#165`：五项力学全部收口、三阶段验收口径全部走完、干净构建
+全量回归通过后，把 `BridgeStudio/能力边界矩阵.md` 的「非线性稳定全过程」
+3D 格由 `P` 改 `Y`，同步 BridgeStudio 三守卫与文档。**FE 侧无新增力学、无内核
+改动**——本轮是能力口径收口，不是新功能；下列历史条目中「B3 仍 P 不 Y」
+均为当时事实、保留不删。
+
+- **收口依据**：§2.6 三阶段全部走完——①/② 成桥态起点同源 + CB3D21 真实
+  斜拉桥 ANSYS 两段对标（第 22/23 项 CTest）、③a/③b 施工阶段中间态
+  opt-in（CB3D23 / 第 24—27 项 CTest）、第二十一次 §2.5 五项力学
+  （① 位移控制 / 线搜索 25/25、② 初始缺陷 35/35、③ 材料非线性 491/491、
+  ④ 分岔切换 42/42、⑤ 动力 snap-through 88/88，第 28—32 项 CTest）。
+- **全量回归**：`ctest` **32/32**、`run_tests.ps1 -BuildDir _d_build`
+  `ALL TESTS PASSED`；BridgeStudio 三守卫（B 类规格 209/209、能力矩阵
+  282/282、app 109/109）与自然语言闭环守卫 44/44 全绿。
+- **`Y` 的边界**：全部能力 opt-in 默认关闭、`STABILITY=0` 既有输出逐位
+  不变；五项力学多在 `snap_probe` / `mat_nl_probe` / `dyn_probe` 独立
+  探针层、不进 `cable_solver` 默认求解链；与 ANSYS 瞬态 / 动力不同源、
+  Riks 与 ANSYS `ARCLEN` 球面型不同源；λ 不是 JTG 3362 稳定安全系数；
+  不构成规范合格判定。逐项边界见 `BridgeStudio/B类后续项接入规格.md`
+  §6 第二十二次记录。
+
+### 新增：第二十一次力学⑤ —— 动力 snap-through（Newmark-β，B3 仍 P 不 Y）
+
+用户「继续补 B3 五项力学」的第⑤项，也是最难的一项（从零实现动力模块）。
+独立新模块、默认不调用、静力链逐位不变、离线不跑 ANSYS。
+
+- **`dynamic_newmark_3d.hpp`（新增）**：`NewmarkOptions3D`（dt / tEnd /
+  beta=0.25 / gamma=0.5 / massMode / cMass / cStiff / loadType /
+  snapThreshold / tolForce / maxIter / ctrlNode / ctrlDof / strainMeasure）、
+  `NewmarkPoint3D` / `NewmarkResult3D`、`denseMassMatrix3D`（一致质量复用
+  `assembleMassMatrix3D`，`massMode=1` 行和集中）、`solveNewmarkDynamic3D`。
+  每步经典预测 `u+dt·v+dt²(0.5−β)a` + Newton 解
+  `(a0·M+a1·C+Kt)Δu = Fext−Fint−M·a−C·v`；残差只统计自由自由度
+  （排除支反力）；Rayleigh 阻尼 `C=cMass·M+cStiff·Kt(u_n)` 步起点冻结。
+  能量按梯形增量积分（动能 / 应变能 / 外功）。
+- **`dyn_probe.cpp`（新增）**：文件驱动 `*.dyn`，`G` 组给几何/材料/
+  密度，`C` 行 `DYN=1` 及 Newmark 参数；输出逐时 `T,` 行与闭式质量 /
+  `v_max` / `snap_time` 等 `S,` 行。`DYN=0` 只输出锚点，逐位零污染。
+- **第 32 项 CTest** `dynamic_snapthrough_3d_benchmark` + benchmark
+  `tests/benchmark/dynamic_snapthrough_3d/`：浅拱 von Mises 两杆
+  （`B=2,H=0.5`）阶跃荷载 `P=0.85·P_cr`（低于静力极限 `P_cr≈1.1884e6`）
+  实测 `v_max≈1.361`、`t_snap≈0.0039 s`；一致质量 `m=2·rhoA·L0/3`
+  与集中质量 `m=rhoA·L0` 各自对齐独立 SDOF RK4（步长 1/5，
+  位移误差 <2e-3 m、速度误差 <5 m/s）；覆盖低荷载 / 爬升 / 半正弦
+  不跃越、阻尼耗散、dt 加密收敛、能量与外功、零质量 / 零步长 /
+  非法 β / `DYN=0` 负例；冻结 CSV sha256 + 当前二进制逐字节重放，
+  **88/88**。FEM 自洽深度，不跑 ANSYS。B3 仍 `P` 不 `Y`。
+
+### 新增：第二十一次力学④ —— 分岔点检测与分支切换（opt-in，B3 仍 P 不 Y）
+
+用户「继续补 B3 五项力学」的第④项。默认 `BIFURC=0`、既有输出逐位不变、离线不跑 ANSYS。
+
+- **`stability_path_3d.hpp`**：`ArcLengthOptions3D` 新增 `bifurcate=0 /
+  bifPivot=0.05 / bifMode=1 / bifAmp=0 / bifEigTol=1e-3`（默认整段跳过）；
+  `ArcLengthPoint3D` / `ArcLengthResult3D` 新增 `bif*` 诊断字段（默认全 0）。
+  `solveArcLengthPath3D` 每个收敛点先用**已逐点输出但此前未使用**的
+  `pivotRatio` 做轻量入口，再用当前一致切线自由子块最小特征值
+  `|μ_min|/max|diag(Kff)| < 1e-3` 确认临界点（实测 2.9e-4）。确认后沿
+  `computeBucklingModeShape3D(m, bifMode)` 的模态施加 `bifAmp` 位移扰动
+  （只改位移、不改 `L0`/荷载/求解器，多阶分岔只切换一次），后续弧长步
+  从扰动构形继续跟踪分岔后分支；扰动后步长折半助 Newton 收敛。
+- **`snap_probe.cpp`**：`C` 行解析 `BIFURC / BIFPIV / BIFMODE / BIFAMP`，
+  传入 opt；仅 opt-in 时输出 `M` 行与 `bif_*` 诊断 `S,` 行，默认零污染。
+- **第 31 项 CTest** `bifurcation_switch_3d_benchmark` + benchmark
+  `tests/benchmark/bifurcation_switch_3d/`：高拱 von Mises 桁架
+  （`B=1,H=3`）反对称分岔闭式 `L³=L0·h²`（两根正根，先发生者
+  `v_bif≈0.44735, λ_bif≈26.0152`）先于对称极值点 `L³=B²·L0`
+  （`v_sym≈1.92555, λ_sym≈82.3708`）；FEM 切换点 `v=0.44630, λ=25.9567`
+  对齐闭式。反对称切换后 λ_max 82.37→26.24、模态幅值 0.44→1.50、
+  `v_final` 由 +2.926 变 −1.501、不再满足对称解析；对称模态 /
+  零幅值 / 模态越界三类负例不破缺或与主路径逐位一致；
+  独立 Python 闭式求根锚点 + 冻结 CSV sha256 + 当前二进制逐字节重放，
+  **42/42**。FEM 自洽深度，不跑 ANSYS。B3 仍 `P` 不 `Y`。
+
+### 新增：第二十一次力学③ —— 材料非线性本构接入 3D CR 梁（opt-in，B3 仍 P 不 Y）
+
+用户「继续补 B3 五项力学」的第③项。默认 ELASTIC、既有输出逐位不变、离线不跑 ANSYS。
+
+- **`fem_3d.hpp` / `element3D`**：新增 opt-in 字段 `matKind`（默认
+  `ELASTIC`）、`matFy` / `matFt`、`matNfy` / `matNfz`；`readModel3D`
+  的 `*R` 段解析 `MATKIND` / `MATFY` / `MATFT` / `MATNFY` / `MATNFZ`
+  （键缺席时字段保持默认，逐位走原路径）。
+- **`section.hpp`**：新增 `gaussLegendreRule(n)`（Newton 求根，供纤维
+  截面用 Gauss 点精确积分 `y²,z²`）；补 `<string>` / `<utility>` include。
+- **`fem_3d_nl.hpp`**：`CRElemData` 新增 `FiberNlData`（`enabled` 仅在
+  `BEAM` + `STEEL/CONCRETE` 时置真）；`crMakeElemData` 用 Gauss 点/权重
+  构造等效矩形纤维截面（离散 A/Iy/Iz 与解析逐位一致，弃用会有 1.6%
+  Iz 误差的中点离散）；新增 `crFiberLocalForce`（轴力/双向弯矩由
+  `sectionResponse` 积分，端剪力由梁段平衡 `q1=(q5+q11)/L`、
+  `q2=−(q4+q10)/L` 补齐，扭转保持线弹性）与 `crFiberLocalTangent`
+  （中心差分，自动覆盖 D12/D13/D23 与弹塑性活动集）；`crElementInternal`
+  BEAM 分支 opt-in 接入，`enabled=false` 时与改动前逐字节同源。
+- **`mat_nl_probe.cpp`**：文件驱动截面/纤维梁探针 CLI，供离线闭式锚点。
+- **第 30 项 CTest** `material_nonlinear_3d_benchmark` + benchmark
+  `tests/benchmark/material_nonlinear_3d/`：单轴应力-应变（钢屈服平台
+  `fy·A`、混凝土受拉开裂退出）、矩形截面塑性铰逐阶段屈服（`My<M3<Mp`、
+  塑性切线 < 弹性切线）、弹性段纤维 vs Kl12 逐位对齐（maxdq~5e-8、
+  maxdK 相对 ~5e-8）、独立 Python 纤维积分（numpy Gauss 点）锚点、
+  当前二进制逐字节重放，**491/491 checks**。离线不跑 ANSYS。
+  `run_tests.ps1` / `input_format_3d.md` 同步登记。
+- B3 结论**仍 `P` 不 `Y`**：材料非线性只在 CR 梁 opt-in 路径，未接
+  `cable_solver` 成桥态主链路；剩余两项（分支屈曲、动力 snap-through）
+  仍未实现。全量 `ctest` 30/30。
+
+### 新增：第二十一次力学② —— 初始缺陷形态 / 幅值 / 敏感性（opt-in，B3 仍 P 不 Y）
+
+用户「继续补 B3 五项力学」的第②项。默认全关、既有输出逐位不变、离线不跑 ANSYS。
+
+- **`stability_path_3d.hpp`**：新增独立函数 `computeBucklingModeShape3D`（线性
+  屈曲模态向量，稠密特征问题 `(K+λKg)φ=0`，`φ` 最大分量固定为 −1 保证符号
+  可复现；**不改** `fem_3d.hpp::computeBucklingResult3D`，后者只返回 factors、
+  被 `example_3d_grillage` 等多处调用）；`applyImperfectionToNodes` 把模态按幅值
+  施加到节点坐标，`updateL0=true` 同步更新 TRUSS/CABLE 无应力长度（无应力几何
+  缺陷，λ=0 即平衡态；实测 L0 不变时 amp≥0.005 因初始内力把切线刚度推到奇异、
+  弧长法失稳）。
+- **`snap_probe.cpp`**：`C` 行新增 `IMPERF` / `IMPMODE` / `IMPAMP`（默认 0/0/0），
+  opt-in 时输出 `imp_ok` / `imp_lambda` / `imp_dx2` / `imp_dy2` / `imp_maxphi`
+  诊断 `S,` 行；`IMPERF=0` 的既有 `.snap` 输出逐位不变。实测最低模态对称竖向
+  （顶点下移 = 幅值、线性屈曲因子 3.18），第 2 阶反对称横向（顶点 X 偏移）。
+- **第 29 项 CTest** `initial_imperfection_3d_benchmark` + benchmark
+  `tests/benchmark/initial_imperfection_3d/`：幅值 0→0.005→0.01→0.02 的
+  `λ_max_fit` 0.59436→0.57719→0.56073→0.52831 **严格单调下降**，与独立闭式
+  `λ_cr`（缺陷后几何 `h=H−a`、`L0'=hypot(B,h)`）误差 ≤1.5e-4；闭式 `P(v)`
+  逐点锚点；反对称模态对称破缺（顶点 X 偏移=幅值、Y 不偏移）；`IMPMODE=9`
+  越界负例 `imp_ok=0`；`IMPERF=0` 与零幅值路径逐位一致且无诊断键。冻结 CSV
+  当前二进制逐字节重放，35/35 checks。离线不跑 ANSYS。
+- B3 结论**仍 `P` 不 `Y`**：本项只在 `snap_probe` 独立探针层，未接
+  `cable_solver` 成桥态主链路；其余三项（材料非线性 / 分支屈曲 /
+  动力 snap-through）仍未实现。
+
+### 新增：第二十一次力学① —— 位移控制 / 线搜索（opt-in，B3 仍 P 不 Y）
+
+用户「继续补 B3 五项力学」的第①项。默认全关、既有输出逐位不变。
+
+- **`stability_path_3d.hpp`**：`ArcLengthOptions3D` 新增 opt-in 字段
+  `controlMode`（1=位移控制）/ `ctrlDispStep`（每步控制位移增量）/
+  `lineSearch`（1=Armijo 回溯）/ `lsArmijo` / `lsAlphaMin` / `lsMaxCut`；
+  `ArcLengthPoint3D` 新增 `lineCuts` / `alpha` 诊断字段。位移控制把控制
+  DOF 位移增量锁定为 `ctrlDispStep`（符号第一步锁定、越过极限点不变），
+  λ 由线性约束唯一确定：`dλ=(Δ−base(ctrl))/duF(ctrl)`。线搜索对整步
+  校正缩放 `alpha`，因控制位移约束对任意 alpha 成立，故不改变平衡路径；
+  正常步 alpha=1、0 回溯。默认字段 0/0/0 时弧长 / Riks 路径逐位不变。
+- **`snap_probe.cpp`**：`C` 行新增 `CTRLMODE` / `LINESEARCH` / `CTRLSTEP` /
+  `CTRLNODE` / `CTRLDOF`（默认 0/0/0/2/2），opt-in 时输出 `ctrlmode` /
+  `linesearch` / `ctrlstep` / `ls_*` 诊断 `S,` 行；既有 `.snap` 输出逐位不变。
+- **第 28 项 CTest** `displacement_control_3d_benchmark` + benchmark
+  `tests/benchmark/displacement_control_3d/`：von Mises 两杆闭式 `P(v)`
+  逐点锚点、`worst_dP≈2.2e-8 N`；线搜索 / 无线搜索同路径逐点
+  `worst|Δλ|=3.9e-18`；细步 `λ_max=0.594204` 比粗步 `0.594016` 更接近
+  闭式 `λ_cr=0.594210`；奇异控制 DOF 负例 `singular_control_dof`。
+  冻结 CSV 当前二进制逐字节重放，25/25 checks。离线不跑 ANSYS。
+- B3 结论**仍 `P` 不 `Y`**：本项只是 `snap_probe` 独立探针层的 opt-in
+  研究能力，未接入 `cable_solver` 成桥态主链路；其余四项（初始缺陷 /
+  材料非线性 / 分支屈曲 / 动力 snap-through）仍未实现。
+
 ## 2026-11-15
 
 ### 新增：③b 施工阶段中间态起点的全过程稳定（CB3D23，第二十次）
@@ -64,6 +223,19 @@ Riks、分支屈曲与分支切换、初始缺陷、材料非线性、动力 sna
   （证据与历史黄金值同为 mingw64 工具链，故不放宽为
   `replay_tolerance.py`）。`CMakeLists.txt` 与 `run_tests.ps1`
   已注册，`tests/benchmark/README.md` 更新为合计 26 个 CTest。
+- **第 27 项 CTest `riks_stage_stability_3d_benchmark`**（第二十次 Riks
+  闭环，`tests/benchmark/riks_stage_stability_3d/`）：`PATHMETHOD=RIKS`
+  从负例转为**仅 `STABASIS=STAGE` 入口 opt-in** 的 Wempner–Riks
+  正交轨迹（校正增量与上一收敛步正交，`dλ` 线性唯一解；第一步仍用
+  球面约束启动，默认路径逐位不变）。REFERENCE / COMPLETION 入口
+  仍拒绝 RIKS，第 20 项 `von_mises_bad_method` 负例保持原样；与
+  ANSYS `ARCLEN`（球面型）不同源。8 份冻结证据 + 黄金值
+  `reference/cb3d24_riks_stage.json`（3109 checks + 20 strings +
+  20 criteria）：闭式 `λ(v)` 逐点 `worst=4.6e-14`（184 点）、
+  SPHERE/RIKS 双方法按 `CTRL` 插值 `worst=1.47e-4`、CB3D23 终点
+  与第 26 项冻结 SPHERE 一致、未知方法负例、当前二进制逐字节重放。
+  `compare_riks_stage_3d.py` 63/63 守卫通过；
+  `tests/benchmark/README.md` 更新为合计 27 个 CTest。
 - **依赖补齐**：`anastruct 1.7.1` / `python-docx 1.2.0` /
   `pypdf 7.1.0`（清华镜像；默认 PyPI 走代理报
   `ProxyError 502 Bad Gateway` 与 wheel 文件占用）。补齐前 53 个

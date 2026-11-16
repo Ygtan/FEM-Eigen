@@ -574,7 +574,7 @@ S 3 4 1 0.04180729204 6.325719466e-09 9178792.139 0 1
 | 键 | 默认 | 含义 |
 | --- | --- | --- |
 | `STABILITY` | `0` | `1` = 开启独立稳定路径模式 |
-| `PATHMETHOD` | `SPHERE` | 仅支持球面弧长法；其它值写 `ERROR=unsupported_path_method` |
+| `PATHMETHOD` | `SPHERE` | `SPHERE` = 默认 Crisfield 球面弧长；`RIKS` = Wempner–Riks 正交轨迹，**仅 `STABASIS=STAGE` 起点 opt-in**（REFERENCE / COMPLETION 入口仍写 `ERROR=unsupported_path_method`）；其它值一律同码拒绝 |
 | `CTRLNODE` | `0` | 控制节点号；`0` = 未给，内核回 `invalid_control_dof` |
 | `CTRLDOF` | `2` | 控制自由度 1~6 |
 | `CTRLTARGET` | `1.0` | `\|u_ctrl\|` 达到此值即终止 |
@@ -617,10 +617,32 @@ I STEP=1 LAMBDA=0.0031 CTRL=-0.0029 RES=4.2e-09 ITER=3 DS=0.01 PIVOT=0.98 CONVER
 - λ 越过极限点后自然下降并可穿过 0 变负（反向荷载），这是荷载控制
   Newton 做不到的下降段。`fem_3d_nl.hpp::solveModel3DNonlinear`
   **仍是荷载控制 Newton**，`NonlinearOptions3D` 默认值一字未动。
-- **边界**：只有球面弧长法；位移控制 / Riks / 分支屈曲与分支切换 /
-  初始缺陷与缺陷敏感性 / 材料非线性 / CR 梁后屈曲基准题均未覆盖。
-  `BASIS=reference_configuration` 明示路径基于参考构形，不等于成桥态
-  闭环已具备全过程稳定分析。
+- **边界**：默认只有球面弧长法；位移控制 / 线搜索 / 分支屈曲与
+  分支切换 / 初始缺陷与缺陷敏感性 / 材料非线性 / CR 梁后屈曲基准题
+  均未覆盖。`BASIS=reference_configuration` 明示路径基于参考构形，
+  不等于成桥态闭环已具备全过程稳定分析。Riks 只在施工阶段起点
+  opt-in（见下），**不**改变上述边界。
+
+#### 第二十次补记：STAGE 起点的 Riks 正交轨迹（`PATHMETHOD=RIKS`）
+
+在 `STABASIS=STAGE STAGEID=<id>` 入口上，`PATHMETHOD=RIKS` 由负例
+转为 opt-in 可用。两者跟踪**同一条** `R(u,λ)=F0+λ·Finc−Fint(u)=0`，
+只是每步的约束方程不同：
+
+| | `SPHERE`（默认） | `RIKS`（仅 STAGE opt-in） |
+| --- | --- | --- |
+| 约束 | `duᵀdu + ψ²dλ² = ds²`（球面） | `duR·prevDu + dλ(duF·prevDu + ψ²prevDlam) = 0`（校正增量正交） |
+| dλ | 二次方程 + 夹角余弦选根 | **线性方程，唯一解** |
+| 输出 | `KIND=spherical_arc_length` / `PATHMETHOD=SPHERE` | `KIND=wempner_riks_orthogonal` / `PATHMETHOD=RIKS` |
+
+- 第一步无前序增量时 RIKS 用球面约束启动，因此球面默认输出逐位不变。
+- 本项目 `RIKS` 是 **Wempner–Riks 正交型**；与 ANSYS `ARCLEN` /
+  ABAQUS `*STATIC,RIKS` 的球面型**不同源**，不可当作同一算法对拍。
+- 只在 `STABASIS=STAGE` 放开：REFERENCE / COMPLETION 入口给
+  `PATHMETHOD=RIKS` 仍写 `ERROR=unsupported_path_method`，第 20 项
+  `von_mises_bad_method` 负例逐位不变。
+- 第 27 项 CTest `riks_stage_stability_3d_benchmark` 用闭式 `λ(v)`
+  与 SPHERE/RIKS 双方法交叉验证，详见该目录 `README.md`。
 
 #### 第十九次 ①：成桥态起点基准（`STABASIS=COMPLETION`）
 
@@ -774,9 +796,22 @@ ANSYS 对标仍是「先求同一阶段平衡态（`step1 TIME=1`），再在
 `STABILITY=0` 输出逐位不变）；CB3D23 是 4 节点 / 3 杆 `TRUSS`
 浅拱研究构型，不是真实桥梁施工阶段，两侧同源加 `UX` 导向约束
 消除一阶运动机构；轴向应变取约 `2e-4` 以避开 `LINK180` 默认
-Almansi 应变与 FEM 共转工程应变的系统性差异。位移控制 / Riks、
-分支屈曲与分支切换、初始缺陷、材料非线性、动力 snap-through
-仍未覆盖，能力矩阵该行继续标 `P` 不标 `Y`（§2.5 / §2.6）。
+Almansi 应变与 FEM 共转工程应变的系统性差异。Riks 正交弧长已在
+`STAGE` 起点 opt-in 并由第 27 项 CTest 闭环（闭式 + 双方法交叉），
+但位移控制 / 线搜索、分支屈曲与分支切换、初始缺陷、材料非线性、
+动力 snap-through 仍未覆盖，能力矩阵该行继续标 `P` 不标 `Y`
+（§2.5 / §2.6）。
+
+> **2026-11-16 第二十二次收口（任务 #165）**：上文"五项仍未覆盖、继续标
+> `P`"为历史记录、保留不删。第二十一次已在独立 opt-in 层补齐五项力学
+> （① 位移控制 / 线搜索、② 初始缺陷、③ 材料非线性、④ 分岔切换、
+> ⑤ 动力 snap-through，第 28—32 项 CTest），三阶段验收口径全部走完、
+> 干净构建 `ctest` 32/32 全绿，**能力矩阵「非线性稳定全过程」3D 格已由
+> `P` 推 `Y`**。该 `Y` 的边界：全部 opt-in 默认关闭、`STABILITY=0` 既有
+> 输出逐位不变，五项力学在 `snap_probe` / `mat_nl_probe` / `dyn_probe`
+> 独立探针层不进 `cable_solver` 默认求解链，`.dyn` 动力与 ANSYS 瞬态
+> 动力学不同源，λ 不是 JTG 稳定安全系数。详见 `BridgeStudio/B类后续项
+> 接入规格.md` §6 第二十二次记录。
 
 ### 带约束成桥目标索力优化过程量（`[OPT]`）
 
@@ -917,6 +952,80 @@ T 1 ...            ; <序号> <T0(N)> <T*(N)> <lo(N)> <hi(N)>
 LINK180 `KEYOPT(2)=1` 口径）；`DS` 是初始弧长半径，`DSMAX` 控制
 极值点附近的采样密度。所有 APDL 与 CLI 都使用同一份导出参数，
 不存在第二份手工输入。
+
+**第二十一次力学①（`snap_probe` opt-in，默认全关逐位不变）**：`C` 行可再给
+`CTRLMODE=1`（位移控制）、`LINESEARCH=1`（Armijo 回溯线搜索）、
+`CTRLSTEP=<幅值>`（每步控制 DOF 位移增量，符号第一步按荷载响应锁定）、
+`CTRLNODE` / `CTRLDOF`（控制 DOF，默认 2/2）。位移控制把控制 DOF 相对步
+起点的位移增量锁定为 `CTRLSTEP`，λ 由线性约束唯一确定，可越过极值点；
+线搜索只改变收敛稳健性、不改变平衡路径（正常步 alpha=1、0 回溯）。
+opt-in 时 CSV 追加 `ctrlmode` / `linesearch` / `ctrlstep` / `ls_total_cuts` /
+`ls_max_cuts` / `ls_steps_cut` / `ls_min_alpha` 诊断 `S,` 行。控制 DOF 指向
+固定端（如 `CTRLNODE=1`）时返回 `singular_control_dof`、不静默推进。这与
+ANSYS `ARCLEN`（球面弧长）参数化**不同源**，不是同一算法对拍；第 28 项
+CTest `displacement_control_3d_benchmark` 用闭式 `P(v)` 自洽核验。
+
+**第二十一次力学②（`snap_probe` opt-in，默认全关逐位不变）**：`C` 行可再给
+`IMPERF=1`（施加线性屈曲模态初始缺陷）、`IMPMODE=<序号>`（0=对称竖向，
+1=反对称横向）、`IMPAMP=<幅值>`（长度）。缺陷源由结构自身几何刚度
+`(K+λKg)φ=0` 的最低模态决定，按幅值加到节点坐标；TRUSS/CABLE 的
+`L0` 同步改成缺陷后弦长，即**无应力几何缺陷**（制造误差型，λ=0 为平衡态）。
+opt-in 时 CSV 追加 `imp_ok` / `imp_lambda`（线性屈曲因子，与非线性 λ_max
+不同源）/ `imp_dx2` / `imp_dy2` / `imp_maxphi` 诊断 `S,` 行；`IMPERF=0`
+既有 `.snap` 输出逐位不变。`IMPMODE` 越界返回 `imp_ok=0` 不静默。对称模态
+幅值→`λ_max` 单调下降，反对称模态使顶点横向偏移（对称破缺）；第 29 项
+CTest `initial_imperfection_3d_benchmark` 用缺陷后几何闭式 `P(v)` /
+`λ_cr` 独立核验。与 ANSYS 缺陷分析不同源（这里是线性屈曲模态 + 无应力
+几何偏差，非 `UPGEOM`），不在同一算法对拍范围。
+
+**第二十一次力学③（`readModel3D` / CR 梁 opt-in，默认 ELASTIC 逐位不变）**：
+`*R` 段可给 `MATKIND=STEEL|CONCRETE`（缺省 `ELASTIC`）、`MATFY=<屈服强度>`、
+`MATFT=<抗拉强度>`、`MATNFY` / `MATNFZ`（纤维网格，缺省 8×4）。仅对
+`type=BEAM` 且 `MATKIND` 明确的单元启用纤维截面材料非线性：`STEEL`
+理想弹塑性（拉压对称，`|Eε|≤fy` 弹性、否则应力截断 `±fy`、切线 0），
+`CONCRETE` 受拉 `Eε>ft` 开裂退出（应力/切线 0）、受压线弹性。轴力/双向
+弯矩由 Gauss 纤维积分给出（对 `y²,z²` 二阶精确 ⇒ 弹性段与 `Kl12·d`
+逐位对齐），一致切线用中心差分自动覆盖 D12/D13/D23 耦合与弹塑性活动集；
+端剪力由梁段平衡补齐，扭转保持线弹性。**默认键缺席 → 走原线弹性
+`Kl12*d` 路径，逐位不变**。第 30 项 CTest
+`material_nonlinear_3d_benchmark` 用独立 Python 纤维积分（numpy Gauss
+点）核验单轴平台、矩形塑性铰逐阶段屈服、混凝土开裂与弹性对齐；
+与 ANSYS 材料非线性不在同一算法对拍范围。
+
+**第二十一次力学④（`snap_probe` opt-in，默认全关逐位不变）**：`C` 行可再给
+`BIFURC=1`（启用分岔点检测与分支切换）、`BIFPIV=<pivotRatio 阈值>`（默认
+0.05）、`BIFMODE=<扰动模态序号>`（默认 1）、`BIFAMP=<扰动幅值>`（默认 0，
+只检测不切换）、`BIFPIV` 之外一致切线 `|μ_min|/max|diag(Kff)|<1e-3` 确认。
+每个收敛点先用已逐点输出的 `pivotRatio` 做轻量入口，再用**当前一致切线
+自由子块最小特征值**确认临界点；确认后沿 `computeBucklingModeShape3D`
+的模态施加位移扰动（只改位移、不改 `L0`/荷载/求解器），后续弧长步从扰动
+构形继续跟踪分岔后分支。opt-in 时 CSV 追加 `M,<cid>,step,modalAmp` 逐点
+模态投影行与 `bif_detected / bif_switched / bif_step / bif_lambda /
+bif_ctrl_disp / bif_eig_ratio / bif_pivot / bif_max_amp_before /
+bif_amp_at_switch / bif_max_amp_after / bif_amp_final` 诊断 `S,` 行；
+`BIFURC=0` 既有 `.snap` 输出逐位不变。高拱 von Mises 桁架（`B=1,H=3`）
+反对称分岔 `L³=L0·h²` 闭式锚点（先于对称极值点 `L³=B²·L0`）：切换点
+`λ` 从主路径 82 降到 26、模态幅值 0.44→1.50，`BIFMODE=0`（对称模态）/
+`BIFAMP=0` / 模态越界三类负例不破缺；第 31 项 CTest
+`bifurcation_switch_3d_benchmark` 离线核验。属 FEM 自洽深度，不跑 ANSYS、
+与 `ARCLEN` 球面型不同源。
+
+**第二十一次力学⑤（`dyn_probe` 独立 opt-in 模块，默认不调用）**：新增
+`dynamic_newmark_3d.hpp`，组装一致质量（复用 `assembleMassMatrix3D`）
+或行和集中质量矩阵，用 Newmark-β 隐式时间积分 + 每步 Newton 平衡迭代
+捕捉惯性驱动的动力 snap-through；质量/刚度比例 Rayleigh 阻尼可选。
+输入 `*.dyn`：`G <gid> E=.. A=.. B=.. H=.. PREF=.. DENS=.. [ADDMASS=..]`，
+`C <cid> <gid> DYN=1 DT=.. TEND=.. [BETA=.. GAMMA=.. MASSMODE=.. CMASS=..
+CSTIFF=.. LOADTYPE=.. TOL=.. MAXITER=.. SNAP=.. STRAIN=..]`；
+`LOADTYPE=0/1/2` 分别为阶跃 / 线性爬升 / 半正弦荷载，`MASSMODE=1`
+用集中质量。`DYN=0`（默认）只输出静态闭式锚点 `S,` 行，无 `T,` 行零污染。
+输出 `T,<cid>,step,t,lambda,v,vel,acc,residual,iter,kinetic,strain,work`
+逐时步行与等效质量、`v_max`、`snap_time` 等 `S,` 行。浅拱 von Mises
+两杆在 `P=0.85·P_cr`（**低于静力极限**）阶跃荷载下仍跃越至 `v_max≈1.36`；
+一致质量闭式 `m=2·rhoA·L0/3`、集中质量 `m=rhoA·L0`。第 32 项 CTest
+`dynamic_snapthrough_3d_benchmark` 用独立 SDOF RK4 时程（步长 1/5）
+逐采样点核验位移/速度，并覆盖荷载时程 / 阻尼 / 质量 / 步长加密 / 负例；
+与 ANSYS 瞬态动力学不在同一算法对拍范围，FEM 自洽，离线。
 
 `*.frame` 的组参数键为
 `E G A IY IZ J B H NELEM PREF TOL MAXSTEPS MAXITER VMAX DSMAX DSMIN`，

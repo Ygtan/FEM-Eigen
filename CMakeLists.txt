@@ -444,6 +444,90 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(stage_stability_3d_benchmark PROPERTIES
         TIMEOUT 900
         LABELS "benchmark")
+
+    # 第 27 项：Wempner–Riks 正交轨迹（PATHMETHOD=RIKS，仅 STAGE 起点
+    # opt-in）。von Mises 两杆闭式 λ(v) 逐点核验 + SPHERE/RIKS 同问题
+    # 双方法交叉 + CB3D23 跨基准终点锚点 + 未知方法负例 + 当前二进制
+    # 逐字节重放。完全离线、不跑 ANSYS；球面默认路径与第 20/26 项
+    # 冻结输出保持逐位不变。
+    add_test(NAME riks_stage_stability_3d_benchmark
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/riks_stage_stability_3d/compare_riks_stage_3d.py
+                     --bin ${CMAKE_CURRENT_BINARY_DIR}
+                     --cases ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/riks_stage_stability_3d/cases
+                     --reference ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/riks_stage_stability_3d/reference)
+    set_tests_properties(riks_stage_stability_3d_benchmark PROPERTIES
+        TIMEOUT 900
+        LABELS "benchmark")
+
+    # 第 28 项：第二十一次力学①位移控制 / 线搜索（opt-in）。
+    # von Mises 两杆闭式 P(v) 逐点锚点 + 线搜索 / 无线搜索同路径交叉 +
+    # 细步 λ_max→λ_cr 收敛 + 奇异控制 DOF 负例 + 当前二进制逐字节重放。
+    # 默认全关、snap_probe 既有 .snap 与第 19 项冻结输出逐位不变；离线不跑 ANSYS。
+    add_test(NAME displacement_control_3d_benchmark
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/displacement_control_3d/compare_displacement_control_3d.py
+                     --bin ${CMAKE_CURRENT_BINARY_DIR}
+                     --cases ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/displacement_control_3d/cases
+                     --reference ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/displacement_control_3d/reference)
+    set_tests_properties(displacement_control_3d_benchmark PROPERTIES
+        TIMEOUT 900
+        LABELS "benchmark")
+
+    # 第 29 项：第二十一次力学②初始缺陷形态 / 幅值 / 敏感性（opt-in）。
+    # 线性屈曲模态生成无应力缺陷场；幅值→λ_max 单调 + 反对称模态对称破缺
+    # + 独立闭式 P(v) 锚点 + IMPMODE 越界负例 + IMPERF=0 零污染；离线。
+    add_test(NAME initial_imperfection_3d_benchmark
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/initial_imperfection_3d/compare_imperfection_3d.py
+                     --bin ${CMAKE_CURRENT_BINARY_DIR}
+                     --cases ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/initial_imperfection_3d/cases
+                     --reference ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/initial_imperfection_3d/reference)
+    set_tests_properties(initial_imperfection_3d_benchmark PROPERTIES
+        TIMEOUT 900
+        LABELS "benchmark")
+
+    # 第 30 项：第二十一次力学③材料非线性本构接入 3D CR 梁（opt-in）。
+    # 单轴应力-应变平台 + 矩形截面塑性铰逐阶段屈服 + 混凝土受拉开裂 +
+    # 弹性段纤维 vs Kl12 逐位对齐 + 独立 Python 纤维积分锚点 + 负例；离线。
+    # 默认 MATKIND 缺席 → ELASTIC，全部既有 CTest 逐位不变。
+    add_test(NAME material_nonlinear_3d_benchmark
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/material_nonlinear_3d/compare_material_nl_3d.py
+                     --bin ${CMAKE_CURRENT_BINARY_DIR}
+                     --cases ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/material_nonlinear_3d/cases
+                     --reference ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/material_nonlinear_3d/reference)
+    set_tests_properties(material_nonlinear_3d_benchmark PROPERTIES
+        TIMEOUT 900
+        LABELS "benchmark")
+
+    # 第 31 项：第二十一次力学④分岔点检测与分支切换（opt-in）。
+    # 高拱 von Mises 桁架：反对称分岔 L^3=L0*h^2 闭式锚点 + pivotRatio/
+    # 一致切线特征值双确认 + 模态扰动切换分支（承载力降 / 对称破缺）+
+    # 对称模态 / 零幅值 / 越界模态负例 + BIFURC=0 零污染；FEM 自洽，离线。
+    add_test(NAME bifurcation_switch_3d_benchmark
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/bifurcation_switch_3d/compare_bifurcation_3d.py
+                     --bin ${CMAKE_CURRENT_BINARY_DIR}
+                     --cases ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/bifurcation_switch_3d/cases
+                     --reference ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/bifurcation_switch_3d/reference)
+    set_tests_properties(bifurcation_switch_3d_benchmark PROPERTIES
+        TIMEOUT 900
+        LABELS "benchmark")
+
+    # 第 32 项：第二十一次力学⑤动力 snap-through（opt-in，独立新模块）。
+    # 一致/集中质量矩阵 + Newmark-β 隐式积分 + 非线性 Newton 平衡迭代；
+    # 独立 SDOF RK4 时程锚点 + 静力 Pcr 以下动力跃越 + 阶跃/爬升/半正弦
+    # 荷载 + 阻尼 + 质量模式 + 零质量/零步长负例 + DYN=0 零污染；离线。
+    add_test(NAME dynamic_snapthrough_3d_benchmark
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/dynamic_snapthrough_3d/compare_dynamic_3d.py
+                     --bin ${CMAKE_CURRENT_BINARY_DIR}
+                     --cases ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/dynamic_snapthrough_3d/cases
+                     --reference ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/dynamic_snapthrough_3d/reference)
+    set_tests_properties(dynamic_snapthrough_3d_benchmark PROPERTIES
+        TIMEOUT 900
+        LABELS "benchmark")
 else()
     message(STATUS "未找到 Python3，跳过 .dat 逐字节回归 CTest")
 endif()
@@ -508,6 +592,15 @@ fem_add_executable(beam_nl_probe beam_nl_probe.cpp)
 # 极限点走完整 snap-through 下降段；与 ANSYS LINK180 + ARCLEN 对标。
 # 独立新文件，不改 fem_3d_nl.hpp 主求解器与 NonlinearOptions3D 默认值。
 fem_add_executable(snap_probe snap_probe.cpp)
+# 第二十一次力学③：材料非线性纤维梁 / 截面本构探针（section.hpp +
+# fem_3d_nl.hpp 的 crFiberLocalForce/Tangent），文件驱动 CSV，供
+# tests/benchmark/material_nonlinear_3d 做闭式锚点校验。
+fem_add_executable(mat_nl_probe mat_nl_probe.cpp)
+# 第二十一次力学⑤：Newmark-β 隐式动力时程 / 动力 snap-through 探针
+# （dynamic_newmark_3d.hpp），文件驱动 CSV，供 tests/benchmark/
+# dynamic_snapthrough_3d 做独立 SDOF RK4 锚点校验。独立新模块，
+# 不改 snap_probe / stability_path_3d / fem_3d_nl 的任何既有路径。
+fem_add_executable(dyn_probe dyn_probe.cpp)
 # N 阶段：把同一个球面弧长法内核用于**共转 CR 梁刚接框架**后屈曲
 # （Williams toggle 型，两根多单元 BEAM，端部铰支 / 顶点刚接），
 # 与 ANSYS BEAM188 + ARCLEN 端到端对标。力学仍完全复用内核，

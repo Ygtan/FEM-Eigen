@@ -43,13 +43,29 @@
 | `completion_basis_3d/` | `completion_basis_3d_benchmark` | **第十九次 ③a**：`MODE=COMPLETION` 成桥态基准同源修复（`basisModel`）/ 跨 `MODE` 独立锚点 / 默认零污染 / CB3D13 五个 `[ERECTION*]` 段共存核对 | CB3D10、CB3D13 | **110** |
 | `bridge_limit_point_3d/` | `bridge_limit_point_3d_benchmark` | **第十九次 ③a**：真实斜拉桥**越过极值点 / 下降段** FEM 球面弧长 vs ANSYS 两段 `ARCLEN`；按 `ΔUX` 插值 `λ` 逐点对拍 / 16 索 `L0` + `INISTATE` + 弦长同源锚点 | CB3D22 | **140** |
 | `stage_stability_3d/` | `stage_stability_3d_benchmark` | **第二十次 ③b**：**施工阶段中间态起点**全过程稳定（`STABASIS=STAGE STAGEID=2` / `BASIS=stage_state` / `[STAGES]`）；`u0 = u_stage` + 同源 `NLStageResult3D::model`，FEM 球面弧长 vs ANSYS 两段（`st_load` 荷载控制 / `st_arc` `ARCLEN`），按 `\|ΔUY\|` 插值 `λ` 逐点对拍 / 负例 `ERROR=stage_not_found` | CB3D23 | **214** |
+| `riks_stage_stability_3d/` | `riks_stage_stability_3d_benchmark` | **第二十次 Riks 闭环**：`PATHMETHOD=RIKS`（Wempner–Riks 正交轨迹，仅 STAGE 起点 opt-in）/ 闭式 `λ(v)` 逐点核验 / SPHERE 与 RIKS 同问题双方法交叉 / CB3D23 与第 26 项跨基准终点锚点 / 未知方法负例 / 当前二进制 8 文件逐字节重放 | CB3D23 + von Mises 两杆 | **63** |
+| `displacement_control_3d/` | `displacement_control_3d_benchmark` | **第二十一次力学①**：位移控制（`CTRLMODE=1`，控制 DOF 位移增量驱动、λ 由线性约束唯一确定）+ Armijo 线搜索（`LINESEARCH=1`，保持位移约束、不改路径）/ 闭式 `P(v)` 逐点锚点 / 线搜索与无线搜索同路径交叉 / 细步 `λ_max→λ_cr` / 奇异控制 DOF 负例 / 当前二进制逐字节重放 | CB3D25 + von Mises 两杆 | **25** |
+| `initial_imperfection_3d/` | `initial_imperfection_3d_benchmark` | **第二十一次力学②**：线性屈曲模态生成无应力初始缺陷场（`IMPERF=1` / `IMPMODE` / `IMPAMP`，`L0` 同步更新）/ 对称模态幅值→`λ_max` 单调下降 + 反对称模态对称破缺 / 独立闭式 `P(v)` 与 `λ_cr` 锚点 / `IMPMODE` 越界负例 / `IMPERF=0` 零污染 / 当前二进制逐字节重放 | von Mises 两杆 | **35** |
+| `material_nonlinear_3d/` | `material_nonlinear_3d_benchmark` | **第二十一次力学③**：材料非线性接入 3D CR 梁（`MATKIND=STEEL/CONCRETE`，Gauss 纤维截面）/ 单轴应力-应变平台 + 矩形塑性铰逐阶段屈服 + 混凝土受拉开裂退出 / 弹性段纤维 vs Kl12 逐位对齐 / 独立 Python（numpy Gauss）纤维积分锚点 / 二进制逐字节重放；默认 ELASTIC 零污染 | 矩形截面纤维梁 | **491** |
+| `bifurcation_switch_3d/` | `bifurcation_switch_3d_benchmark` | **第二十一次力学④**：分岔点检测与分支切换（`BIFURC=1`）/ `pivotRatio` + 一致切线最小特征值双确认 / 高拱 von Mises 反对称分岔 `L³=L0·h²` 闭式锚点（先于对称极值点）/ 模态扰动切换后承载力降与对称破缺 / 对称模态 / 零幅值 / 越界模态负例 / 二进制逐字节重放；FEM 自洽，不跑 ANSYS，默认零污染 | 高拱 von Mises 桁架（B=1,H=3） | **42** |
+| `dynamic_snapthrough_3d/` | `dynamic_snapthrough_3d_benchmark` | **第二十一次力学⑤**：Newmark-β 隐式动力时程 + 一致/集中质量 + Rayleigh 阻尼（`dyn_probe`，独立新模块）/ 独立 SDOF RK4 逐采样点位移/速度锚点 / `P=0.85·P_cr` 低于静力极限仍动力跃越 / 爬升 / 半正弦 / 低荷载 / 阻尼 / 质量 / dt 加密 / 能量外功 / 零质量 / 零步长 / 非法 β / `DYN=0` 负例 + 二进制逐字节重放；FEM 自洽，不跑 ANSYS | 浅拱 von Mises 桁架（B=2,H=0.5） | **88** |
 
 另有 4 个解析/内核单测（`analytical_exact_solutions_2d/3d`、
 `nonlinear_co_rotational_3d`、`shape_sensitivity_3d`）与 1 个
 `dat_byte_regression`：② 阶段为 23 个 CTest，③a 新增第 24 / 25 项后
 **合计 25 个 CTest**，③b 新增第 26 项 `stage_stability_3d_benchmark` 后
-**合计 26 个 CTest**。③a 实测全量 `ctest` 25/25；③b 干净构建
-`ctest` 26/26、`run_tests.ps1 -BuildDir _d_build` `ALL TESTS PASSED`。
+**合计 26 个 CTest**，第二十次 Riks 闭环新增第 27 项
+`riks_stage_stability_3d_benchmark` 后**合计 27 个 CTest**，第二十一次力学①
+新增第 28 项 `displacement_control_3d_benchmark` 后**合计 28 个 CTest**，
+力学②新增第 29 项 `initial_imperfection_3d_benchmark` 后**合计 29 个 CTest**，
+力学③新增第 30 项 `material_nonlinear_3d_benchmark` 后**合计 30 个 CTest**，
+力学④新增第 31 项 `bifurcation_switch_3d_benchmark` 后**合计 31 个 CTest**，
+力学⑤新增第 32 项 `dynamic_snapthrough_3d_benchmark` 后**合计 32 个 CTest**。
+③a 实测全量 `ctest` 25/25；③b 干净构建 `ctest` 26/26；Riks 闭环后
+`ctest` 27/27；位移控制闭环后干净构建 `ctest` 28/28；初始缺陷闭环后
+`ctest` 29/29；材料非线性闭环后 `ctest` 30/30；分支切换闭环后
+`ctest` 31/31；动力 snap-through 闭环后 `ctest` 32/32、
+`run_tests.ps1 -BuildDir _d_build` `ALL TESTS PASSED`。
 
 > **构建工具链必须与冻结证据一致**：历史冻结输出全部由
 > `C:/msys64/mingw64/bin/g++.exe`（`-O3 -DNDEBUG`）产出。若改用
@@ -73,7 +89,7 @@
 ## 从零复现（换机 / 重建）
 
 `build/` 及其 `CTestTestfile.cmake` 由 CMake 生成、被 `.gitignore` 排除，
-**不入库**。干净的 configure 会自动生成全部 26 条注册，不需要手工同步。
+**不入库**。干净的 configure 会自动生成全部 30 条注册，不需要手工同步。
 
 ```bash
 # MSYS2 / MinGW-w64 环境。**必须显式锁定 mingw64 编译器**（见上方工具链说明），
@@ -99,13 +115,14 @@ cmake -G "MSYS Makefiles" \
   -S D:/AI-work/FEM-Eigen -B D:/AI-work/FEM-Eigen/build_msys
 ```
 
-**实测（2026-11-15，本机 MSYS2 / GCC 16.2 / mingw64）**：方案 A 干净
+**实测（2026-11-15 / 11-16，本机 MSYS2 / GCC 16.2 / mingw64）**：方案 A 干净
 configure 在 ③a 阶段自动生成 **25 条 `add_test`**、③b 后为
-**26 条**，`cmake --build -j2` 编译产出
+**26 条**、Riks 闭环后为 **27 条**，`cmake --build -j2` 编译产出
 **全部 40 个 exe**（K 阶段 `beam_nl_probe`、L 阶段 `snap_probe`、N 阶段
 `frame_probe` 之后，第十九次 ① / ② / ③a 与第二十次 ③b 都只改
 `cable_solver.exe` / 头文件 / 冻结证据、不新增 exe）。③a 全新目录
-`ctest` **25/25 Passed**，③b 注册第 26 项后 `ctest` **26/26 Passed**。
+`ctest` **25/25 Passed**，③b 注册第 26 项后 `ctest` **26/26 Passed**，
+Riks 闭环注册第 27 项后 `ctest` **27/27 Passed**。
 即换机后无需手工同步
 `CTestTestfile.cmake`，也无需 ANSYS 许可即可全量回归；M 阶段主链路
 口径与数字见 `stable_path_3d/README.md`，N 阶段 CR 梁刚接框架

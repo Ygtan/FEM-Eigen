@@ -1,0 +1,33 @@
+{
+  "schema": "cb3d28_bifurcation_reference_v1",
+  "sha256": {
+    "input": "64282c61ec4872255675c2171028207c81dc1b3f53e2289cfc05acc8ed44f17f",
+    "frozen_csv": "da1cc85474a4397c2c12ea1da53bb3a9004ff83327c522785f6cbaf01af6693d"
+  },
+  "params": {
+    "E": 210000000000.0,
+    "A": 0.001,
+    "B": 1.0,
+    "H": 3.0,
+    "PREF": 2000000.0,
+    "EA": 210000000.0,
+    "L0": 3.1622776601683795
+  },
+  "closed_form": {
+    "bifurcation_roots_h": [
+      0.8381131084502893,
+      2.552654671281255
+    ],
+    "h_bif": 2.552654671281255,
+    "v_bif": 0.447345328718745,
+    "P_bif": 52030407.0978812,
+    "lambda_bif": 26.015203548940597,
+    "h_sym": 1.0744462248208997,
+    "v_sym": 1.9255537751791003,
+    "P_sym": 164741624.13215134,
+    "lambda_sym": 82.37081206607567,
+    "bif_before_limit_point": true,
+    "condition_bif": "(B^2+h^2)^1.5 = L0*h^2",
+    "condition_sym": "L^3 = B^2*L0"
+  }
+}

@@ -1,0 +1,16 @@
+# 第二十一次力学⑤：动力 snap-through（Newmark-beta，opt-in）
+# 浅拱 von Mises 两杆桁架；PREF 取 0.85*P_cr（低于静力极限）
+G snap E=2.1e11 A=0.001 B=2.0 H=0.5 PREF=1010157.0 DENS=7850.0
+G low  E=2.1e11 A=0.001 B=2.0 H=0.5 PREF=713052.0  DENS=7850.0
+G nomass E=2.1e11 A=0.001 B=2.0 H=0.5 PREF=1010157.0 DENS=0.0
+C dyn_snap snap DYN=1 DT=5e-5 TEND=0.02 MASSMODE=0 LOADTYPE=0 SNAP=0.3
+C dyn_lump snap DYN=1 DT=5e-5 TEND=0.02 MASSMODE=1 LOADTYPE=0 SNAP=0.3
+C dyn_low low DYN=1 DT=5e-5 TEND=0.02 MASSMODE=0 LOADTYPE=0 SNAP=0.3
+C dyn_ramp snap DYN=1 DT=5e-5 TEND=0.02 MASSMODE=0 LOADTYPE=1 SNAP=0.3
+C dyn_sine snap DYN=1 DT=5e-5 TEND=0.02 MASSMODE=0 LOADTYPE=2 SNAP=0.3
+C dyn_damp snap DYN=1 DT=5e-5 TEND=0.02 MASSMODE=0 LOADTYPE=0 CMASS=100.0 SNAP=0.3
+C dyn_fine snap DYN=1 DT=2.5e-5 TEND=0.02 MASSMODE=0 LOADTYPE=0 SNAP=0.3
+C dyn_off snap DYN=0
+C dyn_baddt snap DYN=1 DT=0.0 TEND=0.02
+C dyn_badmass nomass DYN=1 DT=5e-5 TEND=0.02
+C dyn_badbeta snap DYN=1 DT=5e-5 TEND=0.02 BETA=0.0

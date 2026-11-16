@@ -264,6 +264,13 @@ struct Element3D {
     double ecs = 0.0;
     // 理论厚度 mm。0 表示没有。模型上的 creepH>0 时以模型值为准。
     double hTheory = 0.0;
+    // 第二十一次力学③：材料非线性（opt-in，默认 ELASTIC → 逐位不变）。
+    // matKind: ELASTIC（默认）/ STEEL（理想弹塑性，matFy>0）
+    //          / CONCRETE（受拉开裂退出，matFt>0）；
+    // matNfy/matNfz: 纤维网格数（沿 y/z），<=0 回退默认 8×4。
+    std::string matKind = "ELASTIC";
+    double matFy = 0.0, matFt = 0.0;
+    int matNfy = 0, matNfz = 0;
 };
 
 // 三维约束：节点 + 自由度(1~6) + 指定位移值。
@@ -2893,6 +2900,10 @@ inline Model3D readModel3D(const std::string& path) {
     std::map<int, double> realIstrn;
     std::map<int, double> mpDens, realAddmass;
     std::map<int,double> realWtop, realWbot, realWy, realWt, realIw;
+    // 第二十一次力学③：材料非线性 opt-in 键（*R 段；默认全部缺席 → ELASTIC）
+    std::map<int,std::string> realMatKind;
+    std::map<int,double> realMatFy, realMatFt;
+    std::map<int,int> realMatNfy, realMatNfz;
     // 索参数（CABLE 用）：W= 单位长度重量 N/m（垂度），L0= 无应力索长 m
     std::map<int,double> realCableW, realCableL0;
     int activeType = 0, activeMat = 0, activeReal = 0;
@@ -2937,6 +2948,19 @@ inline Model3D readModel3D(const std::string& path) {
         e.Iw = realIw[activeReal];
         e.w = realCableW[activeReal];  e.L0 = realCableL0[activeReal];
         e.hTheory = realHth[activeReal];
+        // 第二十一次力学③：opt-in 材料非线性（默认字段缺席 → ELASTIC/0/0）
+        {
+            const auto itk = realMatKind.find(activeReal);
+            if (itk != realMatKind.end()) e.matKind = itk->second;
+            const auto itfy = realMatFy.find(activeReal);
+            if (itfy != realMatFy.end()) e.matFy = itfy->second;
+            const auto itft = realMatFt.find(activeReal);
+            if (itft != realMatFt.end()) e.matFt = itft->second;
+            const auto itnfy = realMatNfy.find(activeReal);
+            if (itnfy != realMatNfy.end()) e.matNfy = itnfy->second;
+            const auto itnfz = realMatNfz.find(activeReal);
+            if (itnfz != realMatNfz.end()) e.matNfz = itnfz->second;
+        }
         // 单元级覆盖：*EN,id,n1,n2 W=<N/m> L0=<m>
         // 每根索的 W/L0 本来就各不相同（下料长度是逐根量），只靠 *R 共享
         // 一份会逼得同类索拆成多个实常数。
@@ -3112,6 +3136,12 @@ inline Model3D readModel3D(const std::string& path) {
                 else if (kv.rfind("W=",0)==0) realCableW[id]=std::stod(kv.substr(2));
                 else if (kv.rfind("L0=",0)==0) realCableL0[id]=std::stod(kv.substr(3));
                 else if (kv.rfind("HTH=",0)==0) realHth[id]=std::stod(kv.substr(4));
+                // 第二十一次力学③：材料非线性 opt-in（MATKIND 为字符串，其余数值）
+                else if (kv.rfind("MATKIND=",0)==0) realMatKind[id]=kv.substr(8);
+                else if (kv.rfind("MATFY=",0)==0) realMatFy[id]=std::stod(kv.substr(6));
+                else if (kv.rfind("MATFT=",0)==0) realMatFt[id]=std::stod(kv.substr(6));
+                else if (kv.rfind("MATNFY=",0)==0) realMatNfy[id]=static_cast<int>(std::stod(kv.substr(7)));
+                else if (kv.rfind("MATNFZ=",0)==0) realMatNfz[id]=static_cast<int>(std::stod(kv.substr(7)));
                 else std::cerr << "[警告] *R 未知关键字: " << kv << "\n";
             }
             areas[id]=A;

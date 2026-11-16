@@ -94,9 +94,13 @@ ANSYS 在极限点输出的 `One indefinite tangent matrix is detected`
 - `STABILITY=1` 是 `cable_solver.exe` 的**独立 opt-in 模式**，在
   `readModel3D` 参考构形上跟踪路径；**不等于**成桥态闭环 / 索长迭代 /
   施工阶段链路已具备全过程稳定分析。既有主流程一字未动。
-- 只有球面弧长法。位移控制 / Riks / 分支屈曲与分支切换 / 初始缺陷
-  与缺陷敏感性 / 材料非线性 / CR 梁后屈曲（Williams toggle、
-  Lee frame）/ 真实桥梁全过程对标**均未覆盖**。
+- 本项（第 20 项 REFERENCE 基准）只有球面弧长法。第二十次起
+  `PATHMETHOD=RIKS`（Wempner–Riks 正交轨迹）已在 **STAGE 起点**
+  opt-in 并由第 27 项 CTest 闭环；REFERENCE / COMPLETION 入口仍
+  拒绝 RIKS，本项 `von_mises_bad_method` 负例逐位不变。位移控制 /
+  线搜索、分支屈曲与分支切换 / 初始缺陷与缺陷敏感性 / 材料非线性 /
+  CR 梁后屈曲（Williams toggle、Lee frame）/ 真实桥梁全过程对标
+  **均未覆盖**。
 - λ 是参考荷载放大倍数，**不是规范稳定安全系数**；JTG 3362 无
   λ 合格限值，本项不做「通过 / 不通过」判定。
 - 能力矩阵该行标 `P` 不标 `Y`，边界详见

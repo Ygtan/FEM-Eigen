@@ -42,6 +42,21 @@ struct Case {
     std::string id, gid;
     double DS = 0.02, PSI = 1.0;
     int STRAIN = 0;              // 0=工程应变（内核口径） 1=对数应变（ANSYS KEYOPT(2)=1）
+    // 第二十一次力学①（opt-in，默认 0/0/0 → 既有 .snap 逐位不变）：
+    int CTRLMODE = 0;            // 1=位移控制（控制 DOF 位移增量锁定）
+    int LINESEARCH = 0;          // 1=Armijo 回溯线搜索
+    double CTRLSTEP = 0.0;       // 每步控制位移增量（>0 生效，否则回退 DS）
+    int CTRLNODE = 2;            // 控制节点（负例可指向固定端触发 singular_control_dof）
+    int CTRLDOF = 2;             // 控制自由度 1~6
+    // 第二十一次力学②（opt-in，默认 0/0/0 → 既有 .snap 逐位不变）：
+    int IMPERF = 0;              // 1=施加线性屈曲模态初始缺陷
+    int IMPMODE = 0;             // 屈曲模态序号（0=最低阶）
+    double IMPAMP = 0.0;         // 缺陷幅值（长度，加到节点坐标）
+    // 第二十一次力学④（opt-in，默认全 0 → 既有 .snap 逐位不变）：
+    int BIFURC = 0;              // 1=启用分岔检测与分支切换
+    double BIFPIV = 0.05;        // pivotRatio 触发阈值
+    int BIFMODE = 1;             // 扰动模态序号（1=反对称）
+    double BIFAMP = 0.0;         // 扰动幅值；0=只检测不切换（负例）
     std::string tag;
 };
 
@@ -158,6 +173,18 @@ int main(int argc, char** argv) {
             c.DS = get(kv, "DS", c.DS);
             c.PSI = get(kv, "PSI", c.PSI);
             c.STRAIN = static_cast<int>(get(kv, "STRAIN", c.STRAIN));
+            c.CTRLMODE = static_cast<int>(get(kv, "CTRLMODE", c.CTRLMODE));
+            c.LINESEARCH = static_cast<int>(get(kv, "LINESEARCH", c.LINESEARCH));
+            c.CTRLSTEP = get(kv, "CTRLSTEP", c.CTRLSTEP);
+            c.CTRLNODE = static_cast<int>(get(kv, "CTRLNODE", c.CTRLNODE));
+            c.CTRLDOF = static_cast<int>(get(kv, "CTRLDOF", c.CTRLDOF));
+            c.IMPERF = static_cast<int>(get(kv, "IMPERF", c.IMPERF));
+            c.IMPMODE = static_cast<int>(get(kv, "IMPMODE", c.IMPMODE));
+            c.IMPAMP = get(kv, "IMPAMP", c.IMPAMP);
+            c.BIFURC = static_cast<int>(get(kv, "BIFURC", c.BIFURC));
+            c.BIFPIV = get(kv, "BIFPIV", c.BIFPIV);
+            c.BIFMODE = static_cast<int>(get(kv, "BIFMODE", c.BIFMODE));
+            c.BIFAMP = get(kv, "BIFAMP", c.BIFAMP);
             for (const auto& x : t) {
                 if (x.rfind("TAG=", 0) == 0) c.tag = x.substr(4);
             }
@@ -180,7 +207,28 @@ int main(int argc, char** argv) {
         }
         const Group& g = gi->second;
         const double L0 = std::hypot(g.B, g.H);
-        const fem::Model3D m = makeTruss(g, L0);
+        fem::Model3D m = makeTruss(g, L0);
+
+        // 第二十一次力学②：opt-in 初始缺陷（线性屈曲模态按幅值加到节点坐标）。
+        // IMPERF=0 时整段跳过，模型 / 路径 / 输出与既有 .snap 逐位一致。
+        double impLambda = 0.0, impDx2 = 0.0, impDy2 = 0.0, impMaxPhi = 0.0;
+        int impOk = 0;
+        if (c.IMPERF == 1) {
+            const fem::BucklingModeShape3D bk =
+                fem::computeBucklingModeShape3D(m, c.IMPMODE);
+            if (bk.error.empty()) {
+                const fem::DofMap3D dm = fem::buildDofMap3D(m);
+                const fem::Vec3 p2before = m.nodes.at(2);
+                // 无应力缺陷：同步更新 TRUSS 的 L0，缺陷构形在 λ=0 平衡。
+                if (fem::applyImperfectionToNodes(m, dm, bk.phi, c.IMPAMP, true)) {
+                    impOk = 1;
+                    impLambda = bk.lambda;
+                    impDx2 = m.nodes.at(2)(0) - p2before(0);
+                    impDy2 = m.nodes.at(2)(1) - p2before(1);
+                    for (double x : bk.phi) impMaxPhi = std::max(impMaxPhi, std::abs(x));
+                }
+            }
+        }
 
         fem::ArcLengthOptions3D opt;
         opt.ds0 = c.DS;
@@ -194,6 +242,16 @@ int main(int argc, char** argv) {
         opt.ctrlDof = 2;
         opt.ctrlTarget = g.VMAX;
         opt.strainMeasure = c.STRAIN;
+        opt.controlMode = c.CTRLMODE;
+        opt.lineSearch = c.LINESEARCH;
+        opt.ctrlDispStep = c.CTRLSTEP;
+        opt.ctrlNode = c.CTRLNODE;
+        opt.ctrlDof = c.CTRLDOF;
+        // 第二十一次力学④：opt-in 分岔检测与分支切换。
+        opt.bifurcate = c.BIFURC;
+        opt.bifPivot = c.BIFPIV;
+        opt.bifMode = c.BIFMODE;
+        opt.bifAmp = c.BIFAMP;
 
         fem::ArcLengthResult3D r;
         try {
@@ -215,6 +273,9 @@ int main(int argc, char** argv) {
             out << "P," << c.id << "," << p.step << ","
                 << p.lambda << "," << v << "," << p.residual << ","
                 << p.iterations << "," << p.ds << "," << p.pivotRatio << "\n";
+            // 力学④：分支路径的模态投影逐点输出（仅 opt-in，默认无 M 行）。
+            if (c.BIFURC == 1)
+                out << "M," << c.id << "," << p.step << "," << p.bifModalAmp << "\n";
             curve.emplace_back(v, p.lambda);
             const int idx = static_cast<int>(curve.size()) - 1;
             if (p.lambda > lamMax) { lamMax = p.lambda; vAtLamMax = v; iMax = idx; }
@@ -297,6 +358,62 @@ int main(int argc, char** argv) {
         S("lambda_at_2H", lamAt2H);
         S("worst_dP", worst);
         S("worst_dP_rel", pcr > 0.0 ? worst / pcr : 0.0);
+        // 第二十一次力学①：位移控制 / 线搜索诊断，只在 opt-in 时输出，
+        // CTRLMODE=0 且 LINESEARCH=0 的既有 .snap 输出逐位不变。
+        if (c.CTRLMODE == 1 || c.LINESEARCH == 1) {
+            int totalCuts = 0, maxCuts = 0, stepsCut = 0;
+            double minAlpha = 1.0;
+            for (const auto& p : r.points) {
+                totalCuts += p.lineCuts;
+                maxCuts = std::max(maxCuts, p.lineCuts);
+                if (p.lineCuts > 0) ++stepsCut;
+                minAlpha = std::min(minAlpha, p.alpha);
+            }
+            S("ctrlmode", static_cast<double>(c.CTRLMODE));
+            S("linesearch", static_cast<double>(c.LINESEARCH));
+            S("ctrlstep", c.CTRLSTEP > 0.0 ? c.CTRLSTEP : c.DS);
+            S("ls_total_cuts", static_cast<double>(totalCuts));
+            S("ls_max_cuts", static_cast<double>(maxCuts));
+            S("ls_steps_cut", static_cast<double>(stepsCut));
+            S("ls_min_alpha", minAlpha);
+        }
+        // 第二十一次力学②：初始缺陷诊断，只在 IMPERF=1 时输出，
+        // IMPERF=0 的既有 .snap 输出逐位不变。
+        if (c.IMPERF == 1) {
+            S("imperf", static_cast<double>(c.IMPERF));
+            S("impmode", static_cast<double>(c.IMPMODE));
+            S("impamp", c.IMPAMP);
+            S("imp_ok", static_cast<double>(impOk));
+            S("imp_lambda", impLambda);          // 线性屈曲因子（与 λ_max 不同源）
+            S("imp_dx2", impDx2);                // 缺陷引起的顶点 X 坐标变化
+            S("imp_dy2", impDy2);                // 缺陷引起的顶点 Y 坐标变化
+            S("imp_maxphi", impMaxPhi);          // 模态最大分量（归一化 =1）
+        }
+        // 第二十一次力学④：分岔检测 / 分支切换诊断，只在 BIFURC=1 时输出，
+        // BIFURC=0 的既有 .snap 输出逐位不变。
+        if (c.BIFURC == 1) {
+            S("bifurc", 1.0);
+            S("bifpiv", c.BIFPIV);
+            S("bifmode", static_cast<double>(c.BIFMODE));
+            S("bifamp", c.BIFAMP);
+            S("bif_detected", static_cast<double>(r.bifDetected));
+            S("bif_switched", static_cast<double>(r.bifSwitched));
+            S("bif_step", static_cast<double>(r.bifStep));
+            S("bif_lambda", r.bifLambda);
+            S("bif_ctrl_disp", r.bifCtrlDisp);
+            S("bif_eig_ratio", r.bifMinEigRatio);
+            S("bif_pivot", r.bifPivot);
+            double ampBefore = 0.0, ampAfter = 0.0, ampAtSwitch = 0.0;
+            for (const auto& p : r.points) {
+                if (p.step < r.bifStep) ampBefore = std::max(ampBefore, std::abs(p.bifModalAmp));
+                else if (p.step > r.bifStep) ampAfter = std::max(ampAfter, std::abs(p.bifModalAmp));
+                else ampAtSwitch = p.bifModalAmp;
+            }
+            S("bif_max_amp_before", ampBefore);
+            S("bif_amp_at_switch", ampAtSwitch);
+            S("bif_max_amp_after", ampAfter);
+            S("bif_amp_final", r.points.empty() ? 0.0 : r.points.back().bifModalAmp);
+        }
     }
     return 0;
 }

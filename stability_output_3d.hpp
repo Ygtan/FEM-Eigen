@@ -74,9 +74,13 @@ inline std::string formatStabilitySection3D(
     std::ostringstream ss;
     ss << std::setprecision(14);
     ss << header << "\n";
-    ss << "KIND=spherical_arc_length STATUS="
-       << (r.converged ? "ok" : "not_converged")
-       << " BASIS=" << basis << " PATHMETHOD=SPHERE\n";
+    // Wempner–Riks 正交轨迹只在 STAGE 起点 opt-in；SPHERE 字符串逐位不变。
+    const bool isRiks = (opt.pathMethod == 1);
+    ss << "KIND="
+       << (isRiks ? "wempner_riks_orthogonal" : "spherical_arc_length")
+       << " STATUS=" << (r.converged ? "ok" : "not_converged")
+       << " BASIS=" << basis
+       << " PATHMETHOD=" << (isRiks ? "RIKS" : "SPHERE") << "\n";
     ss << "NSTEP=" << r.steps << " NPOINT=" << r.points.size()
        << " CONVERGED=" << (r.converged ? 1 : 0)
        << " CTRLNODE=" << opt.ctrlNode << " CTRLDOF=" << opt.ctrlDof

@@ -72,6 +72,7 @@
 #pragma once
 
 #include "fem_3d.hpp"
+#include "section.hpp"   // 第二十一次力学③：纤维本构 materialStress / sectionResponse
 
 #include <Eigen/Dense>
 #include <Eigen/Sparse>
@@ -512,6 +513,22 @@ struct CRElemData {
     double istrnEff = 0.0;        // 初应变（含收缩）
     Eigen::Matrix<double, 12, 12> Kl12 = Eigen::Matrix<double, 12, 12>::Zero();
     Eigen::Matrix<double, 14, 14> Kl14 = Eigen::Matrix<double, 14, 14>::Zero();
+
+    // ---- 第二十一次力学③：材料非线性纤维本构（opt-in，格式逐位不变）----
+    // enabled=false（默认）时 crElementInternal 完全走原 Kl12*d（线弹性），
+    // 与力学①/②与全部既有冻结证据逐位一致。enabled=true 时梁单元的
+    // 轴力 / 双向弯矩改由纤维积分给出，切线用截面 D 矩阵替换。
+    struct FiberNlData {
+        bool enabled = false;
+        std::string kind = "ELASTIC";   // ELASTIC / STEEL / CONCRETE
+        double fy = 0.0, ft = 0.0;
+        int nfy = 0, nfz = 0;            // 纤维网格（沿 y / z 均分）
+        Section sec;                     // 纤维截面（每纤维一个 MaterialModel）
+        std::vector<MaterialModel> mats;
+        SectionProperties props;         // 由纤维积分的 A / Iy / Iz / 形心
+        double Ay = 0.0, Az = 0.0;       // 等效剪切面积（取截面 A，阻尼/剪切项用）
+    };
+    FiberNlData fibnl;
 };
 
 // 组装单元内部数据（参考构形 + 局部刚度 + 徐变/收缩折减）
@@ -538,7 +555,124 @@ inline CRElemData crMakeElemData(const Model3D& m, const Element3D& e, const Dof
     if (d.n == 14) {
         d.Kl14 = beam7LocalStiffness(d.Eeff, e.A, e.Iy, e.Iz, e.J, e.G, e.Iw, Lg);
     }
+
+    // ---- 第二十一次力学③：构造 opt-in 纤维截面 ----
+    // 只在 BEAM（12 自由度）且 matKind 明确并要求材料非线性时构造；
+    // ELASTIC / 轴向单元 / BEAM7 一律不构造，逐位走原路径。
+    if ((e.type == "BEAM") &&
+        (e.matKind == "STEEL" || e.matKind == "CONCRETE") &&
+        d.A > 0.0 && d.Iy > 0.0 && d.Iz > 0.0) {
+        auto& fn = d.fibnl;
+        fn.enabled = true;
+        fn.kind = e.matKind;
+        fn.fy = e.matFy;
+        fn.ft = e.matFt;
+        fn.nfy = (e.matNfy > 0) ? e.matNfy : 8;
+        fn.nfz = (e.matNfz > 0) ? e.matNfz : 4;
+        // 用矩形等效离散：高 h = sqrt(12·Iz/A)，宽 b = sqrt(12·Iy/A)。
+        // 纤维位置/面积取 nfy×nfz 点 Gauss-Legendre 规则（非等分中点）：
+        // Gauss 对 y²/z² 二阶多项式精确积分 ⇒ 离散 A/Iy/Iz 与解析矩形
+        // 逐位一致，未屈服时 sectionResponse 与 Kl12 的 EA/EIz/EIy 完全对齐
+        // （中点离散会有 O(1/n²) 误差：8×4 网格下 Iz 偏 1.6%）。
+        const double h = std::sqrt(12.0 * d.Iz / d.A);
+        const double b = std::sqrt(12.0 * d.Iy / d.A);
+        const auto ry = gaussLegendreRule(fn.nfy);
+        const auto rz = gaussLegendreRule(fn.nfz);
+        const double halfA = 0.25 * h * b;   // Σwy·Σwz=4 ⇒ Σf.area = h*b = A
+        fn.mats.clear();
+        MaterialModel mm;
+        mm.E = d.Eeff; mm.kind = fn.kind; mm.fy = fn.fy; mm.ft = fn.ft;
+        fn.mats.push_back(mm);            // mat=0 → 唯一材料
+        fn.sec.fibers.clear();
+        fn.sec.Eref = d.Eeff;
+        for (const auto& gy : ry) {
+            const double y = 0.5 * h * gy.first;
+            for (const auto& gz : rz) {
+                const double z = 0.5 * b * gz.first;
+                Fiber f;
+                f.y = y; f.z = z;
+                f.area = halfA * gy.second * gz.second;
+                f.E = d.Eeff;
+                // hy/hz 仍按等分网格半宽给出（仅用于 sectionProperties 的
+                // 上下缘包络，不影响积分；Gauss 点本身不代表等分单元）。
+                f.hy = 0.5 * h / fn.nfy; f.hz = 0.5 * b / fn.nfz;
+                f.mat = 0;
+                fn.sec.fibers.push_back(f);
+            }
+        }
+        fn.props = computeSectionProperties(fn.sec.fibers);
+        fn.Ay = fn.Az = d.A;
+    }
     return d;
+}
+
+// ==================== 第二十一次力学③：纤维梁局部本构 ====================
+//
+// 由 CR 局部**有效**变形 deff（12 维）算纤维梁局部端力 q。
+// deff 已扣除初应变对应的长度：deff[6] = st.d[6] − istrnEff·L0，
+// 与线弹性路径 `q = Kl12·(st.d − d0)`（d0[6]=istrnEff·L0）严格同源。
+// Lref 取参考构形弦长 |p2−p1|，与 crMakeElemData 构造 Kl12 用的长度一致，
+// 保证材料处于弹性段时纤维内力与 Kl12·deff 逐位对齐。
+//
+// 映射（梁轴 x，ξ=x/L，v 沿局部 y 绕 z 弯曲用 Iz，w 沿局部 z 绕 y 弯曲用 Iy）：
+//   eps0   = deff[6]/L
+//   kz(ξ)  = [(−4+6ξ)·θz1 + (−2+6ξ)·θz2]/L,  θz1=deff[5], θz2=deff[11]
+//   ky(ξ)  = −[(−4+6ξ)·θy1 + (−2+6ξ)·θy2]/L, θy1=deff[4], θy2=deff[10]
+//   N      = 截面轴力； q[6]=+N, q[0]=−N
+//   q[5]=−Mz(ξ=0), q[11]=+Mz(ξ=1)   （端弯矩 = ∓ 端截面弯矩）
+//   q[4]=−My(ξ=0), q[10]=+My(ξ=1)
+//   扭转 q[3]=GJ/L·(θx1−θx2), q[9]=−q[3]（保持线弹性，纤维本构不覆盖扭转）
+//
+// 竖向/横向坐标约定：sectionResponse 中 ε=ε0−κz·y+κy·z，Mz=−∫σ·y·dA，
+// My=+∫σ·z·dA。上述曲率符号使弹性段 q 与 Kl12·deff 严格相等，
+// 矩形纤维离散对 A/Iy/Iz 精确二阶积分（与网格数无关）。
+inline Eigen::Matrix<double, 12, 1> crFiberLocalForce(
+        const CRElemData::FiberNlData& fn,
+        const Eigen::Matrix<double, 12, 1>& deff,
+        double Lref, double GJ) {
+    Eigen::Matrix<double, 12, 1> q = Eigen::Matrix<double, 12, 1>::Zero();
+    const double L = std::max(Lref, 1.0e-12);
+    const double eps0 = deff[6] / L;
+    const double kz0 = -(4.0 * deff[5] + 2.0 * deff[11]) / L;
+    const double kz1 =  (2.0 * deff[5] + 4.0 * deff[11]) / L;
+    const double ky0 = -(4.0 * deff[4] + 2.0 * deff[10]) / L;
+    const double ky1 =  (2.0 * deff[4] + 4.0 * deff[10]) / L;
+    const SectionResponse r0 = sectionResponse(fn.sec, fn.mats, eps0, kz0, ky0);
+    const SectionResponse r1 = sectionResponse(fn.sec, fn.mats, eps0, kz1, ky1);
+    const double N = r0.N;
+    q[0] = -N;  q[6] = N;
+    q[5] = -r0.Mz;  q[11] = r1.Mz;
+    q[4] = -r0.My;  q[10] = r1.My;
+    // 端剪力由"无分布荷载的梁段平衡"给出，与材料本构无关：
+    //   q[1]=(q[5]+q[11])/L, q[7]=-q[1]（绕 z 弯曲，y 向剪力）
+    //   q[2]=-(q[4]+q[10])/L, q[8]=-q[2]（绕 y 弯曲，z 向剪力）
+    // 线弹性段这与 Kl12 的 6EI/L² 耦合项严格相等（已由 FEQ 校验）。
+    q[1] = (q[5] + q[11]) / L;  q[7] = -q[1];
+    q[2] = -(q[4] + q[10]) / L; q[8] = -q[2];
+    const double GJL = GJ / L;
+    q[3] = GJL * (deff[3] - deff[9]);
+    q[9] = -q[3];
+    return q;
+}
+
+// 纤维梁局部一致切线 Km = ∂q/∂deff（中心差分，opt-in 路径规模足够；
+// 自动覆盖 D12/D13/D23 耦合与弹塑性加载/卸载活动集，比手拼 D 矩阵稳健）。
+// deff[0..2]/[7..8] 是 CR 参考系里恒零的横向平动，crFiberLocalForce 不依赖，
+// 对应列自然为 0（与 Kl12 在这些行/列恒零一致）。
+inline void crFiberLocalTangent(
+        const CRElemData::FiberNlData& fn,
+        const Eigen::Matrix<double, 12, 1>& deff,
+        double Lref, double GJ,
+        Eigen::Matrix<double, 12, 12>& Km) {
+    Km.setZero();
+    for (int j = 0; j < 12; ++j) {
+        const double h = 1.0e-7 * (std::abs(deff[j]) + 1.0e-3);
+        Eigen::Matrix<double, 12, 1> dp = deff, dm = deff;
+        dp[j] += h; dm[j] -= h;
+        Km.col(j) = (crFiberLocalForce(fn, dp, Lref, GJ)
+                   - crFiberLocalForce(fn, dm, Lref, GJ)) / (2.0 * h);
+    }
+    Km = 0.5 * (Km + Km.transpose());
 }
 
 // 单元内力（可选：一致切线刚度、局部内力、轴力）。
@@ -634,20 +768,42 @@ inline void crElementInternal(const CRElemData& ed,
         CRBeamState st = crBeamState(ed.p1 + u1, ed.p2 + u2, T1, T2, ed.L0, ed.Kl12);
 
         if (!b7) {
-            Eigen::Matrix<double, 12, 1> d0 = Eigen::Matrix<double, 12, 1>::Zero();
-            d0[6] = ed.istrnEff * ed.L0;
-            const Eigen::Matrix<double, 12, 1> q = st.q - ed.Kl12 * d0;
+            Eigen::Matrix<double, 12, 12> K12;
+            Eigen::Matrix<double, 12, 1> q;
+            if (ed.fibnl.enabled) {
+                // ---- 第二十一次力学③：opt-in 材料非线性纤维梁 ----
+                // 有效变形与线弹性路径同源：deff = st.d − d0（d0[6]=istrnEff·L0）。
+                // Lref 用参考弦长（与 Kl12 构造长度一致），保证弹性段逐位复现；
+                // GJ 扭转不参与纤维本构，保持线弹性。
+                Eigen::Matrix<double, 12, 1> deff = st.d;
+                deff[6] -= ed.istrnEff * ed.L0;
+                const double Lg = (ed.p2 - ed.p1).norm();
+                const double GJ = ed.G * ed.J;
+                q = crFiberLocalForce(ed.fibnl, deff, Lg, GJ);
+                if (Kout) {
+                    Eigen::Matrix<double, 12, 12> Km;
+                    crFiberLocalTangent(ed.fibnl, deff, Lg, GJ, Km);
+                    if (crBeamTangent12(st, T1, T2, ed.E0, th1, th2, Km, q, K12)) {
+                        Kout->setZero();
+                        Kout->topLeftCorner(12, 12) = K12;
+                        tangentOk = true;
+                    }
+                }
+            } else {
+                Eigen::Matrix<double, 12, 1> d0 = Eigen::Matrix<double, 12, 1>::Zero();
+                d0[6] = ed.istrnEff * ed.L0;
+                q = st.q - ed.Kl12 * d0;
+                if (Kout) {
+                    if (crBeamTangent12(st, T1, T2, ed.E0, th1, th2, ed.Kl12, q, K12)) {
+                        Kout->setZero();
+                        Kout->topLeftCorner(12, 12) = K12;
+                        tangentOk = true;
+                    }
+                }
+            }
             f.head<12>() = st.B.transpose() * q;
             if (ql) { (*ql).setZero(); ql->head<12>() = q; }
             if (axial) *axial = -q[0];          // q[0] = -N（受拉为正）
-            if (Kout) {
-                Eigen::Matrix<double, 12, 12> K12;
-                if (crBeamTangent12(st, T1, T2, ed.E0, th1, th2, ed.Kl12, q, K12)) {
-                    Kout->setZero();
-                    Kout->topLeftCorner(12, 12) = K12;
-                    tangentOk = true;
-                }
-            }
             return f;
         }
 

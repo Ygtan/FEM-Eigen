@@ -1,0 +1,16 @@
+# CB3D28 — 高拱 von Mises 桁架的分岔点检测与分支切换（第二十一次力学④）
+# 解析：B=1 H=3 L0=sqrt(10)；对称极值点 L^3=B^2*L0；反对称分岔点 L^3=L0*h^2
+# 该几何下反对称分岔(v≈0.446)先于对称极值点(v≈1.927)出现。
+G g E=2.1e11 A=0.001 B=1.0 H=3.0 PREF=2.0e6 MAXSTEPS=800 MAXITER=40 DSMAX=0.2 DSMIN=1.0e-7 TOL=1.0e-7 VMAX=6.0
+# 主路径（默认全关，逐位基线）
+C bif_off     g DS=0.02 PSI=1.0 BIFURC=0
+# 反对称分岔切换：模态1（顶点X），幅值0.02 → 进入分岔后分支
+C bif_anti    g DS=0.02 PSI=1.0 BIFURC=1 BIFPIV=0.10 BIFMODE=1 BIFAMP=0.02
+# 幅值敏感性：同模态小扰动 → 分支进入深度更浅
+C bif_small   g DS=0.02 PSI=1.0 BIFURC=1 BIFPIV=0.10 BIFMODE=1 BIFAMP=0.005
+# 负例：对称模态扰动 → 切换后仍在对称路径，模态幅值≈0
+C bif_sym     g DS=0.02 PSI=1.0 BIFURC=1 BIFPIV=0.10 BIFMODE=0 BIFAMP=0.02
+# 负例：零幅值 → 只检测不切换，与主路径逐位一致
+C bif_zero    g DS=0.02 PSI=1.0 BIFURC=1 BIFPIV=0.10 BIFMODE=1 BIFAMP=0.0
+# 负例：模态序号越界 → 检测但不切换，与主路径逐位一致
+C bif_badmode g DS=0.02 PSI=1.0 BIFURC=1 BIFPIV=0.10 BIFMODE=9 BIFAMP=0.02

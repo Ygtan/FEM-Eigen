@@ -1,0 +1,46 @@
+# ============================================================
+# 第二十一次力学③：材料非线性纤维梁 / 截面本构基准输入
+# 矩形截面 b=0.1m (z 向) × h=0.2m (y 向)：A=0.02, Iy=h*b^3/12, Iz=b*h^3/12
+# 等效矩形离散 h_eq=sqrt(12*Iz/A)=h, b_eq=sqrt(12*Iy/A)=b（精确二阶积分）
+# 材料：
+#   ELASTIC  E=2.1e11
+#   STEEL    E=2.1e11  FY=2.35e8（理想弹塑性，拉压对称）
+#   CONCRETE E=3.0e10  FT=2.0e6（受拉开裂退出，受压线弹性）
+# ============================================================
+G gel  E=2.1e11 A=0.02 IY=1.66666666666667e-5 IZ=6.66666666666667e-5 G=8.07692307692308e10 J=2.66666666666667e-4 MATKIND=ELASTIC
+G gst  E=2.1e11 A=0.02 IY=1.66666666666667e-5 IZ=6.66666666666667e-5 G=8.07692307692308e10 J=2.66666666666667e-4 MATKIND=STEEL FY=2.35e8
+G gco  E=3.0e10 A=0.02 IY=1.66666666666667e-5 IZ=6.66666666666667e-5 G=1.15384615384615e10 J=2.66666666666667e-4 MATKIND=CONCRETE FT=2.0e6
+
+# ---- 单轴应力-应变（S 行：EPS=kz=ky=0 的轴向拉压）----
+# 弹性段 N = E*A*eps
+S el_t1 gel EPS=1e-4   KZ=0 KY=0
+S el_c1 gel EPS=-5e-5  KZ=0 KY=0
+# 钢：E*eps <= fy 弹性；> fy 后 N = fy*A 饱和
+S st_e1 gst EPS=5e-4   KZ=0 KY=0
+S st_e2 gst EPS=1.5e-3 KZ=0 KY=0
+S st_c2 gst EPS=-1.5e-3 KZ=0 KY=0
+# 混凝土：受拉 E*eps > ft 退出（N=0），受压保持线弹性
+S co_t1 gco EPS=3e-5   KZ=0 KY=0
+S co_t2 gco EPS=1e-4   KZ=0 KY=0
+S co_c1 gco EPS=-1e-4  KZ=0 KY=0
+
+# ---- 纯弯曲截面矩-曲率（矩形截面塑性铰逐阶段屈服闭式）----
+# 弹性：Mz = E*Iz*kz
+S el_k1 gel EPS=0 KZ=1e-3  KY=0
+# 钢：ky=2*fy/(E*h)=0.0111905，kz=0.005 弹性，0.02/0.05 逐阶段屈服
+S st_k1 gst EPS=0 KZ=5e-3  KY=0
+S st_k2 gst EPS=0 KZ=2e-2  KY=0
+S st_k3 gst EPS=0 KZ=5e-2  KY=0
+# 绕 y 弯曲（ky）同样受纤维本构约束，弹性段 My = E*Iy*ky
+S el_ky gel EPS=0 KZ=0 KY=2e-3
+S st_ky gst EPS=0 KZ=0 KY=2e-2
+
+# ---- 纤维梁局部力 / 切线（F 行：12 维 CR 局部有效变形 deff）----
+# 弹性逐位对齐：轴力+双向弯曲+扭转混合，纤维力/切线应与 Kl12*d 完全相等
+F f_el1 gel 0 0 0 5e-4 1e-3 1e-3 1e-3 0 0 -5e-4 -1e-3 2e-3
+F f_el2 gel 0 0 0 0 0 2e-3 0 0 0 0 0 -2e-3
+# 钢：弹性弯曲（k=0.004 < ky）与塑性弯曲（k=0.02 > ky）
+F f_st1 gst 0 0 0 0 2e-3 2e-3 0 0 0 0 -2e-3 -2e-3
+F f_st2 gst 0 0 0 0 1e-2 1e-2 0 0 0 0 -1e-2 -1e-2
+# 混凝土：纯拉伸全部开裂 → N=0（与弹性 N=2.1e6 对比）
+F f_co1 gco 0 0 0 0 0 0 1e-3 0 0 0 0 0

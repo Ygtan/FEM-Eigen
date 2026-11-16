@@ -497,9 +497,12 @@ int runStabilityMode(const std::string& dat, const Model3D& m,
 //   · COMPLETION：u0=成桥态收敛位移，F0=成桥态恒载；
 //   · STAGE：u0=指定施工阶段的共转列式全量平衡位移，F0=该阶段累计
 //     恒定荷载，基准模型只含**该阶段已激活**单元与当前 L0。
-// 三者共用 stability_path_3d.hpp 的球面弧长法与一致切线刚度，但起点与
+// 三者共用 stability_path_3d.hpp 的一致切线刚度与增广系统，但起点与
 // 基准模型不同；[STAGES] 段逐阶段留痕，证明选中的确实是中间态。
 // *STABILITY_LOAD 只提供 Finc，不进任何阶段荷载，默认路径零改动。
+// 路径约束：默认 SPHERE（Crisfield 球面）；本项新增 PATHMETHOD=RIKS
+// （Wempner–Riks 正交轨迹）仅在本入口 opt-in，REFERENCE / COMPLETION
+// 入口仍拒绝 RIKS，故既有冻结输出与负例逐位不变。
 int runStageStabilityMode(const std::string& dat, const Model3D& m,
                           const Cfg& cfg) {
     const StabilityCfg& sc = cfg.stability;
@@ -516,7 +519,10 @@ int runStageStabilityMode(const std::string& dat, const Model3D& m,
         section = stabilityErrorSection3D("[STABILITY]", code, basis);
     };
 
-    if (sc.pathMethod != "SPHERE") {
+    // 本项是 RIKS 唯一放开的入口（仅 STAGE 起点）。REFERENCE /
+    // COMPLETION 入口仍只认 SPHERE，第 20 项 von_mises_bad_method
+    // 负例逐位不变。其它未知方法名一律同样拒绝，不静默兜底。
+    if (sc.pathMethod != "SPHERE" && sc.pathMethod != "RIKS") {
         fail("unsupported_path_method");
     } else if (m.stages.empty()) {
         fail("no_stage_definition");
@@ -611,6 +617,7 @@ int runStageStabilityMode(const std::string& dat, const Model3D& m,
                         opt.ctrlDof = sc.ctrlDof;
                         opt.ctrlTarget = sc.ctrlTarget;
                         opt.strainMeasure = sc.strain;
+                        opt.pathMethod = (sc.pathMethod == "RIKS") ? 1 : 0;
                         ArcLengthState3D st;
                         st.u0 = pick->u;
                         st.F0 = F0;

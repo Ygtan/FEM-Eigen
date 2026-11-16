@@ -1,0 +1,11 @@
+# 第二十一次力学①：位移控制 / 线搜索（opt-in）冻结算例
+# von Mises 两杆浅桁架，闭式锚点 P(v) = -2N(H-v)/L，N=EA(L-L0)/L0。
+# 与 CB3D17 球面弧长同源：位移控制只是换参数化，平衡路径必须逐点一致。
+G g1 E=2.1e+11 A=0.001 B=2 H=0.5 PREF=2e+06 TOL=1e-09 MAXSTEPS=400 MAXITER=40 VMAX=1 DSMAX=0.05 DSMIN=1e-08
+# 位移控制（无 / 有 line search）：同一 CTRLSTEP，两条路径必须逐点相同。
+C dc_plain   g1 DS=0.02 PSI=1 STRAIN=0 CTRLMODE=1 CTRLSTEP=0.01 TAG=dc_plain
+C dc_ls      g1 DS=0.02 PSI=1 STRAIN=0 CTRLMODE=1 CTRLSTEP=0.01 LINESEARCH=1 TAG=dc_ls
+# 细步长位移控制 + 线搜索：更密采样，λ_max 更接近闭式 λ_cr。
+C dc_ls_fine g1 DS=0.02 PSI=1 STRAIN=0 CTRLMODE=1 CTRLSTEP=0.005 LINESEARCH=1 TAG=dc_ls_fine
+# 负例：控制 DOF 指向固定端节点 1（Y 位移恒 0），duF(ctrl)=0 → singular_control_dof。
+C dc_badctrl g1 DS=0.02 PSI=1 STRAIN=0 CTRLMODE=1 CTRLSTEP=0.01 CTRLNODE=1 CTRLDOF=2 TAG=dc_badctrl

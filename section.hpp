@@ -5,9 +5,42 @@
 
 #include <algorithm>
 #include <cmath>
+#include <string>
+#include <utility>
 #include <vector>
 
 namespace fem {
+
+// n 点 Gauss-Legendre 积分点/权重（区间 [-1,1]，Newton 迭代求 Legendre 根）。
+// 用于纤维截面：n 点 Gauss 对 y²（二阶多项式）精确积分 ⇒ 离散纤维的
+// A / Iy / Iz 与解析矩形截面逐位一致，材料非线性 opt-in 在弹性段
+// 与 Kl12·d 完全对齐（不再有中点离散的 1/n² 误差）。
+inline std::vector<std::pair<double, double>> gaussLegendreRule(int n) {
+    std::vector<std::pair<double, double>> out;
+    if (n <= 0) return out;
+    if (n == 1) return {{0.0, 2.0}};
+    out.reserve(n);
+    const double pi = 3.14159265358979323846;
+    for (int i = 0; i < (n + 1) / 2; ++i) {
+        double x = std::cos(pi * (i + 0.75) / (n + 0.5));  // Chebyshev 初值
+        double dp = 0.0;
+        for (int iter = 0; iter < 100; ++iter) {
+            double p0 = 1.0, p1 = x;
+            for (int k = 2; k <= n; ++k) {
+                const double p2 = ((2.0 * k - 1.0) * x * p1 - (k - 1.0) * p0) / k;
+                p0 = p1; p1 = p2;
+            }
+            dp = n * (x * p1 - p0) / (x * x - 1.0);
+            const double dx = -p1 / dp;
+            x += dx;
+            if (std::abs(dx) < 1e-14) break;
+        }
+        const double w = 2.0 / ((1.0 - x * x) * dp * dp);
+        out.push_back({x, w});
+        if (i != n - 1 - i) out.push_back({-x, w});
+    }
+    return out;
+}
 
 struct Fiber {
     double y = 0.0;    // 竖向坐标（相对参考点，向上为正）
