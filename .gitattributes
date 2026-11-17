@@ -22,3 +22,13 @@ CMakeLists.txt text eol=lf
 *.a    binary
 *.dll  binary
 *.obj  binary
+
+# ---- 离线 benchmark 冻结证据：按字节原样入库，禁止换行转换 ----
+# 冻结 sha256 是按 Windows 上程序写出的 CRLF 字节计算的；若让上面的
+# `*.txt/.dat/... text eol=lf` 规则把这些文件检出为 LF，哈希会全体失配。
+# 因此 cases/reference 下所有证据文件统一 -text（不识别为文本、不做 eol 转换）：
+# 当前工作区的 CRLF 字节被原样提交进 blob，任何机器 checkout 都得到相同字节。
+tests/benchmark/**/cases/** -text
+tests/benchmark/**/reference/** -text
+# cable_arch_3d 的 smoke freeze 证据不在 cases/reference 下，单独纳入
+tests/benchmark/cable_arch_3d/nonlinear_smoke/** -text
