@@ -211,9 +211,10 @@ powershell -ExecutionPolicy Bypass -File D:\AI-work\FEM-Eigen\run_tests.ps1
 - `build/CTestTestfile.cmake` 由 CMake 生成、被 `.gitignore` 排除，不入库。
   本机旧 `build/` 缓存的生成器是 `MinGW Makefiles` 却配了 MSYS 的
   `C:/msys64/usr/bin/make.exe`（两者不兼容，试编译阶段路径被反斜杠截断），
-  因此历史上只能手工同步新增的 `add_test` 行。**干净重配已实测可行**，
-  换机或重建时按 `tests/benchmark/README.md` 的「从零复现」用 Ninja 或
-  `MSYS Makefiles` 生成器即可自动生成同样 16 条注册，无需手工同步。
+  因此历史上只能手工同步新增的 `add_test` 行。**该跨机缓存坑已于
+  2026-11-17 根治**：`build/` 现统一用 Ninja，换机或干净 checkout 后跑仓库根
+  `configure_build.ps1` 即可一键探测工具链、清理失效缓存并重建，自动生成同样
+  的 `add_test` 注册，无需手工同步；从零复现细节见 `tests/benchmark/README.md`。
 - `--live-ansys` 在临时工作目录重跑 6 个 ANSYS job，把新生成的 CSV 与
   `cases/` 下的冻结 CSV 逐值比对（判据 `1e-6 + 1e-3|y|`），**不覆写冻结
   文件**；`build_reference_erection.py --check` 随时可确认黄金值与冻结 CSV

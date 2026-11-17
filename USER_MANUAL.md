@@ -29,11 +29,20 @@ FEM-Eigen 是一个轻量、无第三方运行依赖的 C++ 有限元程序，�
 
 环境要求：MSYS2 的 **mingw64** 工具链（编译器与 SuiteSparse/CHOLMOD 必须同属 mingw64，混用 ucrt64 会导致运行库不一致）。CMake 4.x 为独立安装。
 
+**换机 / 干净 checkout 后先跑一键配置**（自动探测工具链、锁定 Ninja + mingw64 g++，不写死安装路径；会清理跨机带来的失效 `build/` 缓存）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File configure_build.ps1
+```
+
+手工等价命令（不要把生成器换成 MinGW Makefiles：本机 mingw64 无 `mingw32-make`，CMake 会退回 MSYS make 导致路径转义失败）：
+
 ```powershell
 $env:PATH = "C:\msys64\mingw64\bin;C:\msys64\usr\bin;$env:PATH"
-cmake -S . -B build -G "MinGW Makefiles" `
-  -DCMAKE_C_COMPILER=C:/msys64/mingw64/bin/gcc.exe `
-  -DCMAKE_CXX_COMPILER=C:/msys64/mingw64/bin/g++.exe
+cmake -S . -B build -G Ninja `
+  -DCMAKE_MAKE_PROGRAM=C:/msys64/mingw64/bin/ninja.exe `
+  -DCMAKE_CXX_COMPILER=C:/msys64/mingw64/bin/g++.exe `
+  -DCMAKE_BUILD_TYPE=Release -DFEM_USE_CHOLMOD=ON
 cmake --build build -j8
 ```
 
@@ -86,6 +95,49 @@ python tests/regression/compare_regression.py --freeze --bin build --src . --bas
 `riks_stage_stability_3d_benchmark`（STAGE 起点的 Wempner–Riks
 正交轨迹，闭式 + 双方法交叉，63 项守卫）后合计 **27 个 CTest**，
 同样是纯离线回归。
+
+**第二十一次五项力学 / 第二十三~二十四次 B4 之后的回归口径**：新增力学①~⑤
+（位移控制+线搜索、初始缺陷+敏感性、材料非线性本构、分岔切换、动力
+snap-through）五项 opt-in benchmark，以及 B4 的 σl2 附录 G 反摩擦
+（第 33 项 `prestress_loss_anti_2d_benchmark`，117 checks）、σl6 附录 C
+显式表值（第 34 项 `prestress_loss_creep_2d_benchmark`，142 checks）、
+结构时变徐变链（第 35 项 `creep_shrinkage_time_2d_benchmark`，75 checks）、
+2D 阶段分项损失 + 阶段有效预加力（第 36 项 `stage_loss_2d_benchmark`，269 checks）与
+B5 成桥态无应力曲率（第 37 项 `unstressed_curvature_3d_benchmark`，111 checks）。
+合计 **37 个 CTest**，全部离线，由 `run_tests.ps1` 与 `ctest` 双入口覆盖。
+其中第 35 项用只读探针 `creep_probe_2d.exe` 暴露 `code_loads.hpp` 连续拟合
+的 `φ0/βH/εcs0` 与逐龄期 `φ/εcs/βs/E_eff`，由独立 Python 闭式 oracle
+逐键核对，并以硬断言锁死与 σl6 表值链的口径隔离（βH 803.25 vs 961.76、
+εcs0 3.674e-4 vs 0.310e-3）；口径与公式见 `input_format.md` §徐变模型
+与该 benchmark 的 `README.md`。σl2/σl6 均为 opt-in 默认全关，冻结证据
+逐位零污染。
+
+第 36 项用 `example_stage.exe --stage-loss-detail` 把 2D 阶段 LOSSREF 束的
+分项损失写到独立 `<stem>.stage.loss.txt`（`BASIS=2d_stage` /
+`STAGE<n> P<id>`，字段顺序与 3D `stage prestress loss` 一致），与非阶段
+`<stem>.loss.txt`（`BASIS=2d_global`）严格隔离；独立 Python 闭式 oracle
+逐键核对 σl1~σl6 / σpe / RATIO 及附录 G / 附录 C 中间量，含硬/软负例、
+默认逐位零污染、2D/3D 同参同值与 FE/BS 源码契约守卫。第二十七次在同一
+第 36 项内加 `--stage-prestress-force`（`[PRESTRESSFORCE2D]` /
+`BASIS=2d_stage` / `STAGE<n> P<id> SIGMA_CON= P= LOSS= PE=`，写独立
+`<stem>.stage.force.txt`），补 2D 缺的「阶段有效预加力」输出段；`PE` 与
+`processPrestress` 里那一次 `Pe = ps.P * loss` 同源、不重算，2D 的 `PE=`
+即 3D `stage prestress force` 段的 `Pe=`。checks 由 167 增至 **269**。
+2D 侧能力矩阵该格随之由 `2D=P` 推 `2D=Y`，`Y` 的口径是**平面内完整**
+（六项公式同源 + 非阶段/阶段明细段 + 阶段维度 + 阶段有效预加力），
+**不含三向空间量**；真实制造参数与分项损失 ANSYS 对拍 2D/3D 同样没有。
+
+第 37 项（B5 第二十六次）在 3D 线性梁增 opt-in 无应力曲率：`*EN` 单元行
+`K0Y=` / `K0Z=`（1/m，默认 0）→ `elementEquivalentLoad3D()` 追加固端力
+`f_eq(θ₁)=−EI·κ0`、`f_eq(θ₂)=+EI·κ0`，因该函数同时供组装 `F0` 与端内力
+恢复，故 `K·u = f_ext + f_eq`、端内力自动为 `M = EI(κ − κ0)`；`κ0=0` 时
+逐位不变。`example_3d_report.exe --curvature-detail` 写独立
+`<stem>.curvature.txt`（`[UNSTRESSED_CURVATURE]`），默认不写。基准锚点是
+悬臂 `v₂=κ0L²/2` / `θz₂=κ0L` 且端内力恒零、两端固结 `Mz=−EIzκ0`、简支
+加集中力时**内力与 κ0 无关**而位移叠加 `κ0L²/8`。**B5 仍只是 FEM 自洽
+口径**：不接真实制造参数、不做 ANSYS 对拍、未覆盖共转列式 `CRElemData`；
+不得把「节点预抬高」写成「无应力曲率已实现」。
+
 指定干净构建目录用 `-BuildDir` 参数：
 
 ```powershell
@@ -276,7 +328,7 @@ NODES=1,2,3 DOF=2 CODE=JTG_D60
 
 - σl5 分两类：钢丝/钢绞线按 6.2.6-1（Ψ·ζ·(0.52σpe/fpk−0.26)σpe）；预应力螺纹钢筋按 6.2.6-2/3（一次张拉 0.05σcon、超张拉 0.035σcon），用 `*PRESTRESS_LOSS` 的 `REBAR=1` 选择。
 - 后张法 σpe=σcon−σl1−σl2−σl4，先张法 σpe=σcon−σl2，用 `POST=0/1` 选择。
-- 已对照正式条文核对 σl1~σl6 系数。仍为简化式的是：σl2 曲线筋按附录 G 的反摩擦影响未实现（仅直线筋 ΣΔl/l·Ep）；σl6 的 εcs、φ 需由用户按附录 C 计算后输入，程序不自动算收缩/徐变随龄期发展。
+- 已对照正式条文核对 σl1~σl6 系数。σl2 默认按直线筋 ΣΔl/l·Ep；opt-in `L2ANTI=1` 按附录 G 考虑曲线筋反摩擦，代表值取张拉端 x=0（保守；`L2REPX≠0` 显式拒绝，`ΣΔl≤0` 同样拒绝），明细段在有反摩擦时追加 `LF=` / `DSL2D=` / `DSL2PEAK=` / `BRANCH=`，不输出 σl2(x) 沿程分布。两支闭式：`lf≤l` 用 Δσ=2Δσd·lf，`lf>l` 用 Δσ′=Δσd(lf²/l+l)；无摩擦时退化为直线式（BRANCH=0）。σl6 默认由 `ECS`/`PHI` 用户直给，程序不自动算收缩/徐变随龄期发展；opt-in `C2D=1` 用附录 C 显式表值龄期口径：用户按表 C.1.2 / C.2.2 核对录入 `EPS0`/`PHI0`（C50 以上 32.4/fck 折减由用户承担），并给 `C_RH`/`C_H`/`C_T0`/`C_TS`/`C_T`，程序只按解析发展公式组装 εcs(t,t0)/φ(t,t0)（βs/βH/βc，RH 按 C.2.3 取区间代表值 55/80），绝不调用 `code_loads.hpp` 拟合值兜底；缺任一表值显式报错。`C_SKIP=1` 显式声明 σl6 不参与（`C_SOURCE=2`），与缺值报错严格区分。启用时明细段追加 `C_SOURCE=`/`ECS_DEV=`/`PHI_DEV=`/`BETAS=`/`BETAS0=`/`BETAC=`/`BETAH=`/`RHREP=`。
 - **2D / 3D 同源**：`parsePrestressLossLine()` 是两边共用的唯一键名映射，`computePrestressLosses()` 是唯一公式。2D 用 `*PRESTRESS ... LOSSREF=<编号>` 引用；3D 用 `*STAGE ... PRESTRESS=<elems>:P=...:E=...:LOSSREF=<编号>` 引用（只在关键字模式可用，与 `LOSS=` 互斥）。3D 侧 `resolvePrestressLosses3D()` 在整份文件读完后把 `σpe/σcon` 写回 `loss`，所以表写在 `*STAGE` 前后都行；没解析过就直接求解会报错，不静默用 1.0。格式与边界见 `input_format_3d.md`「阶段预应力分项损失」。
 - 只有引用了表的束才写 `stage prestress loss` 结果段（σl1~σl6、σpe、RATIO，12 位有效数字）；只给一个总损失比的束不产生这段。σl3/σl5/σl6 属后期损失，不进 σpe，也不进等效荷载的 `Pe = P·(σpe/σcon)`。
 - 二维分项损失明细（**opt-in，默认关闭**，第十次）：`example_mixed.exe model.dat --loss-detail` 把 `[PRESTRESSLOSS2D]` 段写进 `<stem>.loss.txt`，字段 `NPRESTRESS=<n> BASIS=2d_global` 与 `P<id> SIGMA_CON= SL1=..SL6= SPE= RATIO=` 同 3D 段、12 位有效数字；实现见 `prestress_loss_output_2d.hpp::formatPrestressLossSection2D`，只读 `Model2D::prestressLossDetails`，公式唯一来源仍是 `computePrestressLosses()`，不重算。`--loss-detail-only` **只取明细、不求解、不写 `.result`**，供已有施工阶段结果的主路径之外单独调用（避免覆盖 `.result`）。2D 非阶段束不属于任何施工阶段，段里**不设 `STAGE` 占位、不造阶段号**，`P<id>` 是输入行首的显式束号；不等于 3D 的阶段分项损失。没有 `LOSSREF` 束时写 `ERROR=no_lossref_prestress`，不摆空表、不补零。两个开关都不改 `.result` / 控制台，默认输出逐位不变、回归黄金基线不刷新；BridgeStudio 侧 `prestress_loss_2d.py` 只解析、不现算、不反算。

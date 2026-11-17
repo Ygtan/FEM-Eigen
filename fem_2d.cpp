@@ -515,6 +515,7 @@ DenseVec elementExternalEquivalentLoad(const Model2D& m, const Model2D::Element&
 void processPrestress(Model2D& m) {
     // 每次重建：readModel2D 与阶段求解都会调用本函数，不能累加出重复明细。
     m.prestressLossDetails.clear();
+    m.prestressForces.clear();
     if (m.prestresses.empty()) return;
 
     // 预建单元索引，避免 getElem 的 O(n) 线性扫描。
@@ -549,12 +550,14 @@ void processPrestress(Model2D& m) {
         if (ps.elems.empty())
             throw std::runtime_error("*PRESTRESS 的 ELEM 列表为空");
         double loss = ps.loss;
+        double sigmaCon = 0.0;
         if (ps.lossRef > 0) {
             const auto lit = m.prestressLosses.find(ps.lossRef);
             if (lit == m.prestressLosses.end())
                 throw std::runtime_error("*PRESTRESS LOSSREF 引用了不存在的 *PRESTRESS_LOSS: "
                                          + std::to_string(ps.lossRef));
             loss = effectivePrestressRatio(lit->second);
+            sigmaCon = lit->second.sigmaCon;
             // 分项明细：与上面的有效比同一次公式（computePrestressLosses），
             // 只把 effectivePrestressRatio 丢掉的中间量留下来。loss 行与 Pe
             // 一字不改；明细不参与任何求解，只供 --loss-detail 结果段写出。
@@ -563,6 +566,9 @@ void processPrestress(Model2D& m) {
                 std::make_tuple(ps.id, detail, lit->second.sigmaCon));
         }
         const double Pe = ps.P * loss;
+        // 第二十七次 opt-in：有效预加力明细，与上面 Pe 是同一次计算（不重算）。
+        // 默认不写出；只有 --stage-prestress-force 才落文件，求解数值一字不改。
+        m.prestressForces.push_back(PrestressStageForce2D{ps.id, ps.P, loss, Pe, sigmaCon});
 
         // 按输入顺序建立梁节点链。
         std::vector<int> beamNodes;
@@ -1532,12 +1538,27 @@ Model2D readModel2D(const std::string& path) {
             it = p.find("F"); if (it != p.end()) ps.F = std::stod(it->second);
             it = p.find("E1"); if (it != p.end()) ps.E1 = std::stod(it->second);
             it = p.find("E2"); if (it != p.end()) ps.E2 = std::stod(it->second);
-            it = p.find("LOSS");
-            if (it == p.end()) throw std::runtime_error("*PRESTRESS / *STAGE_PRESTRESS 缺少 LOSS（损失系数，必须显式指定）");
-            ps.loss = std::stod(it->second);
+            // 第二十五次：阶段预应力束支持 LOSSREF=<*PRESTRESS_LOSS 表号>。
+            // LOSS 与 LOSSREF 必须且只能给一个：只给 LOSS 的旧输入逐位不变，
+            // 给 LOSSREF 的束由 processPrestress(mc) 走同一份 computePrestressLosses
+            // 得 σpe/σcon 与六项明细（σl2 附录 G / σl6 附录 C 选项自动映射）。
+            const bool hasLoss = (p.find("LOSS") != p.end());
+            const bool hasLossRef = (p.find("LOSSREF") != p.end());
+            if (hasLoss == hasLossRef)
+                throw std::runtime_error(
+                    "*STAGE_PRESTRESS 必须且只能指定 LOSS 或 LOSSREF 之一");
+            if (hasLoss) ps.loss = std::stod(p.find("LOSS")->second);
+            if (hasLossRef) {
+                ps.lossRef = std::stoi(p.find("LOSSREF")->second);
+                if (ps.lossRef <= 0)
+                    throw std::runtime_error("*STAGE_PRESTRESS 的 LOSSREF 必须为正整数");
+            }
             it = p.find("EPS"); if (it != p.end()) ps.Ep = std::stod(it->second);
             it = p.find("APS"); if (it != p.end()) ps.Ap = std::stod(it->second);
             ps.method = "EQUIV"; // 施工阶段第一版只使用等效荷载法
+            // 与 3D fem_3d.hpp 同源：阶段内按输入顺序从 1 编号，使阶段段
+            // 的 P<id> 与 3D stage prestress loss 一致；不参与任何求解。
+            ps.id = static_cast<int>(m.stages[stageId - 1].prestresses.size()) + 1;
             m.stages[stageId - 1].prestresses.push_back(ps);
         } else if (section == "*STAGE_BOUNDARY" || section == "*STAGE_UNBOUNDARY") {
             int stageId = 0;
@@ -3220,6 +3241,16 @@ std::vector<StageResult> solveModel2DStages(const Model2D& m,
         sr.U = r.U;
         sr.R = r.R;
         sr.forces = elementForces2D(mc, r.U);
+        // 第二十五次：只取本阶段 processPrestress(mc) 重建出的分项明细。
+        // 必须带 !st.prestresses.empty() 条件：否则当本阶段没有预应力束时，
+        // mc=m 会带进 readModel2D 的**非阶段** LOSSREF 明细，污染阶段段。
+        // 明细只读、不参与求解；只给 LOSS= 的阶段束此字段为空。
+        if (!st.prestresses.empty()) {
+            sr.prestressLossDetails = mc.prestressLossDetails;
+            // 第二十七次：本阶段有效预加力明细，与分项损失同源同批。
+            // 同样必须带 !st.prestresses.empty() 条件，避免带进非阶段束。
+            sr.prestressForces = mc.prestressForces;
+        }
         if (m.analysisType == "NONLINEAR") {
             prevActive.assign(mc.elements.size(), 1);
             for (std::size_t ei = 0; ei < mc.elements.size(); ++ei) {

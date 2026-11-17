@@ -1,0 +1,4 @@
+[PRESTRESSLOSS2D]
+NPRESTRESS=1 BASIS=2d_global
+NOTE=2D 非阶段 *PRESTRESS LOSSREF 束的分项损失明细；字段名与单位（Pa，RATIO 无量纲）同 3D stage prestress loss 段，12 位有效数字。2D 没有阶段维度，不设 STAGE 占位、不造阶段号；P<id> 是输入行首的显式束号。σpe 后张=σcon-σl1-σl2-σl4、先张=σcon-σl2；σl3/σl5/σl6 是后期损失，不进 σpe 也不进等效荷载 Pe=P*(σpe/σcon)。σl2 默认按直线筋 ΣΔl/l*Ep；opt-in L2ANTI=1 按附录 G 反摩擦、代表值 x=0（张拉端保守），BRANCH=1 为 lf≤l、2 为 lf>l、0 为未启用或无摩擦退化；σl6 默认由 ECS/PHI 用户直给；opt-in C_SKIP=1 显式声明不参与（C_SOURCE=2），C2D=1 用附录 C 显式表值龄期（C_SOURCE=1），表值由用户核对录入、程序不调用规范拟合函数兜底，缺任一表值报错。
+P1 SIGMA_CON=1395000000 SL1=87790888.5885 SL2=117000000 SL3=40000000 SL4=45217391.3043 SL5=20645991.0476 SL6=0 SPE=1144991720.11 RATIO=0.820782595059 C_SOURCE=2

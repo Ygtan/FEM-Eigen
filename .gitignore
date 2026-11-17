@@ -71,3 +71,4 @@ cmake_probe_*/
 # ---- 干净 Ninja 构建目录（离线全量回归用，不入库）----
 _c_build/
 _d_build/
+_clean_build/

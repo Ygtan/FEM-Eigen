@@ -171,7 +171,7 @@ Newton-Raphson：`assembleState` 每步组装 `Fint/Fext` 与一致切线（轴�
   BridgeStudio 算例目录共享 FEM 证据，改用 `replay_tolerance.py`
   结构化比较。`_c_build/` / `_d_build/` 已加入 `.gitignore`。
 - CMake 目标：`fem_2d`（静态库）+ `fem_3d`（INTERFACE，纯头文件）+ 各 `example_*` + `test_2d` / `test_3d`。可选依赖：CHOLMOD（`FEM_USE_CHOLMOD`）、AMGCL。
-- 生成器：`MinGW Makefiles`；CMake 4.x 独立安装，`mingw32-make` 可用 CodeBlocks 自带或 MSYS2 `make`。**离线全量回归推荐 Ninja 干净构建**（旧 `build/` 增量依赖扫描曾多次卡住），命令见 `tests/benchmark/README.md`。
+- 生成器：**统一用 Ninja**（`cmake -S . -B build -G Ninja ...`）；换机 / 干净 checkout 后直接跑仓库根的 `configure_build.ps1` 一键探测工具链并重建 `build/`。**不要用 `MinGW Makefiles`**：本机 mingw64 无 `mingw32-make`，CMake 会退回 MSYS `/usr/bin/make.exe`，试编译阶段反斜杠路径被截断、configure 失败；且旧机写死 `C:\Program Files\CMake\bin\cmake.exe` 的 Makefile 缓存跨机后会让 `cmake --build` 卡死。`build/` 是机器本地产物、不入库、不可跨机携带。离线全量回归命令见 `tests/benchmark/README.md`。
 
 ## 8. 提交规范
 

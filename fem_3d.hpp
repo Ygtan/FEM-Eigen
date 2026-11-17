@@ -271,6 +271,10 @@ struct Element3D {
     std::string matKind = "ELASTIC";
     double matFy = 0.0, matFt = 0.0;
     int matNfy = 0, matNfz = 0;
+    // 第二十六次 opt-in：成桥态无应力曲率 κ0（1/m），默认 0 = 现行为。
+    // 语义是「该单元在无应力状态下固有的曲率」，属制造/设计给定参数，不由程序反算。
+    // 只经 *EN 单元行的 K0Y=/K0Z= 录入；κ0=0 时以下游全部早退，逐位不变。
+    double k0y = 0.0, k0z = 0.0;
 };
 
 // 三维约束：节点 + 自由度(1~6) + 指定位移值。
@@ -800,6 +804,25 @@ inline Eigen::VectorXd elementEquivalentLoad3D(const Model3D& m, const Element3D
             fe += distributedLoadEquivalent3D(e, p1, p2, gdir, wi, wi);
             hasLoad = true;
         }
+    }
+    // 第二十六次 opt-in：成桥态无应力曲率 κ0 的等效固端力。
+    // 常曲率 κ0 的固端力（局部 12 分量）：绕 z 弯曲落在 (θz1, θz2) = (−EIz·κ0z, +EIz·κ0z)；
+    // 绕 y 弯曲因 θy = −dw/dx 取同式（推导见 BridgeStudio 规格 §4.1）。
+    // 用 Eeff 与刚度同源，保证零外荷载时 K·u0 = f_eq 精确成立（自平衡）。
+    if (e.k0y != 0.0 || e.k0z != 0.0) {
+        if (e.type != "BEAM")
+            throw std::runtime_error(
+                "无应力曲率 K0Y/K0Z 只支持 BEAM 单元；单元 "
+                + std::to_string(e.id) + " 的类型是 " + e.type);
+        const double Eeff = e.E / (1.0 + m.creepChi * m.creepPhi);
+        Eigen::VectorXd fl = Eigen::VectorXd::Zero(12);
+        fl(5)  = -Eeff * e.Iz * e.k0z;   // θz1
+        fl(11) = +Eeff * e.Iz * e.k0z;   // θz2
+        fl(4)  = -Eeff * e.Iy * e.k0y;   // θy1
+        fl(10) = +Eeff * e.Iy * e.k0y;   // θy2
+        const auto T = beam3DTransformation(p1, p2);
+        fe += T.transpose() * fl;
+        hasLoad = true;
     }
     if (hasLoad && e.type == "BEAM7")
         throw std::runtime_error(
@@ -2968,8 +2991,25 @@ inline Model3D readModel3D(const std::string& path) {
         while (ss >> kv) {
             if (kv.rfind("W=", 0) == 0) e.w = std::stod(kv.substr(2));
             else if (kv.rfind("L0=", 0) == 0) e.L0 = std::stod(kv.substr(3));
+            // 第二十六次 opt-in：成桥态无应力曲率（1/m），默认不写 = 0 = 现行为。
+            else if (kv.rfind("K0Y=", 0) == 0) {
+                e.k0y = std::stod(kv.substr(4));
+                if (!std::isfinite(e.k0y))
+                    throw std::runtime_error("*EN 单元 " + std::to_string(e.id)
+                        + " 的 K0Y 不是有限数");
+            }
+            else if (kv.rfind("K0Z=", 0) == 0) {
+                e.k0z = std::stod(kv.substr(4));
+                if (!std::isfinite(e.k0z))
+                    throw std::runtime_error("*EN 单元 " + std::to_string(e.id)
+                        + " 的 K0Z 不是有限数");
+            }
             else std::cerr << "[警告] *EN 未知关键字: " << kv << "\n";
         }
+        // 无应力曲率是梁的弯曲属性：非 BEAM 单元给了就显式拒绝，不静默丢弃。
+        if ((e.k0y != 0.0 || e.k0z != 0.0) && e.type != "BEAM")
+            throw std::runtime_error("*EN 单元 " + std::to_string(e.id)
+                + " 的类型是 " + e.type + "，无应力曲率 K0Y/K0Z 只支持 BEAM 单元");
         m.elements.push_back(e);
     };
     while (std::getline(in, line)) {

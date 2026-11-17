@@ -11,7 +11,13 @@ int main(int argc, char** argv) {
     setupConsoleUTF8();
     try {
         std::string path = "verify_3d_beam.dat";
-        if (argc > 1) path = argv[1];
+        bool curvatureDetail = false;
+        for (int i = 1; i < argc; ++i) {
+            const std::string a = argv[i];
+            // 第二十六次 opt-in：无应力曲率明细段，默认不写。
+            if (a == "--curvature-detail") curvatureDetail = true;
+            else path = a;
+        }
         Model3D m = readModel3D(path);
         const std::vector<double> U = solveModel3D(m);
         const DofMap3D dm = buildDofMap3D(m);
@@ -59,6 +65,34 @@ int main(int argc, char** argv) {
             out << "\n";
         }
         std::cout << "report written: " << path.substr(0, path.rfind(".dat")) + ".report.txt" << "\n";
+
+        // 第二十六次 opt-in：成桥态无应力曲率明细（FEM 自洽口径）。
+        // 只在本单元真有 κ0 时写行；无 κ0 时显式 ERROR，不摆零值冒充「曲率为 0」。
+        if (curvatureDetail) {
+            const std::string cp = path.substr(0, path.rfind(".dat")) + ".curvature.txt";
+            std::ofstream co(cp);
+            if (!co) throw std::runtime_error("无法写入无应力曲率文件: " + cp);
+            co << "[UNSTRESSED_CURVATURE]\n";
+            co << "BASIS=unstressed_curvature_fem_only\n";
+            std::size_t ncur = 0;
+            for (const auto& e : m.elements)
+                if (e.k0y != 0.0 || e.k0z != 0.0) ++ncur;
+            if (ncur == 0) {
+                co << "ERROR=no_curvature_elements\n";
+            } else {
+                co << "NELEM=" << ncur << "\n";
+                co << std::setprecision(12);
+                for (const auto& e : m.elements) {
+                    if (e.k0y == 0.0 && e.k0z == 0.0) continue;
+                    co << e.id
+                       << " K0Y=" << e.k0y << " K0Z=" << e.k0z
+                       << " EIY=" << e.E * e.Iy << " EIZ=" << e.E * e.Iz
+                       << " M0Y=" << e.E * e.Iy * e.k0y
+                       << " M0Z=" << e.E * e.Iz * e.k0z << "\n";
+                }
+            }
+            std::cout << "curvature written: " << cp << "\n";
+        }
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "错误: " << e.what() << "\n";

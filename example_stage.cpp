@@ -1,4 +1,5 @@
 #include "fem_2d.hpp"
+#include "prestress_loss_output_2d.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -84,6 +85,8 @@ int main(int argc, char** argv) {
         bool iterate = false;
         bool camberIterate = false;
         bool feedback = false;
+        bool stageLossDetail = false;
+        bool stagePrestressForce = false;
         for (int i = 1; i < argc; ++i) {
             const std::string a = argv[i];
             if (a == "--solver" && i + 1 < argc) solver = parseSolver(argv[++i]);
@@ -91,6 +94,8 @@ int main(int argc, char** argv) {
             else if (a == "--iterate") iterate = true;
             else if (a == "--camber-iterate") camberIterate = true;
             else if (a == "--feedback") feedback = true;
+            else if (a == "--stage-loss-detail") stageLossDetail = true;
+            else if (a == "--stage-prestress-force") stagePrestressForce = true;
             else path = a;
         }
 
@@ -127,6 +132,28 @@ int main(int argc, char** argv) {
             const std::string outPath = baseName(path) + (backward ? "_stages_backward.txt" : "_stages.txt");
             writeStageResults(outPath, model, stages);
             std::cout << "已写入施工阶段结果: " << outPath << "\n";
+            // 第二十五次 opt-in：阶段分项损失明细写独立文件，默认不写。
+            // 与 example_mixed 的 <stem>.loss.txt（全局非阶段段）不同名，
+            // 两者互不覆盖、互不混行；.result / 控制台默认输出逐位不变。
+            if (stageLossDetail) {
+                const std::string lossPath = baseName(path) + ".stage.loss.txt";
+                std::ofstream lossOut(lossPath);
+                if (!lossOut)
+                    throw std::runtime_error("无法写入阶段分项损失明细: " + lossPath);
+                lossOut << formatStagePrestressLossSection2D(stages);
+                std::cout << "已写入阶段分项损失明细: " << lossPath << "\n";
+            }
+            // 第二十七次 opt-in：阶段有效预加力明细，独立文件、默认不写。
+            // 与上面 .stage.loss.txt 分开：一个报「损失怎么算出来的」，
+            // 一个报「每阶段每束实际还剩多少预加力」，互不覆盖。
+            if (stagePrestressForce) {
+                const std::string forcePath = baseName(path) + ".stage.force.txt";
+                std::ofstream forceOut(forcePath);
+                if (!forceOut)
+                    throw std::runtime_error("无法写入阶段有效预加力明细: " + forcePath);
+                forceOut << formatStagePrestressForceSection2D(stages);
+                std::cout << "已写入阶段有效预加力明细: " << forcePath << "\n";
+            }
             for (const auto& sr : stages) {
                 double maxAbs = 0.0;
                 for (int i = 0; i < sr.U.size(); ++i) maxAbs = std::max(maxAbs, std::abs(sr.U(i)));

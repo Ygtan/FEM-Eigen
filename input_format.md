@@ -280,11 +280,16 @@ w  = 8·Pe·F/L²
 | `EP` / `EC` | — | Pa | 预应力筋 / 混凝土弹性模量 |
 | `FPK` | — | Pa | 预应力筋抗拉强度标准值 |
 | `MU` `K` `THETA` `X` | σl1 摩擦 | — / 1/m / rad / m | `σl1 = σcon·[1−e^−(μθ+kx)]` |
-| `DELTA_L` `L` | σl2 锚具变形 | m | `σl2 = ΣΔl/l·Ep` |
+| `DELTA_L` `L` | σl2 锚具变形 | m | 默认 `σl2 = ΣΔl/l·Ep`；`L2ANTI=1` 时按附录 G 反摩擦（见下文） |
+| `L2ANTI` `L2REPX` | σl2 反摩擦 opt-in | — | 默认 `0/0` 不写；`L2ANTI=1` 按附录 G，`L2REPX` 目前只支持 `0`（张拉端 x=0 代表值），非 0 显式拒绝 |
 | `T1` `T2` | σl3 温差 | °C | `σl3 = 2(t2−t1)`，加热养护 `t2>t1` 时为正损失 |
 | `SIGMA_PC4` | σl4 弹性压缩 | Pa | `σl4 = αEP·σpc4`（后张分批张拉取 ΣΔσpc） |
 | `PSI` `ZETA` `REBAR` | σl5 松弛 | — | 钢丝/钢绞线：`σl5 = Ψ·ζ·(0.52σpe/fpk−0.26)·σpe`；`REBAR=1` 改为预应力螺纹钢筋的 0.05/0.035σcon |
 | `SIGMA_PC6` `ECS` `PHI` `RHO` `RHOPS` | σl6 收缩徐变 | Pa / — | `σl6 = 0.9[Ep·εcs + αEP·σpc6·φ]/(1+15ρ·ρps)` |
+| `C2D` `C_SKIP` | σl6 口径 opt-in | — | 默认 `0/0`：ECS/PHI 用户直给；`C_SKIP=1` 显式不参与（`C_SOURCE=2`）；`C2D=1` 用附录 C 显式表值龄期（`C_SOURCE=1`），两者互斥 |
+| `EPS0` `PHI0` | σl6 表值（C2D=1 必填） | — | 表 C.1.2 名义收缩系数 εcs0 / 表 C.2.2 名义徐变系数 φ0；C50 以上 32.4/fck 折减由用户承担 |
+| `C_RH` `C_H` | σl6 表值（C2D=1 必填） | % / mm | 环境相对湿度（40≤RH<99）/ 构件理论厚度 h=2A/u |
+| `C_T0` `C_TS` `C_T` | σl6 龄期（C2D=1 必填） | d | 加载龄期 t0 / 收缩开始龄期 ts / 计算龄期 t，须 t>t0≥ts |
 | `POST` | 张拉方式 | — | `1`（默认）后张法；`0` 先张法 |
 
 张拉方式决定有效预应力的组成：后张法 `σpe = σcon − σl1 − σl2 − σl4`，
@@ -292,9 +297,22 @@ w  = 8·Pe·F/L²
 
 `LOSS` 与 `LOSSREF` **必须且只能指定一个**：`LOSS=<系数>` 是"总损失打包给
 一个数"的简化写法（`Pe = P·LOSS`），`LOSSREF=<编号>` 才是分项计算。
-两个都不给或都给出都会报错。`σl2` 目前只支持直线筋（`ΣΔl/l`），曲线筋的
-反摩擦长度尚未实现；σl6 的 `εcs` 与 `φ` 需要用户按规范曲线查表后填入，
-程序不自动按龄期计算。
+两个都不给或都给出都会报错。`σl2` 默认按直线筋 `ΣΔl/l·Ep`；opt-in
+`L2ANTI=1` 按 JTG 3362-2018 附录 G 考虑曲线筋反摩擦：以张拉端 `x=0` 为
+代表截面（保守），`Δσd=σl1(l)/l`，`lf=√(ΣΔl·Ep/Δσd)`；`lf≤l` 取
+`Δσ=2Δσd·lf`，`lf>l` 取 `Δσ′=Δσd(lf²/l+l)`；无摩擦时退化为直线式。
+明细段在有反摩擦时追加 `LF=` / `DSL2D=` / `DSL2PEAK=` / `BRANCH=`，
+不输出 `σl2(x)` 沿程分布；`L2REPX≠0` 与 `ΣΔl≤0` 显式拒绝。
+
+σl6 默认由 `ECS`/`PHI` 用户直给，程序不自动按龄期计算。opt-in `C_SKIP=1`
+显式声明 σl6 不参与（σl6=0、`C_SOURCE=2`）；opt-in `C2D=1` 用 JTG 3362-2018
+附录 C 显式表值龄期口径：`EPS0`/`PHI0`/`C_RH`/`C_H`/`C_T0`/`C_TS`/`C_T`
+全部必填（缺一显式报错），表值由用户按表 C.1.2 / C.2.2 核对录入，程序只按
+解析发展公式组装 `εcs(t,t0)=εcs0[βs(t,ts)−βs(t0,ts)]` 与 `φ(t,t0)=φ0·βc`
+（βs/βH/βc 见式 C.1.1-5 / C.2.1-6/7，RH 按 C.2.3 取区间代表值 55/80），
+**不查表、不调用 `code_loads.hpp` 拟合值兜底**。启用时明细段追加
+`C_SOURCE=` / `ECS_DEV=` / `PHI_DEV=` / `BETAS=` / `BETAS0=` / `BETAC=` /
+`BETAH=` / `RHREP=`。两开关互斥。見 `tests/benchmark/prestress_loss_creep_2d/`。
 
 ### 6.5 `*CABLE_LENGTH2D` —— 2D 平面索长闭合（opt-in，第十三次）
 
@@ -682,7 +700,11 @@ M_T = ∫ E·α·T(z)·(H/2 − z)·b dz
 - `TIME`：阶段龄期，单位天，用于时变曲线插值。
 - `*STAGE_LOAD`：指定阶段节点荷载。
 - `*STAGE_ELEMENT_LOAD`：指定阶段单元均布荷载。
-- `*STAGE_PRESTRESS`：指定阶段预应力，解析时强制 `METHOD=EQUIV`（忽略传入的 `METHOD`），`LOSS` 必须显式给出。有效预加力 `Pe=P·LOSS` 换成轴向缩短、端部偏心弯矩与曲线束横向均布荷载；`LOSS` 是**总**损失系数，不是 `*PRESTRESS_LOSS` 的分项损失。阶段等效荷载按增量法留在后续阶段（永存预应力），成桥态为各阶段累加。
+- `*STAGE_PRESTRESS`：指定阶段预应力，解析时强制 `METHOD=EQUIV`（忽略传入的 `METHOD`）。`LOSS` 与 `LOSSREF` **必须且只能给一个**：
+  - 只给 `LOSS`（默认/历史路径）：有效预加力 `Pe=P·LOSS`，`LOSS` 是**总**损失系数，不是 `*PRESTRESS_LOSS` 的分项损失；
+  - 给 `LOSSREF=<*PRESTRESS_LOSS 表号>`（第二十五次 opt-in）：内核用与 3D 共用的 `computePrestressLosses()` 算得分项明细与 `σpe/σcon`，有效预加力为 `Pe=P·(σpe/σcon)`。σl2 `L2ANTI/L2REPX`、σl6 `C2D/C_SKIP/EPS0/PHI0/C_RH/C_H/C_T0/C_TS/C_T` 经**同一张表**自动映射，不另立 2D 公式；表号不存在、`LOSS` 与 `LOSSREF` 同时出现均显式拒绝。
+
+  阶段等效荷载按增量法留在后续阶段（永存预应力），成桥态为各阶段累加。阶段束按输入顺序从 1 编号（与 3D 一致），阶段损失明细行首即 `STAGE<n> P<id>`。
 - `*STAGE_BOUNDARY`：指定阶段新增支座约束。
 - `*STAGE_UNBOUNDARY`：指定阶段移除支座约束。
 - `*STAGE_CREEP`：指定阶段徐变参数。
@@ -780,7 +802,67 @@ TYPE=STRESS   单元应力目标
 ε_cs(t,ts) = ECS_INF · [(t−ts)/(ALPHA_DS+t−ts)]^POWER
 ```
 
+`*CREEP_MODEL MODEL=JTG3362` 给出 `RH` / `H`（理论厚度 mm）/ `FCM`（MPa）
+时，`φ0=φRH·βF·βT0`、`βH` 按实际 RH 连续值、`εcs0=εS·βRH` 由
+`code_loads.hpp` 的 JTG 3362-2018 附录 C.2.1 / C.1 连续拟合自动计算，
+`PHI0`/`BETA_H`/`ECS_INF` 手写值优先。**注意此 `H` 是理论厚度 `h=2A/u`，
+不是截面梁高**（梁高是截面几何里的另一个字段 `H`）：给定 `H` 后，内核
+`creepCoefficientAt` 用它覆盖逐单元 `HTH`，全桥统一；不给 `H` 时内核才退到
+逐单元 `HTH`。该链是**结构整体时变**口径，
+与预应力损失 σl6 的「显式表值 + RH 代表值 55/80」口径隔离，不可混用。
+
+```text
+*CREEP_MODEL MODEL=JTG3362 T0=7.0 RH=75.0 H=320.7 FCM=40.0 TS=3.0 POWER=0.3
+```
+
+闭式锚点 benchmark 见 `tests/benchmark/creep_shrinkage_time_2d/`
+（第 35 项 CTest，只读探针 `creep_probe_2d.exe`，独立 Python oracle 逐键核对
+`φ0`/`βH`/`εcs0` 与逐龄期 `φ`/`εcs`/`βs`/`E_eff`）。
+
 未激活节点暂按固定处理，避免零刚度自由度。
+
+**2D 阶段分项预应力损失明细（第二十五次 opt-in，第 36 项 CTest）**：
+`example_stage.exe <file>.dat --stage-loss-detail` 在常规施工阶段结果之外
+另写 `<file>.stage.loss.txt`：
+
+```text
+[PRESTRESSLOSS2D]
+NPRESTRESS=1 BASIS=2d_stage
+STAGE1 P1 SIGMA_CON=1395000000 SL1=... SL2=... SL3=... SL4=... SL5=... SL6=... SPE=... RATIO=...
+```
+
+段名与非阶段段相同，但头行 `BASIS=2d_stage`、行首 `STAGE<n> P<id>`，字段
+顺序、单位（Pa / 无量纲）、12 位有效数字与 3D `stage prestress loss` 段
+完全一致；只收录 `LOSSREF` 阶段束，只给 `LOSS=` 的束不摆零值行。没有
+LOSSREF 束时写 `ERROR=no_lossref_stage_prestress`。**默认不写该文件**，
+不带开关时命令行、`.result` / `_stages.txt` 与既有冻结证据逐位不变；
+非阶段 `example_mixed.exe --loss-detail` 的 `<file>.loss.txt`
+（`BASIS=2d_global`）与本文件严格隔离、互不混行。
+闭式锚点 benchmark 见 `tests/benchmark/stage_loss_2d/`（第 36 项 CTest，
+独立 Python oracle、冻结证据、正负例、2D/3D 同参同值）。
+
+**2D 阶段有效预加力明细（第二十七次 opt-in，同属第 36 项 CTest）**：
+`example_stage.exe <file>.dat --stage-prestress-force` 另写
+`<file>.stage.force.txt`：
+
+```text
+[PRESTRESSFORCE2D]
+NPRESTRESS=3 BASIS=2d_stage
+STAGE1 P1 SIGMA_CON=0 P=1200000 LOSS=0.8 PE=960000
+STAGE1 P2 SIGMA_CON=1395000000 P=800000 LOSS=0.820782595059 PE=656626.076047
+STAGE2 P1 SIGMA_CON=0 P=600000 LOSS=0.95 PE=570000
+```
+
+字段：`SIGMA_CON` 张拉控制应力（Pa）、`P` 张拉控制力（N）、`LOSS` 有效预应力
+系数（`LOSS=` 原值或 `LOSSREF` 解析出的 `σpe/σcon`，无量纲）、
+`PE = P·LOSS`（N）。组织键 `(阶段号, 束号)` 与 3D `stage prestress force` 段
+一致，**2D 的 `PE=` 即 3D 的 `Pe=`，同参同值**；数值唯一来源是
+`processPrestress` 里那一次 `Pe = ps.P * loss`，本段只落结果、不重算。
+只给 `LOSS=` 的束未登记控制应力，`SIGMA_CON` 记 0（不拿 `P/Ap` 反造）；
+不输出 `PE/SIGMA_CON` 这类量纲不成立的比值（力/应力 = m²）。没有阶段束时写
+`ERROR=no_stage_prestress`，不摆零值行。**默认不写该文件**，与
+`--stage-loss-detail` 的两个开关互不依赖、互不覆盖；既有 `.result` /
+`_stages.txt` / `.stage.loss.txt` 逐位不变。
 
 倒拆分析现在按施工逆序移除荷载、反向激活/钝化单元，并以非线性求解器继承上一倒拆步位移和 cable/strut 状态。线性模型下可得到倒拆状态；非线性模型下为增量反演近似。
 

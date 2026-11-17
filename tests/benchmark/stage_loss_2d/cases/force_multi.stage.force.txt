@@ -1,0 +1,6 @@
+[PRESTRESSFORCE2D]
+NPRESTRESS=3 BASIS=2d_stage
+NOTE=2D 施工阶段每束有效预加力明细；组织键 (阶段号, 束号) 与 3D stage prestress force 段一致，2D 的 PE= 即 3D 的 Pe=，同参同值。P 是张拉控制力（N）、SIGMA_CON 是张拉控制应力（Pa，只给 LOSS= 时为 0）、LOSS 是有效预应力系数（LOSS= 原值或 LOSSREF 解析出的 σpe/σcon，无量纲）、PE=P*LOSS（N）。不输出 PE/SIGMA_CON 之类量纲不成立的比值（那是 m²），有效比就是 LOSS 本身。本段只报过程量，不参与任何求解；默认不写文件。
+STAGE1 P1 SIGMA_CON=0 P=1200000 LOSS=0.8 PE=960000
+STAGE1 P2 SIGMA_CON=1395000000 P=800000 LOSS=0.820782595059 PE=656626.076047
+STAGE2 P1 SIGMA_CON=0 P=600000 LOSS=0.95 PE=570000

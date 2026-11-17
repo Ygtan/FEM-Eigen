@@ -58,6 +58,17 @@ inline EulerBeam2D beamFromSection2D(const Section& sec,
     return EulerBeam2D{E, p.A, p.Iz, x0, x1};
 }
 
+// 第二十七次 opt-in：单束有效预加力明细（2D 阶段结果段用）。
+// 与 3D 的 stage prestress force 段同义：Pe = P·loss，loss 已含 LOSSREF 解析。
+// 只承载 processPrestress 的同一次计算结果，不在别处重算。
+struct PrestressStageForce2D {
+    int id = 0;             // 束号（阶段内按输入顺序编号，与 3D 一致）
+    double P = 0.0;         // 张拉控制力（N）
+    double loss = 1.0;      // 有效预应力系数（LOSS= 原值或 LOSSREF 的 σpe/σcon）
+    double Pe = 0.0;        // 有效预加力 = P·loss（N）
+    double sigmaCon = 0.0;  // 张拉控制应力（Pa）；只给 LOSS= 时为 0（未登记控制应力）
+};
+
 struct Model2D {
     std::string title;
     std::map<int, Eigen::Vector2d> nodes; // 节点号 -> 坐标
@@ -190,6 +201,10 @@ struct Model2D {
     // 与 effectivePrestressRatio 共用 computePrestressLosses 唯一公式；
     // 求解数值路径一字不改，明细仅供 --loss-detail 结果段写出。
     std::vector<std::tuple<int, PrestressLossResult, double>> prestressLossDetails;
+    // 第二十七次 opt-in：每束有效预加力明细（束号/控制力/有效系数/Pe/σcon）。
+    // 只在 processPrestress 内填一次，与 Pe 的求解数值同一次计算，不重算；
+    // 求解路径一字不改，明细仅供 --stage-prestress-force 结果段写出。
+    std::vector<PrestressStageForce2D> prestressForces;
 
     struct InfluenceRequest {
         int id = 0;
@@ -1162,6 +1177,15 @@ struct StageResult {
     DenseVec R;
     std::vector<ElementForce> forces;
     std::vector<ElementStress> stresses;
+    // 第二十五次 opt-in：本阶段 LOSSREF 预应力束的分项损失明细
+    // (束号, σl1~σl6/σpe, σcon)。字段与 3D StageResult::prestressLossDetails
+    // 同源，只由 *STAGE_PRESTRESS ... LOSSREF 路径填充；只给 LOSS= 的束为空，
+    // 不摆零值冒充。明细不参与任何求解，只供 --stage-loss-detail 结果段写出。
+    std::vector<std::tuple<int, PrestressLossResult, double>> prestressLossDetails;
+    // 第二十七次 opt-in：本阶段每束有效预加力明细（P / loss / Pe / σcon）。
+    // 字段口径与 3D `stage prestress force` 段同源（Pe = P·loss）；
+    // 只由 *STAGE_PRESTRESS 的 LOSS= 或 LOSSREF= 路径填充，只读、不参与求解。
+    std::vector<PrestressStageForce2D> prestressForces;
 };
 
 std::vector<StageResult> solveModel2DStages(const Model2D& m,

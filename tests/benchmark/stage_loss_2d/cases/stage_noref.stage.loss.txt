@@ -1,0 +1,3 @@
+[PRESTRESSLOSS2D]
+ERROR=no_lossref_stage_prestress
+NOTE=本次没有引用 *PRESTRESS_LOSS 表的 2D 阶段预应力束；内核没有算过阶段分项损失，不输出零值冒充各项损失为 0。

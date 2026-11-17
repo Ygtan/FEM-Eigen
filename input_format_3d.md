@@ -94,6 +94,44 @@
 *EN,1,1,2
 ```
 
+### 单元级无应力曲率（`K0Y=` / `K0Z=`，opt-in）
+
+`*EN` 行可追加**成桥态无应力曲率**（单位 **1/m**，默认不写 = 0 = 现行为）：
+
+```text
+*EN,1,1,2 K0Z=0.001           # 绕局部 z 轴的无应力曲率
+*EN,2,2,3 K0Y=-0.0005 K0Z=0   # 绕局部 y / z 两向
+```
+
+语义与力学：
+
+- κ0 是**制造 / 设计给定**的无应力（应力自由）曲率，程序**不反算**、不从
+  位移或内力反推；只把它当成单元的初始构形属性。
+- 常曲率 κ0 的等效固端力为局部 `f_eq(θz₁)=−EIz·κ0z`、`f_eq(θz2)=+EIz·κ0z`
+  （`θy = −dw/dx` 侧同式），经 `Tᵀ` 转全局后并入
+  `elementEquivalentLoad3D()`；该函数同时供组装 `F0` 与端内力恢复，因此
+  `K·u = f_ext + f_eq`、端内力自动为 **`M = EI(κ − κ0)`**。零外荷载时
+  `K·u0 = f_eq` 精确成立，单元自平衡。
+- 只支持 `BEAM`；写在 `TRUSS` / `CABLE` / `BEAM7` 上、或值非有限 → 显式
+  `throw`。`κ0 = 0` 时该字段不参与任何计算，既有结果逐位不变。
+- `L0`、`J`、几何坐标都不因该字段改变（不移动节点）。
+- 未覆盖：共转列式 `CRElemData` 的初曲率；真实制造参数；`χφ` 与 κ0 的耦合。
+
+输出（opt-in，独立文件，默认不写）：
+
+```text
+example_3d_report.exe model.dat --curvature-detail
+  -> model.curvature.txt
+
+[UNSTRESSED_CURVATURE]
+BASIS=unstressed_curvature_fem_only
+NELEM=1
+1 K0Y=0 K0Z=0.001 EIY=34500000000 EIZ=34500000000 M0Y=0 M0Z=34500000
+```
+
+没有单元设置 κ0 时写 `ERROR=no_curvature_elements`，不摆零值冒充「曲率为 0」。
+该文件与 `.report.txt` 相互独立，不影响既有段与解析器。
+
 ## 约束与荷载
 
 ```text

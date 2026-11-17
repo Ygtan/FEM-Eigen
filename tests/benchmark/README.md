@@ -136,11 +136,14 @@ Riks 闭环注册第 27 项后 `ctest` **27/27 Passed**。
 约需 10 分钟（头文件 `fem_3d_nl.hpp` 较大）；内存有限时建议 `-j 2`，
 实测 `-j 8` 与其它任务并发会触发 `cc1plus.exe: out of memory`，与代码无关。
 
-> **本机历史坑**：旧 `build/` 缓存的生成器是 `MinGW Makefiles`，却把
-> `CMAKE_MAKE_PROGRAM` 配成 MSYS 的 `/usr/bin/make.exe`，两者不兼容
-> （试编译阶段 Makefile 路径被反斜杠截断、报乱码）。不要再对该缓存直接
-> 重配；用上面任一方案新建构建目录即可。`build/` 内已编译的
-> `cable_solver.exe` 含 `[ERECTION_*]` 新段，日常回归仍可直接使用。
+> **跨机环境坑（2026-11-17 已根治）**：旧 `build/` 缓存的生成器是
+> `MinGW Makefiles`，`CMAKE_MAKE_PROGRAM` 配成 MSYS 的 `/usr/bin/make.exe`
+> （试编译阶段路径被反斜杠截断、报乱码），且 Makefile 写死旧机的
+> `C:\Program Files\CMake\bin\cmake.exe`——换机后路径失效、
+> `cmake --build build` 卡在 `cmake_check_build_system`。根因是 `build/`
+> 是**机器本地产物、不入库、不可跨机携带**。现 `build/` 已重建为 Ninja，
+> 换机后跑仓库根的 `configure_build.ps1` 即可一键探测工具链、自动清理失效
+> 缓存并重建（锁定 mingw64 g++，不写死安装路径）。不要对该缓存直接重配。
 
 ```powershell
 # 全量回归（PowerShell，输出 ASCII）。-BuildDir 需指向与冻结证据同工具链的构建目录，

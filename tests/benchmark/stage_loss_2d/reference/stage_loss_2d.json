@@ -1,0 +1,468 @@
+{
+  "cases": {
+    "stage_badref": {
+      "cfg": {
+        "DELTA_L": 0.006,
+        "EC": 34500000000.0,
+        "ECS": 0.0002,
+        "EP": 195000000000.0,
+        "FPK": 1860000000.0,
+        "K": 0.0015,
+        "L": 10.0,
+        "MU": 0.25,
+        "PHI": 2.0,
+        "POST": 1.0,
+        "PSI": 1.0,
+        "RHO": 0.001852,
+        "RHOPS": 3.26,
+        "SIGMA_CON": 1395000000.0,
+        "SIGMA_PC4": 8000000.0,
+        "SIGMA_PC6": 8000000.0,
+        "T1": 15.0,
+        "T2": 35.0,
+        "THETA": 0.2,
+        "X": 10.0,
+        "ZETA": 0.3
+      },
+      "dat_sha256": "3ede24c07bd7cf7fb90b03feab949826f29f8076fbd3e3c1db82d34f991c8438",
+      "negative_keywords": [
+        "不存在"
+      ]
+    },
+    "stage_c2d": {
+      "cfg": {
+        "C2D": 1.0,
+        "C_H": 320.7,
+        "C_RH": 75.0,
+        "C_T": 97.0,
+        "C_T0": 7.0,
+        "C_TS": 3.0,
+        "DELTA_L": 0.006,
+        "EC": 34500000000.0,
+        "ECS": 0.0002,
+        "EP": 195000000000.0,
+        "EPS0": 0.00031,
+        "FPK": 1860000000.0,
+        "K": 0.0015,
+        "L": 10.0,
+        "MU": 0.25,
+        "PHI": 2.0,
+        "PHI0": 2.19,
+        "POST": 1.0,
+        "PSI": 1.0,
+        "RHO": 0.001852,
+        "RHOPS": 3.26,
+        "SIGMA_CON": 1395000000.0,
+        "SIGMA_PC4": 8000000.0,
+        "SIGMA_PC6": 8000000.0,
+        "T1": 15.0,
+        "T2": 35.0,
+        "THETA": 0.2,
+        "X": 10.0,
+        "ZETA": 0.3
+      },
+      "dat_sha256": "8c534d3c5bdb3d0909809181a6c64e1fc6888f0fd5f9589e35b8bf10f65426b7",
+      "frozen": "stage_c2d.stage.loss.txt",
+      "oracle": {
+        "BETAC": 0.47829667675954307,
+        "BETAH": 961.7631844809993,
+        "BETAS": 0.15952666446270464,
+        "BETAS0": 0.03331623007063124,
+        "C_SOURCE": 1.0,
+        "ECS_DEV": 3.9125234661542756e-05,
+        "PHI_DEV": 1.0474697221033993,
+        "RATIO": 0.8207825950588746,
+        "RHREP": 80.0,
+        "SIGMA_CON": 1395000000.0,
+        "SL1": 87790888.58852221,
+        "SL2": 117000000.00000001,
+        "SL3": 40000000.0,
+        "SL4": 45217391.30434783,
+        "SL5": 20645991.04764707,
+        "SL6": 45383853.3246559,
+        "SPE": 1144991720.10713
+      }
+    },
+    "stage_conflict": {
+      "cfg": {
+        "DELTA_L": 0.006,
+        "EC": 34500000000.0,
+        "ECS": 0.0002,
+        "EP": 195000000000.0,
+        "FPK": 1860000000.0,
+        "K": 0.0015,
+        "L": 10.0,
+        "MU": 0.25,
+        "PHI": 2.0,
+        "POST": 1.0,
+        "PSI": 1.0,
+        "RHO": 0.001852,
+        "RHOPS": 3.26,
+        "SIGMA_CON": 1395000000.0,
+        "SIGMA_PC4": 8000000.0,
+        "SIGMA_PC6": 8000000.0,
+        "T1": 15.0,
+        "T2": 35.0,
+        "THETA": 0.2,
+        "X": 10.0,
+        "ZETA": 0.3
+      },
+      "dat_sha256": "c6e2d2ebd9a15e705f6ae62722db569fa2162776d1c8ae73ac42f0e398029b18",
+      "negative_keywords": [
+        "只能"
+      ]
+    },
+    "stage_cskip": {
+      "cfg": {
+        "C_SKIP": 1.0,
+        "DELTA_L": 0.006,
+        "EC": 34500000000.0,
+        "ECS": 0.0002,
+        "EP": 195000000000.0,
+        "FPK": 1860000000.0,
+        "K": 0.0015,
+        "L": 10.0,
+        "MU": 0.25,
+        "PHI": 2.0,
+        "POST": 1.0,
+        "PSI": 1.0,
+        "RHO": 0.001852,
+        "RHOPS": 3.26,
+        "SIGMA_CON": 1395000000.0,
+        "SIGMA_PC4": 8000000.0,
+        "SIGMA_PC6": 8000000.0,
+        "T1": 15.0,
+        "T2": 35.0,
+        "THETA": 0.2,
+        "X": 10.0,
+        "ZETA": 0.3
+      },
+      "dat_sha256": "d9f1a5d66417d9bcf3970e7c41d9875bff5f10620bde65cc28cbbe098cd5a07a",
+      "frozen": "stage_cskip.stage.loss.txt",
+      "oracle": {
+        "C_SOURCE": 2.0,
+        "RATIO": 0.8207825950588746,
+        "SIGMA_CON": 1395000000.0,
+        "SL1": 87790888.58852221,
+        "SL2": 117000000.00000001,
+        "SL3": 40000000.0,
+        "SL4": 45217391.30434783,
+        "SL5": 20645991.04764707,
+        "SL6": 0.0,
+        "SPE": 1144991720.10713
+      }
+    },
+    "stage_default": {
+      "cfg": {
+        "DELTA_L": 0.006,
+        "EC": 34500000000.0,
+        "ECS": 0.0002,
+        "EP": 195000000000.0,
+        "FPK": 1860000000.0,
+        "K": 0.0015,
+        "L": 10.0,
+        "MU": 0.25,
+        "PHI": 2.0,
+        "POST": 1.0,
+        "PSI": 1.0,
+        "RHO": 0.001852,
+        "RHOPS": 3.26,
+        "SIGMA_CON": 1395000000.0,
+        "SIGMA_PC4": 8000000.0,
+        "SIGMA_PC6": 8000000.0,
+        "T1": 15.0,
+        "T2": 35.0,
+        "THETA": 0.2,
+        "X": 10.0,
+        "ZETA": 0.3
+      },
+      "dat_sha256": "2f13abfb71dcd5f6be3f7db12d5ce21d0c46df8525aee34cd76953c1c6d6ba93",
+      "frozen": "stage_default.stage.loss.txt",
+      "oracle": {
+        "RATIO": 0.8207825950588746,
+        "SIGMA_CON": 1395000000.0,
+        "SL1": 87790888.58852221,
+        "SL2": 117000000.00000001,
+        "SL3": 40000000.0,
+        "SL4": 45217391.30434783,
+        "SL5": 20645991.04764707,
+        "SL6": 106817603.11999097,
+        "SPE": 1144991720.10713
+      }
+    },
+    "stage_l2anti": {
+      "cfg": {
+        "DELTA_L": 0.006,
+        "EC": 34500000000.0,
+        "ECS": 0.0002,
+        "EP": 195000000000.0,
+        "FPK": 1860000000.0,
+        "K": 0.0015,
+        "L": 10.0,
+        "L2ANTI": 1.0,
+        "L2REPX": 0.0,
+        "MU": 0.25,
+        "PHI": 2.0,
+        "POST": 1.0,
+        "PSI": 1.0,
+        "RHO": 0.001852,
+        "RHOPS": 3.26,
+        "SIGMA_CON": 1395000000.0,
+        "SIGMA_PC4": 8000000.0,
+        "SIGMA_PC6": 8000000.0,
+        "T1": 15.0,
+        "T2": 35.0,
+        "THETA": 0.2,
+        "X": 10.0,
+        "ZETA": 0.3
+      },
+      "dat_sha256": "6436f372b8063fd28ea37306e1948057eb0e243dec7d0fc786c00be34229e6ab",
+      "frozen": "stage_l2anti.stage.loss.txt",
+      "oracle": {
+        "BRANCH": 2.0,
+        "DSL2D": 8779088.85885222,
+        "DSL2PEAK": 204790888.5885222,
+        "LF": 11.544316062912728,
+        "RATIO": 0.757850058436278,
+        "SIGMA_CON": 1395000000.0,
+        "SL1": 87790888.58852221,
+        "SL2": 204790888.5885222,
+        "SL3": 40000000.0,
+        "SL4": 45217391.30434783,
+        "SL5": 11278701.439143842,
+        "SL6": 106817603.11999097,
+        "SPE": 1057200831.5186077
+      }
+    },
+    "stage_noref": {
+      "cfg": {
+        "DELTA_L": 0.006,
+        "EC": 34500000000.0,
+        "ECS": 0.0002,
+        "EP": 195000000000.0,
+        "FPK": 1860000000.0,
+        "K": 0.0015,
+        "L": 10.0,
+        "MU": 0.25,
+        "PHI": 2.0,
+        "POST": 1.0,
+        "PSI": 1.0,
+        "RHO": 0.001852,
+        "RHOPS": 3.26,
+        "SIGMA_CON": 1395000000.0,
+        "SIGMA_PC4": 8000000.0,
+        "SIGMA_PC6": 8000000.0,
+        "T1": 15.0,
+        "T2": 35.0,
+        "THETA": 0.2,
+        "X": 10.0,
+        "ZETA": 0.3
+      },
+      "dat_sha256": "3446abf8ff06cd0d91c8c2f7690aae48a9c1fb28d1fd77ba961fba9f6d31beb6",
+      "frozen": "stage_noref.stage.loss.txt",
+      "oracle": {}
+    },
+    "stage_same3d": {
+      "cfg": {
+        "C2D": 1.0,
+        "C_H": 320.7,
+        "C_RH": 75.0,
+        "C_T": 97.0,
+        "C_T0": 7.0,
+        "C_TS": 3.0,
+        "DELTA_L": 0.006,
+        "EC": 34500000000.0,
+        "ECS": 0.0002,
+        "EP": 195000000000.0,
+        "EPS0": 0.00031,
+        "FPK": 1860000000.0,
+        "K": 0.0015,
+        "L": 10.0,
+        "MU": 0.25,
+        "PHI": 2.0,
+        "PHI0": 2.19,
+        "POST": 1.0,
+        "PSI": 1.0,
+        "RHO": 0.001852,
+        "RHOPS": 3.26,
+        "SIGMA_CON": 1395000000.0,
+        "SIGMA_PC4": 8000000.0,
+        "SIGMA_PC6": 8000000.0,
+        "T1": 15.0,
+        "T2": 35.0,
+        "THETA": 0.2,
+        "X": 10.0,
+        "ZETA": 0.3
+      },
+      "dat_sha256": "6008e6c9a47f706de7dc116eeceef55c260f64d063cd4f94ea71cdc34d67f5b1",
+      "frozen": "stage_same3d.stage.loss.txt",
+      "oracle": {
+        "BETAC": 0.47829667675954307,
+        "BETAH": 961.7631844809993,
+        "BETAS": 0.15952666446270464,
+        "BETAS0": 0.03331623007063124,
+        "C_SOURCE": 1.0,
+        "ECS_DEV": 3.9125234661542756e-05,
+        "PHI_DEV": 1.0474697221033993,
+        "RATIO": 0.8207825950588746,
+        "RHREP": 80.0,
+        "SIGMA_CON": 1395000000.0,
+        "SL1": 87790888.58852221,
+        "SL2": 117000000.00000001,
+        "SL3": 40000000.0,
+        "SL4": 45217391.30434783,
+        "SL5": 20645991.04764707,
+        "SL6": 45383853.3246559,
+        "SPE": 1144991720.10713
+      }
+    }
+  },
+  "force": {
+    "cases": {
+      "force_multi": {
+        "dat_sha256": "3df5bfa622df4297991a3c4bca345e70cb84f547708eb5a3fa0cc95ca7aed3cb",
+        "frozen": "force_multi.stage.force.txt",
+        "oracle": [
+          {
+            "LOSS": 0.8,
+            "PE": 960000.0,
+            "SIGMA_CON": 0.0,
+            "id": 1,
+            "stage": 1
+          },
+          {
+            "LOSS": 0.8207825950588746,
+            "PE": 656626.0760470997,
+            "SIGMA_CON": 1395000000.0,
+            "id": 2,
+            "stage": 1
+          },
+          {
+            "LOSS": 0.95,
+            "PE": 570000.0,
+            "SIGMA_CON": 0.0,
+            "id": 1,
+            "stage": 2
+          }
+        ]
+      },
+      "force_none": {
+        "dat_sha256": "b22d8c759cc2bcd24c4f9fcbcc60725f9e3f06eb2f8b384f61f566dd21cfe5c7",
+        "frozen": "force_none.stage.force.txt",
+        "soft_negative": "no_stage_prestress"
+      },
+      "stage_c2d": {
+        "dat_sha256": "8c534d3c5bdb3d0909809181a6c64e1fc6888f0fd5f9589e35b8bf10f65426b7",
+        "frozen": "stage_c2d.stage.force.txt",
+        "oracle": [
+          {
+            "LOSS": 0.8207825950588746,
+            "PE": 1231173.892588312,
+            "SIGMA_CON": 1395000000.0,
+            "id": 1,
+            "stage": 1
+          }
+        ]
+      },
+      "stage_cskip": {
+        "dat_sha256": "d9f1a5d66417d9bcf3970e7c41d9875bff5f10620bde65cc28cbbe098cd5a07a",
+        "frozen": "stage_cskip.stage.force.txt",
+        "oracle": [
+          {
+            "LOSS": 0.8207825950588746,
+            "PE": 1231173.892588312,
+            "SIGMA_CON": 1395000000.0,
+            "id": 1,
+            "stage": 1
+          }
+        ]
+      },
+      "stage_default": {
+        "dat_sha256": "2f13abfb71dcd5f6be3f7db12d5ce21d0c46df8525aee34cd76953c1c6d6ba93",
+        "frozen": "stage_default.stage.force.txt",
+        "oracle": [
+          {
+            "LOSS": 0.8207825950588746,
+            "PE": 1231173.892588312,
+            "SIGMA_CON": 1395000000.0,
+            "id": 1,
+            "stage": 1
+          },
+          {
+            "LOSS": 0.9,
+            "PE": 900000.0,
+            "SIGMA_CON": 0.0,
+            "id": 1,
+            "stage": 2
+          }
+        ]
+      },
+      "stage_l2anti": {
+        "dat_sha256": "6436f372b8063fd28ea37306e1948057eb0e243dec7d0fc786c00be34229e6ab",
+        "frozen": "stage_l2anti.stage.force.txt",
+        "oracle": [
+          {
+            "LOSS": 0.757850058436278,
+            "PE": 1136775.087654417,
+            "SIGMA_CON": 1395000000.0,
+            "id": 1,
+            "stage": 1
+          }
+        ]
+      },
+      "stage_noref": {
+        "dat_sha256": "3446abf8ff06cd0d91c8c2f7690aae48a9c1fb28d1fd77ba961fba9f6d31beb6",
+        "frozen": "stage_noref.stage.force.txt",
+        "oracle": [
+          {
+            "LOSS": 0.9,
+            "PE": 1350000.0,
+            "SIGMA_CON": 0.0,
+            "id": 1,
+            "stage": 1
+          }
+        ]
+      },
+      "stage_same3d": {
+        "dat_sha256": "6008e6c9a47f706de7dc116eeceef55c260f64d063cd4f94ea71cdc34d67f5b1",
+        "frozen": "stage_same3d.stage.force.txt",
+        "oracle": [
+          {
+            "LOSS": 0.8207825950588746,
+            "PE": 1231173.892588312,
+            "SIGMA_CON": 1395000000.0,
+            "id": 1,
+            "stage": 1
+          }
+        ]
+      }
+    },
+    "frozen_sha256": {
+      "force_multi": "2f2b1d4e5ac5876fcc7cd430d4fdb1ca60a7c249a90f93a65ac05ff8f8269c6d",
+      "force_none": "b99b5d2a9520347ab65dff60e612fff5cf35970b4d8328ee2edd10fb92bb0066",
+      "stage_c2d": "2cd8eb0e4e871fa17b177129561acef8e1e13a934b3ee5de27b221d8ffb9ae42",
+      "stage_cskip": "2cd8eb0e4e871fa17b177129561acef8e1e13a934b3ee5de27b221d8ffb9ae42",
+      "stage_default": "d4faee0dabf5f3f38a9d18379cb48f099f78b82d438de582a8052e1d85e3e41f",
+      "stage_l2anti": "0eb9c87b7b1aa75023a3f7f8189ddb37d8960d275ef10f294c617276bb2f3605",
+      "stage_noref": "b2fe08af933e873d7d3a957af04edca305ef0fa92e5f28a750e53a93ce83baad",
+      "stage_same3d": "2cd8eb0e4e871fa17b177129561acef8e1e13a934b3ee5de27b221d8ffb9ae42"
+    }
+  },
+  "frozen_sha256": {
+    "stage_c2d": "90e199b2e57664a8d16f4aa041a0644e5ac58d7daa968acacb17e7bd85614b79",
+    "stage_cskip": "96cb22d2d7526a9fc2c140ca02736fe39f5f3423f04f5e8a55d31d70205fd04e",
+    "stage_default": "976309599af12b3d347b67b09e17e85e7d1fec044a61cb5f990b5144fa76a916",
+    "stage_l2anti": "bd7848490419471b0478eebcac6fc22c6dc2628e8e47fe1b8564a2b3b7bbdee6",
+    "stage_noref": "d072f0a5100f85c5528885009e47de4edf6b072026547ef584bbe3b227a14e62",
+    "stage_same3d": "90e199b2e57664a8d16f4aa041a0644e5ac58d7daa968acacb17e7bd85614b79"
+  },
+  "legacy_sha256": {
+    "creep_3d.csv": "3c06556a6fc13d927ac53b990563966cd6faef13228d559b2a2ad1a1cb5c46f5",
+    "creep_auto.loss.txt": "e0949c75074562210f032d802110a15153c834cb34b409952eef894c3acd4dc5"
+  },
+  "thresholds": {
+    "abs": 1e-09,
+    "rel": 1e-11
+  },
+  "version": 1
+}

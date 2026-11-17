@@ -1,0 +1,32 @@
+# 第二十三次 B4：附录 G 反摩擦，lf>l 支（BRANCH=2）。
+# ΣΔl=0.018 m ⇒ lf≈20 m > l=10 m；等腰梯形面积协调
+# Δσ′=Δσd·(lf²/l+l)。该分支 σpe 较低，JTG 6.2.6-1 的 σl5 可能为负
+# （0.52σpe/fpk−0.26<0），属公式数学行为，不是本分支实现错误。
+*TITLE
+prestress loss anti-friction gt branch
+*NODE
+1 0.0 0.0
+2 2.5 0.0
+3 5.0 0.0
+4 7.5 0.0
+5 10.0 0.0
+*ET
+1 BEAM
+*MP
+1 E=35e9
+*R
+1 A=0.4 I=0.005333 WT=0.026667 WB=0.026667
+*TYPE,1
+*MAT,1
+*REAL,1
+*DO I 1 4
+*EN,I,I,I+1
+*ENDDO
+*BOUNDARY
+1 1-2 0.0
+5 2 0.0
+*PRESTRESS_LOSS
+1 SIGMA_CON=1395e6 EP=1.95e11 EC=3.45e10 FPK=1860e6 MU=0.25 K=0.0015 THETA=0.2 X=10 DELTA_L=0.018 L=10 T1=15 T2=35 SIGMA_PC4=8e6 SIGMA_PC6=8e6 PSI=1.0 ZETA=0.3 ECS=2e-4 PHI=2.0 RHO=0.005 RHOPS=1.0 POST=1 L2ANTI=1 L2REPX=0
+*PRESTRESS
+1 ELEM=1-4 P=1500e3 F=0.20 E1=0.0 E2=0.0 LOSSREF=1 METHOD=EQUIV
+*END

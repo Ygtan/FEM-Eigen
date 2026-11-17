@@ -797,5 +797,137 @@ if (Test-Path $dyScript) {
     $failed++
 }
 
+# ---- 第二十三次 B4：σl2 附录 G 反摩擦（opt-in，默认 L2ANTI=0）----
+# 张拉端 x=0 代表值；lf≤l / lf>l 两支闭式 + 无摩擦退化 + 缺参否定例
+# + 默认逐位零污染 + 2D/3D 同参同值；离线，不跑 ANSYS。
+$laScript = Join-Path $root "tests\benchmark\prestress_loss_anti_2d\compare_prestress_loss_anti_2d.py"
+$laCases  = Join-Path $root "tests\benchmark\prestress_loss_anti_2d\cases"
+$laRef    = Join-Path $root "tests\benchmark\prestress_loss_anti_2d\reference"
+if (Test-Path $laScript) {
+    $py = Get-Command python -ErrorAction SilentlyContinue
+    if ($py) {
+        Write-Host ""
+        Write-Host "== Prestress loss sigma_l2 anti-friction, Annex G (offline) =="
+        & python $laScript --bin $bin --cases $laCases --reference $laRef
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[PASS] Prestress loss anti-friction benchmark"
+        } else {
+            Write-Host "[FAIL] Prestress loss anti-friction benchmark"
+            $failed++
+        }
+    } else {
+        Write-Host "[MISS] python not found, skip prestress loss anti-friction benchmark"
+        $failed++
+    }
+} else {
+    Write-Host "[MISS] prestress loss anti-friction script missing: $laScript"
+    $failed++
+}
+
+# ---- 第二十三次 B4：σl6 收缩徐变附录 C 显式表值（opt-in，默认 C2D=0）----
+# 表值由用户显式录入，程序只按解析发展公式组装 εcs/φ，不查表不拟合；
+# C_SKIP 显式不参与 / C2D 完整表值 / 四负例 / 默认零污染 / 2D/3D 同值；离线。
+$lcScript = Join-Path $root "tests\benchmark\prestress_loss_creep_2d\compare_prestress_loss_creep_2d.py"
+$lcCases  = Join-Path $root "tests\benchmark\prestress_loss_creep_2d\cases"
+$lcRef    = Join-Path $root "tests\benchmark\prestress_loss_creep_2d\reference"
+if (Test-Path $lcScript) {
+    $py = Get-Command python -ErrorAction SilentlyContinue
+    if ($py) {
+        Write-Host ""
+        Write-Host "== Prestress loss sigma_l6 creep, Annex C explicit table values (offline) =="
+        & python $lcScript --bin $bin --cases $lcCases --reference $lcRef
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[PASS] Prestress loss creep Annex C benchmark"
+        } else {
+            Write-Host "[FAIL] Prestress loss creep Annex C benchmark"
+            $failed++
+        }
+    } else {
+        Write-Host "[MISS] python not found, skip prestress loss creep benchmark"
+        $failed++
+    }
+} else {
+    Write-Host "[MISS] prestress loss creep script missing: $lcScript"
+    $failed++
+}
+
+# ---- 第二十四次 B4：结构时变徐变/收缩 JTG 3362 规范算例书锚点（opt-in 无关）----
+# code_loads.hpp 连续拟合链：φ0=φRH·βF·βT0、βH 实际 RH、εcs0=εS·βRH；
+# 独立 Python 闭式 oracle 逐键核对 φ/εcs/βs/E_eff + σl6 口径隔离硬断言
+# + 四负例 + 当前二进制逐字节重放；离线，不跑 ANSYS。
+$ctScript = Join-Path $root "tests\benchmark\creep_shrinkage_time_2d\compare_creep_shrinkage_time_2d.py"
+$ctCases  = Join-Path $root "tests\benchmark\creep_shrinkage_time_2d\cases"
+$ctRef    = Join-Path $root "tests\benchmark\creep_shrinkage_time_2d\reference"
+if (Test-Path $ctScript) {
+    $py = Get-Command python -ErrorAction SilentlyContinue
+    if ($py) {
+        Write-Host ""
+        Write-Host "== Structural time-dependent creep JTG 3362 anchor benchmark (offline) =="
+        & python $ctScript --bin $bin --cases $ctCases --reference $ctRef
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[PASS] Structural time-dependent creep benchmark"
+        } else {
+            Write-Host "[FAIL] Structural time-dependent creep benchmark"
+            $failed++
+        }
+    } else {
+        Write-Host "[MISS] python not found, skip structural creep benchmark"
+        $failed++
+    }
+} else {
+    Write-Host "[MISS] structural creep script missing: $ctScript"
+    $failed++
+}
+
+# --- 第 36 项：2D 分项预应力损失阶段维度 benchmark（离线）---------------
+$slScript = Join-Path $root "tests\benchmark\stage_loss_2d\compare_stage_loss_2d.py"
+$slCases  = Join-Path $root "tests\benchmark\stage_loss_2d\cases"
+$slRef    = Join-Path $root "tests\benchmark\stage_loss_2d\reference"
+if (Test-Path $slScript) {
+    $py = Get-Command python -ErrorAction SilentlyContinue
+    if ($py) {
+        Write-Host ""
+        Write-Host "== 2D stage prestress loss benchmark (offline) =="
+        & python $slScript --bin $bin --cases $slCases --reference $slRef
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[PASS] 2D stage prestress loss benchmark"
+        } else {
+            Write-Host "[FAIL] 2D stage prestress loss benchmark"
+            $failed++
+        }
+    } else {
+        Write-Host "[MISS] python not found, skip 2D stage prestress loss benchmark"
+        $failed++
+    }
+} else {
+    Write-Host "[MISS] 2D stage prestress loss script missing: $slScript"
+    $failed++
+}
+
+# --- 第 37 项：成桥态无应力曲率 benchmark（离线）-------------------------
+$ucScript = Join-Path $root "tests\benchmark\unstressed_curvature_3d\compare_unstressed_curvature_3d.py"
+$ucCases  = Join-Path $root "tests\benchmark\unstressed_curvature_3d\cases"
+$ucRef    = Join-Path $root "tests\benchmark\unstressed_curvature_3d\reference"
+if (Test-Path $ucScript) {
+    $py = Get-Command python -ErrorAction SilentlyContinue
+    if ($py) {
+        Write-Host ""
+        Write-Host "== unstressed curvature 3D benchmark (offline) =="
+        & python $ucScript --bin $bin --cases $ucCases --reference $ucRef
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[PASS] unstressed curvature 3D benchmark"
+        } else {
+            Write-Host "[FAIL] unstressed curvature 3D benchmark"
+            $failed++
+        }
+    } else {
+        Write-Host "[MISS] python not found, skip unstressed curvature 3D benchmark"
+        $failed++
+    }
+} else {
+    Write-Host "[MISS] unstressed curvature script missing: $ucScript"
+    $failed++
+}
+
 if ($failed -eq 0) { Write-Host "ALL TESTS PASSED" } else { Write-Host "$failed TEST(S) FAILED"; exit 1 }
 

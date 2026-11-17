@@ -1,0 +1,33 @@
+# 第二十三次 B4：2D/3D 同参算例（与 anti_le.dat 同一组损失参数）。
+# 同一行 *PRESTRESS_LOSS 经 fem_2d.cpp / fem_3d.hpp 共用的
+# parsePrestressLossLine + computePrestressLosses，由 2D 明细段与
+# loss_probe_3d 探针分别输出，必须逐值同值（12 位有效数字）。
+*TITLE
+prestress loss anti-friction 3d same parameters
+*NODE
+1 0.0 0.0 0.0
+2 2.5 0.0 0.0
+3 5.0 0.0 0.0
+4 7.5 0.0 0.0
+5 10.0 0.0 0.0
+*ET
+1 BEAM
+*MP
+1 E=35e9
+*R
+1 A=0.4 IY=0.005333 IZ=0.005333 J=0.010666 G=15e9
+*TYPE,1
+*MAT,1
+*REAL,1
+*EN,1,1,2
+*EN,2,2,3
+*EN,3,3,4
+*EN,4,4,5
+*BOUNDARY
+1 1-6 0.0
+5 2-6 0.0
+*PRESTRESS_LOSS
+1 SIGMA_CON=1395e6 EP=1.95e11 EC=3.45e10 FPK=1860e6 MU=0.25 K=0.0015 THETA=0.2 X=10 DELTA_L=0.00113 L=10 T1=15 T2=35 SIGMA_PC4=8e6 SIGMA_PC6=8e6 PSI=1.0 ZETA=0.3 ECS=2e-4 PHI=2.0 RHO=0.005 RHOPS=1.0 POST=1 L2ANTI=1 L2REPX=0
+*STAGE
+1 ACTIVE=1-4 PRESTRESS=1-4:P=1500e3:E=0.2:S=0.0:LOSSREF=1
+*END

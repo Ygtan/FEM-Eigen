@@ -1,0 +1,3 @@
+[PRESTRESSFORCE2D]
+ERROR=no_stage_prestress
+NOTE=本次施工阶段没有 *STAGE_PRESTRESS 束；没有张拉的束就没有有效预加力，不输出零值冒充已张拉。

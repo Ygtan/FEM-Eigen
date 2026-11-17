@@ -1,0 +1,282 @@
+{
+  "benchmark": "unstressed_curvature_3d",
+  "item": 37,
+  "basis": "unstressed_curvature_fem_only",
+  "semantics": "κ0 是制造/设计给定的无应力曲率，程序不反算；FEM 自洽口径，不含真实制造参数、不做 ANSYS 对拍",
+  "normal": [
+    "uc01_cantilever_z",
+    "uc02_cantilever_y",
+    "uc03_fixed_z",
+    "uc04_fixed_y",
+    "uc05_span_k0",
+    "uc06_span_base",
+    "uc09_torsion_j"
+  ],
+  "curvature_detail": {
+    "uc01_cantilever_z": true,
+    "uc02_cantilever_y": true,
+    "uc03_fixed_z": true,
+    "uc04_fixed_y": true,
+    "uc05_span_k0": true,
+    "uc06_span_base": false,
+    "uc09_torsion_j": true
+  },
+  "hard_negative": {
+    "uc07_bad_truss": "只支持 BEAM 单元",
+    "uc08_bad_nan": "不是有限数"
+  },
+  "frozen_sha256": {
+    "uc01_cantilever_z.report.txt": "218926e7e210dd75a6f9558e71509fa030dec592962e36dd20977d2ad4978687",
+    "uc01_cantilever_z.curvature.txt": "f8e5c4e31a2ff5f17c7c6cdb79f80004c7f145ab4964544067f0c1db82b31e71",
+    "uc02_cantilever_y.report.txt": "8f2b2a959ddbf3cefab8ae4ebec5e3c7a06253f84b39b1b1a91d738682ba5664",
+    "uc02_cantilever_y.curvature.txt": "e075d73427e7dea11087237c13030a1cf1f1677dfcfeeeeaf9e140a58a101326",
+    "uc03_fixed_z.report.txt": "84d5958f9a0cf6d7a6ccbfeb1777c471f531ed379bf041689267563c42ae906d",
+    "uc03_fixed_z.curvature.txt": "f8e5c4e31a2ff5f17c7c6cdb79f80004c7f145ab4964544067f0c1db82b31e71",
+    "uc04_fixed_y.report.txt": "7a5e98164e4c7f4921881bcb5da02cf97f3df559595bdb1eb108a40b4e89712d",
+    "uc04_fixed_y.curvature.txt": "e075d73427e7dea11087237c13030a1cf1f1677dfcfeeeeaf9e140a58a101326",
+    "uc05_span_k0.report.txt": "5f369c3640fd4a767b9c068fbb3601d1eecc56cf88ca395372c049da0e8dd2a5",
+    "uc05_span_k0.curvature.txt": "25342bd629fd6f06382717b72ae5c63daad9043fcf688adb424b76d251c9357e",
+    "uc06_span_base.report.txt": "3a561aaeadaded05f0d82fb619d3bf92a017cc430203e8e14d78d2f88ffde34a",
+    "uc09_torsion_j.report.txt": "84d5958f9a0cf6d7a6ccbfeb1777c471f531ed379bf041689267563c42ae906d",
+    "uc09_torsion_j.curvature.txt": "f8e5c4e31a2ff5f17c7c6cdb79f80004c7f145ab4964544067f0c1db82b31e71"
+  },
+  "oracle": {
+    "constants": {
+      "E": 34500000000.0,
+      "A": 1.0,
+      "IY": 1.0,
+      "IZ": 1.0,
+      "J": 1.0,
+      "G": 10000000000.0,
+      "L": 10.0,
+      "K0": 0.001,
+      "P": 1000.0
+    },
+    "uc01_cantilever_z": {
+      "disp": {
+        "2": [
+          0.0,
+          0.05,
+          0.0,
+          0.0,
+          0.0,
+          0.01
+        ]
+      },
+      "force": {
+        "1": {
+          "N": 0.0,
+          "Vy": 0.0,
+          "Vz": 0.0,
+          "T": 0.0,
+          "My": 0.0,
+          "Mz": 0.0
+        }
+      }
+    },
+    "uc02_cantilever_y": {
+      "disp": {
+        "2": [
+          0.0,
+          0.0,
+          -0.05,
+          0.0,
+          0.01,
+          0.0
+        ]
+      },
+      "force": {
+        "1": {
+          "N": 0.0,
+          "Vy": 0.0,
+          "Vz": 0.0,
+          "T": 0.0,
+          "My": 0.0,
+          "Mz": 0.0
+        }
+      }
+    },
+    "uc03_fixed_z": {
+      "disp": {
+        "1": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "2": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "force": {
+        "1": {
+          "N": 0.0,
+          "Vy": 0.0,
+          "Vz": 0.0,
+          "T": 0.0,
+          "My": 0.0,
+          "Mz": -34500000.0
+        }
+      }
+    },
+    "uc04_fixed_y": {
+      "disp": {
+        "1": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "2": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "force": {
+        "1": {
+          "N": 0.0,
+          "Vy": 0.0,
+          "Vz": 0.0,
+          "T": 0.0,
+          "My": -34500000.0,
+          "Mz": 0.0
+        }
+      }
+    },
+    "uc05_span_k0": {
+      "disp": {
+        "1": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          -0.00500018115942029
+        ],
+        "2": [
+          0.0,
+          -0.0125006038647343,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "3": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.00500018115942029
+        ]
+      },
+      "force": {
+        "1": {
+          "N": 0.0,
+          "Vy": 500.0,
+          "Vz": 0.0,
+          "T": 0.0,
+          "My": 0.0,
+          "Mz": 0.0
+        },
+        "2": {
+          "N": 0.0,
+          "Vy": -500.0,
+          "Vz": 0.0,
+          "T": 0.0,
+          "My": 0.0,
+          "Mz": 2500.0
+        }
+      }
+    },
+    "uc06_span_base": {
+      "disp": {
+        "1": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          -1.8115942028985507e-07
+        ],
+        "2": [
+          0.0,
+          -6.038647342995169e-07,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "3": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          1.8115942028985507e-07
+        ]
+      },
+      "force": {
+        "1": {
+          "N": 0.0,
+          "Vy": 500.0,
+          "Vz": 0.0,
+          "T": 0.0,
+          "My": 0.0,
+          "Mz": 0.0
+        },
+        "2": {
+          "N": 0.0,
+          "Vy": -500.0,
+          "Vz": 0.0,
+          "T": 0.0,
+          "My": 0.0,
+          "Mz": 2500.0
+        }
+      }
+    },
+    "uc09_torsion_j": {
+      "disp": {
+        "1": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "2": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "force": {
+        "1": {
+          "N": 0.0,
+          "Vy": 0.0,
+          "Vz": 0.0,
+          "T": 0.0,
+          "My": 0.0,
+          "Mz": -34500000.0
+        }
+      }
+    }
+  }
+}

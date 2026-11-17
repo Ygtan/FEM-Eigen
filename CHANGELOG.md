@@ -2,7 +2,238 @@
 
 本文件记录 FEM-Eigen 项目的新增功能和主要修改内容。
 
+## 2026-11-17
+
+### 修复：跨机环境缺陷 —— 一键可复现构建（`configure_build.ps1`）
+
+- **根因**：旧机（CMake 装在 `C:\Program Files\CMake`、有 `mingw32-make`）的
+  `build/` 缓存被带到新机。新机 CMake 在 msys64、无 `mingw32-make`，
+  Makefile 写死的旧路径失效；`MinGW Makefiles` 生成器退回 MSYS
+  `/usr/bin/make.exe` 后试编译阶段反斜杠路径被截断，`cmake --build build`
+  卡在 `cmake_check_build_system`（表现为后台任务无日志、长时间无输出）。
+  `build/` 是**机器本地产物、不入库、不可跨机携带**。
+- **修复**：`build/` 重建为 Ninja（锁定 mingw64 g++ + CHOLMOD），
+  `build.ninja` 零写死路径；新增 `configure_build.ps1`——自动探测
+  cmake / ninja（PATH 优先、退回 msys64 标准位置），编译器锁定
+  `C:/msys64/mingw64/bin/g++.exe`（冻结证据同工具链约束），检测到非 Ninja
+  生成器或写死 `Program Files` 路径的旧缓存则自动清理重建。
+- **验证**：一键脚本连续两次幂等（`SCRIPT_EXIT=0`，第二次 `ninja: no work to do`）；
+  全量重建 76 目标；增量构建秒级返回不再卡；`ctest` **37/37**；
+  `run_tests.ps1` `ALL TESTS PASSED`（#35 75/75、#36 269/269、#37 111/111）；
+  BridgeStudio **54 守卫全绿**、0 失败。冻结证据零污染（两仓 `git status`
+  无 reference/cases/CSV/JSON 改写）。
+- **文档**：`USER_MANUAL.md` / `DEVELOPMENT_GUIDE.md` /
+  `tests/benchmark/README.md` / `tests/benchmark/suspension_erection_3d/README.md`
+  已把过时的 MinGW Makefiles 指引改为 Ninja + 一键脚本。
+
+### 新增：第二十七次 —— 2D 阶段有效预加力输出段（第 36 项 CTest 扩至 269 checks）
+
+承接第二十五次：2D 的阶段**分项损失**已补齐，但 3D 早有、2D 一直没有的是
+`stage prestress force` 段（每阶段每束的有效预加力 `Pe`）。本轮把它补完。
+
+- **补的是输出能力，不是新力学**：`processPrestress` 内本来就有
+  `const double Pe = ps.P * loss;`（`loss` 已含 `LOSSREF` 解析出的
+  `σpe/σcon`），并经 `processPrestress → mc.loads → cumulativeLoads` 跨阶段
+  累积；缺的只是结果段。新增 `PrestressStageForce2D{id, P, loss, Pe,
+  sigmaCon}`，在**同一次计算**里 `push_back`（不重算），
+  `Model2D::prestressForces` 与 `StageResult::prestressForces` 承接，
+  仍在 `if (!st.prestresses.empty())` 守卫内，不混入非阶段束。
+- **入口与默认零污染**：`example_stage.exe --stage-prestress-force` 写独立
+  `<stem>.stage.force.txt`，段名 `[PRESTRESSFORCE2D]`、头行 `BASIS=2d_stage`、
+  行 `STAGE<n> P<id> SIGMA_CON= P= LOSS= PE=`（12 位有效数字）。不带开关
+  不追加参数、不删文件，既有 `.result` / `_stages.txt` / `.stage.loss.txt`
+  逐字节不变；两个 opt-in 开关互不依赖。
+- **口径**：2D 的 `PE=` 即 3D `stage prestress force` 段的 `Pe=`，同参同值；
+  不输出 `PE/SIGMA_CON` 这类量纲不成立的比值（力/应力 = m²），有效比就是
+  `LOSS`；只给 `LOSS=` 的束 `SIGMA_CON` 记 0，不拿 `P/Ap` 反造控制应力。
+- **benchmark**：第 36 项由 167 增至 **269 checks**——8 份 force 段冻结证据、
+  独立闭式 oracle（`PE = P·LOSS`，`LOSSREF` 束取 oracle 的 `σpe/σcon`）、
+  多束多阶段编号 `{(1,1),(1,2),(2,1)}`、软负例
+  `ERROR=no_stage_prestress`、两个开关互不依赖、默认不写文件、FE 源码契约。
+- **能力矩阵**：2D 该格由 `2D=P` 推 `2D=Y`，`Y` 的口径同时定稿为
+  **平面内分项损失完整**（不含三向空间量，不冒充 3D 三向结果）；真实制造
+  参数与分项损失 ANSYS 对拍 2D/3D 同样没有，不在 `Y` 的覆盖范围内。
+
+### 新增：第二十六次 —— B5 成桥态无应力曲率 FEM 自洽接入（第 37 项 CTest）
+
+用户：「先做 b5 然后一起收口」。按此前拍板「先做 FEM 自洽深度，**不接真实制造
+参数、不做 ANSYS 对拍**」，本轮只验证「给一个 κ0，FEM 是否自洽」。**不代表 B5
+覆盖制造参数与全桥对拍，也不因本条把能力矩阵涂 `Y`。**
+
+- **内核**：`Element3D` 增 `k0y` / `k0z`（1/m，默认 0）；输入侧只在 `*EN` 单元行
+  接受 `K0Y=` / `K0Z=`，非 `BEAM` 单元出现或值非有限 → 显式 `throw`。
+  `elementEquivalentLoad3D()` 追加常曲率固端力
+  `f_eq(θ₁)=−EI·κ0`、`f_eq(θ₂)=+EI·κ0`（局部，`Tᵀ` 转全局）。该函数同时供
+  「组装 `a.F0`」与「端内力 `fl − T·fe`」，因此**一处接入两端自洽**：
+  `K·u = f_ext + f_eq`，端内力自动为 `M = EI(κ − κ0)`。曲率模态用
+  `Eeff = E/(1+χφ)` 与刚度同源，零外荷载时 `K·u0 = f_eq` 精确成立。
+- **输出**：`example_3d_report.exe --curvature-detail` 写独立
+  `<stem>.curvature.txt`（`[UNSTRESSED_CURVATURE]`、`BASIS=unstressed_curvature_fem_only`、
+  逐单元 `K0Y= K0Z= EIY= EIZ= M0Y= M0Z=`）；默认不写，无 κ0 时写
+  `ERROR=no_curvature_elements`，不摆零值。
+- **解析锚点**：悬臂 `v₂=κ0L²/2`、`θz₂=κ0L`、端内力恒零（自平衡）；两端固结
+  `U=0`、`Mz=−EIzκ0`；`K0Y` 侧 `w₂=−κ0L²/2`、`θy₂=+κ0L`、`My=−EIyκ0`；
+  简支 + 跨中 `P` 的**内力与 κ0 无关**、位移叠加 `κ0L²/8`。
+- **证据**：新增第 37 项 CTest `unstressed_curvature_3d_benchmark`
+  （`tests/benchmark/unstressed_curvature_3d/`），9 份 `.dat`、13 份冻结证据、
+  独立 Python 闭式 oracle（自检最差偏差 1.35e-10）、两个硬负例（TRUSS 给 K0 /
+  `K0Z=nan`）、自平衡与刚度不变与 J 不变强断言、默认逐位零污染、FE/BS 源码
+  契约守卫，**111/111 checks**。
+- **边界**：未覆盖共转列式 `CRElemData` 初曲率；未接真实制造参数；未做成桥态
+  `My` 全桥 ANSYS 对拍；未研究 `χφ` 与 κ0 的耦合；BS 侧只到 `curvature_3d.py`
+  解析口径层，**未进 3D 计算书**（`example_3d_grillage` 走 summary、`solver_3d`
+  改造面大）；不得把「节点预抬高 / 制造线形 `Xm`」写成「无应力曲率已实现」。
+
+### 新增：第二十五次 —— 2D 分项预应力损失阶段维度接入（第 36 项 CTest）
+
+用户：「既然3D 侧早已是 Y，补 2D 阶段维度：让 `[PRESTRESSLOSS2D]` 支持
+STAGE、把 σl2/σl6 的选项映射到 2D」。**只补齐 2D 的阶段维度缺口，不改能力
+矩阵任何格，B4 仍 `P`。**
+
+- **内核**：`fem_2d.cpp` 的 `*STAGE_PRESTRESS` 支持 `LOSSREF=<表号>`（与
+  `LOSS` 二选一，缺任一/同时给均显式拒绝），阶段内预应力束按输入顺序从
+  1 编号（与 3D `fem_3d.hpp` 同源）；`fem_2d.hpp::StageResult` 增
+  `prestressLossDetails`（与 3D 同名字段），`solveModel2DStages()` 只把
+  **本阶段** `processPrestress(mc)` 重建出的明细写入阶段结果，避免 `mc=m`
+  带进非阶段明细；σl2 `L2ANTI/L2REPX` 与 σl6 `C2D/C_SKIP/EPS0/PHI0/C_RH/
+  C_H/C_T0/C_TS/C_T` 经同一张 `*PRESTRESS_LOSS` 表自动映射，不另立公式。
+- **输出**：`prestress_loss_output_2d.hpp` 新增独立
+  `formatStagePrestressLossSection2D()`，段名同为 `[PRESTRESSLOSS2D]`、
+  头行 `BASIS=2d_stage`、行首 `STAGE<n> P<id>`，字段顺序/单位/12 位有效数字
+  与 3D `stage prestress loss` 一致。`example_stage.exe --stage-loss-detail`
+  写到独立 `<stem>.stage.loss.txt`；默认不写，旧 `BASIS=2d_global` 段与
+  `<stem>.loss.txt` 逐位不变。无 LOSSREF 束时写
+  `ERROR=no_lossref_stage_prestress`，不摆零值。
+- **BS 侧**：`bridge_spec.py::StagePrestressDef` 增 `loss_ref`（默认 0，
+  `.dat` 写 `LOSSREF=` 或原 `LOSS=`，历史逐位不变）+ 引用完整性校验；
+  `prestress_loss_2d.py` 增 `parse_stage_loss_txt()` / `stage_loss_table()`
+  （只解析、不重算、不补零，旧 `parse_loss_txt()` 一字未改）；`solve_2d.py`
+  增 `stage_loss_detail` opt-in，报告挂 `prestress_stage_loss_table`；
+  `model_doc.py::solve` 增 `stage_loss_2d_detail` 形参。
+- **证据**：新增第 36 项 CTest `stage_loss_2d_benchmark`
+  （`tests/benchmark/stage_loss_2d/`），8 份 `.dat`、6 份冻结
+  `.stage.loss.txt`、独立 Python 闭式 oracle、硬/软负例、默认逐位零污染、
+  2D/3D 同参同值（损失表与第 34 项 `creep_3d.dat` 逐字相同）、FE/BS 源码
+  契约守卫，**167/167 checks**（第二十七次在同目录扩至 10 份 `.dat` /
+  14 份冻结证据 / **269 checks**，见本日第一条）。
+- **边界**：阶段段是独立 opt-in 文件，不与全局段混行；只给代表截面标量，
+  不输出沿程分布；不跑 ANSYS、不做规范合格判定；B4/B5 统一收口**当时**未开始
+  （#195 已统一收口、第二十七次把 B4 的 2D 推 `Y`）。
+
 ## 2026-11-16
+
+### 新增：第二十四次 —— 结构时变徐变链规范算例书锚点 benchmark（第 35 项 CTest）
+
+用户指出「fem 里面有徐变模型，核实一下」，核实确认 FEM-Eigen 确有**结构整体
+时变**徐变链（`code_loads.hpp` 连续拟合 + `fem_2d.cpp` 的 `creepCoefficientAt` /
+`shrinkageStrainAt` / `processTimeEffects` 阶段 AEMM + `fem_3d.hpp` 的
+`creepCoefficientAt3D`）。此前只回归到算例、无专门 benchmark、无 ANSYS 对拍。
+本条补一条**独立**规范算例书锚点 benchmark，与 σl6 表值链刻意隔离：
+
+- 新增只读探针 `creep_probe_2d.cpp`（`fem_add_executable(creep_probe_2d ...)`），
+  只调 `readModel2D` + `code_loads.hpp` 拟合函数，暴露 `M,PHI0/BETAH/ECS0`
+  与逐龄期 `S,<age>,PHI/ECS/BETAS/EEFF`；探针不自带力学、不改既有路径。
+- 新增 `tests/benchmark/creep_shrinkage_time_2d/`（build_reference.py 独立 Python
+  闭式 oracle + 冻结证据 + compare 脚本 + README）：oracle 用纯 Python 复现
+  `φ0=φRH·βF·βT0`、`βH` 实际 RH 连续值、`εcs0=εS·βRH` 与
+  `φ(t)/εcs(t)/βs/E_eff=E/(1+χφ)`，不调求解器。
+- 第 35 项 CTest `creep_shrinkage_time_2d_benchmark`（75/75 checks）含**σl6 口径
+  隔离硬断言**：本链 βH=803.25（实际 RH=75% 连续），**不是** σl6 代表值
+  961.76；εcs0=3.674e-4，**不是** σl6 表值 0.310e-3；探针源码不得硬编码 55/80。
+  另含 RH/t0 敏感性、AEMM 单调性、四负例（缺 RH/H/FCM、旧 CURVE 口径）、
+  当前二进制逐字节重放。
+- **h 来源核实（用户追问「模型 H 是不是梁高、探针全桥 H 与内核单元 hTheory
+  是否一致」）**：`*CREEP_MODEL H=` 解析到 `m.creepH`，语义是**理论厚度
+  h=2A/u（mm）**，梁高是另一个截面几何字段；给定 H 时 `creepCoefficientAt`/
+  `shrinkageStrainAt` 用 `m.creepH` 覆盖传入的单元 hTheory，故探针与阶段
+  AEMM 同源一致。新增 2 条守卫锁死此覆盖关系；如实登记未给 H 时内核退到
+  逐单元 `HTH`、探针拒绝该路径的覆盖边界，以及 `processTimeEffects:807`
+  靠二次覆盖才正确的分支不一致隐患。
+- 边界：oracle 只核 `E_eff=E/(1+χφ)` 一环，不逐键展开阶段 AEMM 等效荷载
+  （按上一阶段轴力、`Δφ` 增量、模量从 `baseModulus` 重算）；只覆盖 2D 探针；
+  不做真实制造参数接入。ANSYS 18.0 对拍可行性评估见同目录
+  `ANSYS_CEB90_对拍可行性评估.md`：本机 v180 可用，但内置 `TB,CREEP` 是
+  Norton/time-hardening 等金属蠕变本构，无 JTG 3362 的 φ0/βH/χ 对应参数；
+  BridgeStudio APDL 导出无徐变材料卡；**不能本构级同源对拍**，伪弹性旁证
+  口径有损、不建议纳入冻结 benchmark。
+
+### 验证：结构时变徐变 benchmark 全量回归（干净构建，mingw64，2026-11-17）
+
+- 干净 Ninja 构建（显式锁 `C:/msys64/mingw64/bin/g++.exe`）59/59 目标全成，
+  含新增 `creep_probe_2d.exe`；ctest 全量 **35/35 通过**（含新第 35 项
+  `creep_shrinkage_time_2d_benchmark` 75/75 checks）；`run_tests.ps1 -BuildDir`
+  干净构建目录 `ALL TESTS PASSED`（含 `[PASS] Structural time-dependent creep
+  benchmark`）。冻结证据零污染：git status 确认既有 benchmark 参考 / CSV /
+  `.loss.txt` / `.snap` / `.dat` 均未被改写，仅新增 benchmark 目录与源码 / 文档。
+- h 来源核实后新增 2 条守卫一并纳入第 35 项 CTest（73→75 checks），锁死
+  「给定 `H=` 时探针与内核 AEMM 用同一理论厚度」的口径。
+
+### 新增：第二十三次 —— B4 σl6 收缩徐变附录 C 显式表值（opt-in，第 34 项 CTest）
+
+按 σl2 → σl6 → B5 顺序，本条为 **σl6 阶段**；用户拍板「表值由用户显式录入
+经核对的规范表值，绝不调用规范拟合函数兜底」：
+
+- `prestress_loss.hpp::PrestressLossInput` 新增 opt-in `C2D` / `C_SKIP`
+  （默认 `0/0`）与 7 个附录 C 表值键 `EPS0` / `PHI0` / `C_RH` / `C_H` /
+  `C_T0` / `C_TS` / `C_T`；2D/3D 共用同一份解析与公式。
+- 默认 `C2D=0` 时 `σl6=0.9(Ep·ECS+αEP·σpc6·PHI)/(1+15ρρps)` 逐位不变；
+  `C_SKIP=1` 显式声明不参与（`σl6=0`、`C_SOURCE=2`），区别于缺值报错；
+  `C2D=1` 按附录 C 表值龄期：`εcs(t,t0)=εcs0[βs(t,ts)−βs(t0,ts)]`、
+  `φ(t,t0)=φ0·βc`，βs/βH/βc 按式 C.1.1-5 / C.2.1-6/7，RH 按 C.2.3 取
+  区间代表值 55/80；缺任一表值、RH 越界、龄期倒挂、两开关冲突均显式拒绝。
+- `PrestressLossResult` 增 `epsCsDev` / `phiDev` / `betaS` / `betaS0` /
+  `betaC` / `betaH` / `cHRepresentative` / `cSource`；`prestress_loss_output_2d.hpp`
+  与 3D `loss_probe_3d.cpp` 仅在 `cSource≥1` 时追加 `C_SOURCE=` / `ECS_DEV=` /
+  `PHI_DEV=` / `BETAS=` / `BETAS0=` / `BETAC=` / `BETAH=` / `RHREP=`。
+- `code_loads.hpp` 的 `jtg3362NominalCreep()` / `jtg3362ShrinkageNominal()`
+  拟合函数本阶段**未被调用**（仍服务结构整体时变分析），σl6 表值链与之不相交。
+- 新增第 34 项 CTest `prestress_loss_creep_2d_benchmark`
+  （`tests/benchmark/prestress_loss_creep_2d/`，142/142 checks）：独立闭式
+  oracle、βH 区间切换、φ=φ0·βc / εcs=εcs0(βs−βs0) 交叉、四负例、默认
+  逐位零污染、C_SKIP 与缺值区分、2D/3D 同参同值；σl6≈45.4MPa 与规范
+  算例书吻合。边界：只给代表截面标量、不查表不拟合、不跑 ANSYS、B4 不推 Y。
+
+### 验证：σl6 阶段全量回归（干净构建，mingw64）
+
+- 干净 Ninja 构建（显式锁 `C:/msys64/mingw64/bin/g++.exe`）88/88 目标全成，
+  含 `loss_probe_3d.exe`；ctest 全量 **34/34 通过**，含 σl2 #33（117 checks）
+  与 σl6 #34（142 checks）；`run_tests.ps1 -BuildDir` 干净构建目录
+  `ALL TESTS PASSED`；BridgeStudio 55 个守卫脚本全绿（含能力矩阵 282、
+  B 类规格 219、分项损失 231、app 109）。冻结证据零污染：既有 benchmark
+  参考 / CSV / `.loss.txt` / `.snap` / `.dat` 均未被改写。
+- **工具链复现记录**：初版干净构建误用 `ucrt64/bin/c++.exe`（同为 GCC 16.2
+  / `-O3 -DNDEBUG`），导致 9 项 benchmark 的「当前 exe 重跑与冻结 CSV
+  逐字节一致」失败——差异仅为残差 `RES` 列 ~1e-10 末位（如
+  `0.00092523616331164` vs `0.00092523627972696`），位移 / 速度 / 能量等
+  主量完全不动；改用冻结证据同源的 mingw64 构建后 34/34 全绿。此为
+  `DEVELOPMENT_GUIDE.md §7` 已登记的 UCRT/MSVCRT libm 末位漂移，
+  非 σl6 代码缺陷（失败项 `dyn_probe.cpp` 不含 `prestress_loss.hpp`）。
+
+### 新增：第二十三次 —— B4 σl2 附录 G 反摩擦（opt-in，第 33 项 CTest）
+
+用户回复「同意建议的顺序」后按 σl2 → σl6 → B5 推进，本条为 **σl2 阶段**：
+
+- `prestress_loss.hpp::PrestressLossInput` 新增 `L2ANTI` / `L2REPX` 两个
+  opt-in 键（默认 `0/0`），2D/3D 共用同一份解析与公式；默认 `L2ANTI=0`
+  时 `σl2=ΣΔl/l·Ep` 路径逐位不变。
+- `L2ANTI=1` 按 JTG 3362-2018 附录 G、`x=0` 张拉端峰值代表值：
+  `Δσd=σl1(l)/l`、`lf=√(ΣΔl·Ep/Δσd)`；`lf≤l` 用 `2Δσd·lf`，
+  `lf>l` 用 `Δσd(lf²/l+l)`，`lf=l` 处两支连续；无摩擦退化为直线式
+  （`BRANCH=0`）；`L2REPX≠0` / `ΣΔl≤0` / `Ep≤0` 显式拒绝。
+- `PrestressLossResult` 增 `lf` / `deltaSigmaD` / `deltaSigmaPeak` /
+  `l2Branch`；`prestress_loss_output_2d.hpp` 仅在 `l2Branch≥1` 的数据行
+  追加 `LF=` / `DSL2D=` / `DSL2PEAK=` / `BRANCH=`，12 位有效数字不变。
+- 新增只读探针 `loss_probe_3d.cpp`（只调 `readModel3D` +
+  `resolvePrestressLosses3D`），用于同一组 `*PRESTRESS_LOSS` 参数 2D/3D
+  同值对拍，不新增力学、不改 3D 求解链。
+- 新增 `tests/benchmark/prestress_loss_anti_2d/`（第 33 项 CTest）：
+  7 份 `.dat`、5 份冻结证据、独立 Python 闭式 oracle、两支交叉 /
+  `lf=l` 连续性 / 单位量纲 / 两个负例 / 默认逐位零污染 / 2D/3D 同值，
+  **117/117 checks**；单独 `ctest -R prestress_loss_anti_2d_benchmark` 通过。
+- 边界：只给代表截面峰值、不输出 `σl2(x)` 沿程分布；非 x=0 代表值
+  显式拒绝；`σl6` 仍为用户显式录入规范表值；不跑 ANSYS、不把 B4 涂成
+  `Y`。`lf>l` 分支中 `σl5` 可能为负（JTG 6.2.6-1 在低 σpe 下的数学行为），
+  已在 benchmark README 中如实登记。
 
 ### 收口：第二十二次 —— B3 非线性稳定全过程由 P 推 Y（任务 #165）
 

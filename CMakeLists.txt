@@ -528,6 +528,80 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(dynamic_snapthrough_3d_benchmark PROPERTIES
         TIMEOUT 900
         LABELS "benchmark")
+
+    # 第 33 项：第二十三次 B4 · σl2 附录 G 反摩擦（opt-in，默认全关）。
+    # 张拉端 x=0 代表值；lf≤l / lf>l 两支闭式 + 无摩擦退化 + 缺参负例 +
+    # 默认逐位零污染 + 2D/3D 同参同值；离线，不跑 ANSYS。
+    add_test(NAME prestress_loss_anti_2d_benchmark
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/prestress_loss_anti_2d/compare_prestress_loss_anti_2d.py
+                     --bin ${CMAKE_CURRENT_BINARY_DIR}
+                     --cases ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/prestress_loss_anti_2d/cases
+                     --reference ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/prestress_loss_anti_2d/reference)
+    set_tests_properties(prestress_loss_anti_2d_benchmark PROPERTIES
+        TIMEOUT 900
+        LABELS "benchmark")
+
+    # 第 34 项：第二十三次 B4 · σl6 收缩徐变附录 C 显式表值（opt-in，默认全关）。
+    # 表值由用户显式录入，程序只按解析发展公式组装 εcs/φ，不查表不拟合；
+    # C_SKIP 显式不参与 / C2D 完整表值 / 四负例 / 默认零污染 / 2D/3D 同值；
+    # 离线，不跑 ANSYS。
+    add_test(NAME prestress_loss_creep_2d_benchmark
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/prestress_loss_creep_2d/compare_prestress_loss_creep_2d.py
+                     --bin ${CMAKE_CURRENT_BINARY_DIR}
+                     --cases ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/prestress_loss_creep_2d/cases
+                     --reference ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/prestress_loss_creep_2d/reference)
+    set_tests_properties(prestress_loss_creep_2d_benchmark PROPERTIES
+        TIMEOUT 900
+        LABELS "benchmark")
+
+    # 第 35 项：第二十四次 B4 · 结构整体时变徐变/收缩 JTG 3362 规范算例书锚点。
+    # 与 σl6 表值链刻意隔离：本链 φ0=φRH·βF·βT0、βH 用实际 RH 连续值、
+    # εcs0=εS·βRH（code_loads.hpp 连续拟合）；独立 Python 闭式 oracle 逐键核对
+    # φ/εcs/βs/E_eff，含 σl6 口径隔离硬断言 + 四负例 + 当前二进制逐字节重放。
+    # 离线，不跑 ANSYS。
+    add_test(NAME creep_shrinkage_time_2d_benchmark
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/creep_shrinkage_time_2d/compare_creep_shrinkage_time_2d.py
+                     --bin ${CMAKE_CURRENT_BINARY_DIR}
+                     --cases ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/creep_shrinkage_time_2d/cases
+                     --reference ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/creep_shrinkage_time_2d/reference)
+    set_tests_properties(creep_shrinkage_time_2d_benchmark PROPERTIES
+        TIMEOUT 900
+        LABELS "benchmark")
+
+    # 第 36 项：2D 分项预应力损失阶段维度（B4 第二十五次，opt-in）。
+    # *STAGE_PRESTRESS 支持 LOSSREF，σl2 附录 G / σl6 附录 C 选项经同一张
+    # *PRESTRESS_LOSS 表映射；阶段段独立写 <stem>.stage.loss.txt
+    # （BASIS=2d_stage），与全局 BASIS=2d_global 段及既有 .loss.txt 隔离。
+    # 独立 Python 闭式 oracle + 冻结证据 + 硬/软负例 + 默认零污染 +
+    # 2D/3D 同参同值 + FE/BS 源码契约守卫。离线，不跑 ANSYS。
+    add_test(NAME stage_loss_2d_benchmark
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/stage_loss_2d/compare_stage_loss_2d.py
+                     --bin ${CMAKE_CURRENT_BINARY_DIR}
+                     --cases ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/stage_loss_2d/cases
+                     --reference ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/stage_loss_2d/reference)
+    set_tests_properties(stage_loss_2d_benchmark PROPERTIES
+        TIMEOUT 900
+        LABELS "benchmark")
+
+    # 第 37 项：成桥态无应力曲率 benchmark（B5 第二十六次，opt-in）。
+    # *EN 单元行 K0Y=/K0Z= 录入无应力曲率，固端力并入 elementEquivalentLoad3D，
+    # 端内力自动为 M = EI(κ − κ0)；κ0=0 时逐位不变。opt-in 独立输出
+    # <stem>.curvature.txt（example_3d_report --curvature-detail）。
+    # 独立 Python 闭式 oracle + 冻结证据 + 硬负例 + 自平衡/刚度不变/J 不变
+    # 强断言 + 默认零污染 + FE/BS 源码契约守卫。离线，不跑 ANSYS。
+    add_test(NAME unstressed_curvature_3d_benchmark
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/unstressed_curvature_3d/compare_unstressed_curvature_3d.py
+                     --bin ${CMAKE_CURRENT_BINARY_DIR}
+                     --cases ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/unstressed_curvature_3d/cases
+                     --reference ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/unstressed_curvature_3d/reference)
+    set_tests_properties(unstressed_curvature_3d_benchmark PROPERTIES
+        TIMEOUT 900
+        LABELS "benchmark")
 else()
     message(STATUS "未找到 Python3，跳过 .dat 逐字节回归 CTest")
 endif()
@@ -606,6 +680,15 @@ fem_add_executable(dyn_probe dyn_probe.cpp)
 # 与 ANSYS BEAM188 + ARCLEN 端到端对标。力学仍完全复用内核，
 # 不改 fem_3d_nl.hpp / stability_path_3d.hpp。
 fem_add_executable(frame_probe frame_probe.cpp)
+# 第二十三次 B4：3D 分项预应力损失只读探针（fem_3d.hpp + prestress_loss.hpp），
+# 把同一组 *PRESTRESS_LOSS 参数的 3D 内核结果暴露成 CSV，供第 33 项
+# CTest 与 2D 明细段做同参同值对拍；不新增力学、不改任何既有路径。
+fem_add_executable(loss_probe_3d loss_probe_3d.cpp)
+# 第二十四次 B4：2D 结构时变徐变/收缩只读探针（fem_2d.hpp + code_loads.hpp），
+# 把 JTG 3362 附录 C 连续拟合的 φ0/βH/εcs0 与逐龄期 φ(t)/εcs(t)/E_eff
+# 暴露成 CSV，供第 35 项 CTest 独立闭式 oracle 逐键核对；不新增力学、
+# 不改任何既有路径，与 σl6 表值链保持口径隔离。
+fem_add_executable(creep_probe_2d creep_probe_2d.cpp)
 
 # ---- 2D/3D 分库 ----
 # 2D 层（fem_2d）编译为静态库；共享核心 fem.hpp 与 3D 层 fem_3d.hpp 为纯头文件。
