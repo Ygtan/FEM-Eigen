@@ -63,10 +63,14 @@ struct Seg {
     double v1 = 0.0, v2 = 0.0;
 };
 
-// 写一张图：模型（灰色）+ 节点编号 + 可选偏移图（彩色）。
+// 写一张图：模型（灰色）+ 可切换的节点/单元编号 + 可选偏移图（彩色）。
+// flipNormal=true 只翻转偏移图的法向：弯矩按结构力学习惯画在受拉侧
+// （正弯矩下缘受拉 → 画在梁下方），剪力/轴力/应力图保持原方向。
 void writeDiagramFigure(const std::string& path, const std::string& title,
                         const Model2D& model, const std::vector<Elem>& elems,
-                        const std::vector<Seg>& segs, const std::string& color) {
+                        const std::vector<Seg>& segs, const std::string& color,
+                        bool showNodeLabels, bool showElemLabels,
+                        bool flipNormal = false) {
     BBox box;
     for (const auto& [id, c] : model.nodes) add(box, c);
     double maxAbs = 1e-12;
@@ -74,8 +78,9 @@ void writeDiagramFigure(const std::string& path, const std::string& title,
     const double span = std::max(box.xmax - box.xmin, box.ymax - box.ymin);
     const double vscale = 0.22 * span / maxAbs;
 
+    const double normalSign = flipNormal ? -1.0 : 1.0;
     for (const auto& s : segs) {
-        const Eigen::Vector2d n = perp(s.p1, s.p2);
+        const Eigen::Vector2d n = perp(s.p1, s.p2) * normalSign;
         add(box, s.p1 + n * (s.v1 * vscale));
         add(box, s.p2 + n * (s.v2 * vscale));
     }
@@ -94,7 +99,7 @@ void writeDiagramFigure(const std::string& path, const std::string& title,
             << "\" stroke=\"#999\" stroke-width=\"2\"/>\n";
     }
     for (const auto& s : segs) {
-        const Eigen::Vector2d n = perp(s.p1, s.p2);
+        const Eigen::Vector2d n = perp(s.p1, s.p2) * normalSign;
         const Eigen::Vector2d o1 = s.p1 + n * (s.v1 * vscale);
         const Eigen::Vector2d o2 = s.p2 + n * (s.v2 * vscale);
         out << "<polygon points=\"" << cv.X(s.p1(0)) << "," << cv.Y(s.p1(1)) << " "
@@ -107,8 +112,18 @@ void writeDiagramFigure(const std::string& path, const std::string& title,
     for (const auto& [id, c] : model.nodes) {
         out << "<circle cx=\"" << cv.X(c(0)) << "\" cy=\"" << cv.Y(c(1))
             << "\" r=\"3.5\" fill=\"black\"/>\n";
-        out << "<text x=\"" << (cv.X(c(0)) + 5) << "\" y=\"" << (cv.Y(c(1)) - 5)
-            << "\" font-size=\"11\" font-family=\"sans-serif\">" << id << "</text>\n";
+        if (showNodeLabels) {
+            out << "<text x=\"" << (cv.X(c(0)) + 5) << "\" y=\"" << (cv.Y(c(1)) - 5)
+                << "\" font-size=\"11\" font-family=\"sans-serif\">" << id << "</text>\n";
+        }
+    }
+    if (showElemLabels) {
+        for (const auto& e : elems) {
+            const Eigen::Vector2d mid = (e.p1 + e.p2) * 0.5;
+            out << "<text x=\"" << (cv.X(mid(0)) + 3) << "\" y=\"" << (cv.Y(mid(1)) - 8)
+                << "\" font-size=\"10\" font-family=\"sans-serif\" fill=\"#1f5fbf\">E"
+                << e.id << "</text>\n";
+        }
     }
     out << "</svg>\n";
 }
@@ -116,7 +131,8 @@ void writeDiagramFigure(const std::string& path, const std::string& title,
 // 位移图：灰色模型 + 红色放大变形。
 void writeDisplacementFigure(const std::string& path, const std::string& title,
                              const Model2D& model, const std::vector<Elem>& elems,
-                             const DenseVec& U, const std::map<int, int>& index) {
+                             const DenseVec& U, const std::map<int, int>& index,
+                             bool showNodeLabels, bool showElemLabels) {
     BBox box;
     for (const auto& [id, c] : model.nodes) add(box, c);
     double maxDisp = 1e-12;
@@ -155,8 +171,18 @@ void writeDisplacementFigure(const std::string& path, const std::string& title,
     for (const auto& [id, c] : model.nodes) {
         out << "<circle cx=\"" << cv.X(c(0)) << "\" cy=\"" << cv.Y(c(1))
             << "\" r=\"3.5\" fill=\"black\"/>\n";
-        out << "<text x=\"" << (cv.X(c(0)) + 5) << "\" y=\"" << (cv.Y(c(1)) - 5)
-            << "\" font-size=\"11\" font-family=\"sans-serif\">" << id << "</text>\n";
+        if (showNodeLabels) {
+            out << "<text x=\"" << (cv.X(c(0)) + 5) << "\" y=\"" << (cv.Y(c(1)) - 5)
+                << "\" font-size=\"11\" font-family=\"sans-serif\">" << id << "</text>\n";
+        }
+    }
+    if (showElemLabels) {
+        for (const auto& e : elems) {
+            const Eigen::Vector2d mid = (e.p1 + e.p2) * 0.5;
+            out << "<text x=\"" << (cv.X(mid(0)) + 3) << "\" y=\"" << (cv.Y(mid(1)) - 8)
+                << "\" font-size=\"10\" font-family=\"sans-serif\" fill=\"#1f5fbf\">E"
+                << e.id << "</text>\n";
+        }
     }
     out << "</svg>\n";
 }
@@ -167,6 +193,21 @@ static int runViz(int argc, char** argv) {
     setupConsoleUTF8();
     std::string path = "mixed_truss_beam.dat";
     if (argc > 1) path = argv[1];
+
+    // 界面可切换的编号显示。旧调用 example_viz.exe model.dat 完全兼容：
+    // 节点号默认显示（保持既有行为），单元号默认关闭（新增不污染旧图）。
+    bool showNodeLabels = true;
+    bool showElemLabels = false;
+    for (int i = 2; i < argc; ++i) {
+        const std::string a = argv[i];
+        const auto enabled = [](const std::string& v) {
+            return v == "1" || v == "on" || v == "true" || v == "yes";
+        };
+        const std::string np = "--node-labels=";
+        const std::string ep = "--elem-labels=";
+        if (a.rfind(np, 0) == 0) showNodeLabels = enabled(a.substr(np.size()));
+        if (a.rfind(ep, 0) == 0) showElemLabels = enabled(a.substr(ep.size()));
+    }
 
     std::string base = path;
     const std::size_t p = base.rfind(".dat");
@@ -214,10 +255,12 @@ static int runViz(int argc, char** argv) {
     const std::string ttl = model.title.empty() ? path : model.title;
 
     // 模型图
-    writeDiagramFigure(base + "_model.svg", ttl + " - 模型图", model, elems, {}, "#000000");
+    writeDiagramFigure(base + "_model.svg", ttl + " - 模型图", model, elems, {}, "#000000",
+                       showNodeLabels, showElemLabels);
 
     // 位移图
-    writeDisplacementFigure(base + "_disp.svg", ttl + " - 位移图（放大）", model, elems, r.U, index);
+    writeDisplacementFigure(base + "_disp.svg", ttl + " - 位移图（放大）", model, elems, r.U, index,
+                            showNodeLabels, showElemLabels);
 
     // 弯矩图
     {
@@ -238,7 +281,9 @@ static int runViz(int argc, char** argv) {
                 segs.push_back({e.id, e.p1 + dir * (x0 / L), e.p1 + dir * (x1 / L), m0, m1});
             }
         }
-        writeDiagramFigure(base + "_moment.svg", ttl + " - 弯矩图", model, elems, segs, "#ff8c00");
+        // 最后一参 true = 弯矩画在受拉侧（正弯矩 → 梁下方）
+        writeDiagramFigure(base + "_moment.svg", ttl + " - 弯矩图", model, elems, segs, "#ff8c00",
+                           showNodeLabels, showElemLabels, true);
     }
 
     // 剪力图
@@ -249,7 +294,8 @@ static int runViz(int argc, char** argv) {
             const auto& f = findF(e.id);
             segs.push_back({e.id, e.p1, e.p2, f.V1, f.V2});
         }
-        writeDiagramFigure(base + "_shear.svg", ttl + " - 剪力图", model, elems, segs, "#8a2be2");
+        writeDiagramFigure(base + "_shear.svg", ttl + " - 剪力图", model, elems, segs, "#8a2be2",
+                           showNodeLabels, showElemLabels);
     }
 
     // 轴力图（梁 + 桁架）
@@ -260,7 +306,8 @@ static int runViz(int argc, char** argv) {
             const auto& f = findF(e.id);
             segs.push_back({e.id, e.p1, e.p2, f.N1, f.N2});
         }
-        writeDiagramFigure(base + "_axial.svg", ttl + " - 轴力图", model, elems, segs, "#2e8b57");
+        writeDiagramFigure(base + "_axial.svg", ttl + " - 轴力图", model, elems, segs, "#2e8b57",
+                           showNodeLabels, showElemLabels);
     }
 
     if (hasStress) {
@@ -271,8 +318,10 @@ static int runViz(int argc, char** argv) {
             top.push_back({e.id, e.p1, e.p2, s.stop1, s.stop2});
             bot.push_back({e.id, e.p1, e.p2, s.sbot1, s.sbot2});
         }
-        writeDiagramFigure(base + "_stress_top.svg", ttl + " - 上翼缘应力图", model, elems, top, "#1e90ff");
-        writeDiagramFigure(base + "_stress_bottom.svg", ttl + " - 下翼缘应力图", model, elems, bot, "#228b22");
+        writeDiagramFigure(base + "_stress_top.svg", ttl + " - 上翼缘应力图", model, elems, top, "#1e90ff",
+                           showNodeLabels, showElemLabels);
+        writeDiagramFigure(base + "_stress_bottom.svg", ttl + " - 下翼缘应力图", model, elems, bot, "#228b22",
+                           showNodeLabels, showElemLabels);
     }
 
     std::cout << "已生成图形（SVG）:\n";

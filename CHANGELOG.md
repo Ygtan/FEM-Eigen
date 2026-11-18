@@ -2,6 +2,36 @@
 
 本文件记录 FEM-Eigen 项目的新增功能和主要修改内容。
 
+## 2026-11-18
+
+### 变更：BridgeStudio 建造器切换紧凑分块编号（Bridge 侧改动 / 冻结证据刷新）
+
+BridgeStudio 按用户拍板方案 A，把 5 个 3D 建造器
+（`grillage_3d` / `arch_3d` / `cable_stayed_3d` / `suspension_3d` / `truss_3d`）
+的节点号与单元号统一改为紧凑分块：唯一分配入口
+`block_numbering.BlockNumbering.allocate()`；首组从 1 起，后续组数量 ≥50
+（主梁、拱肋、主缆等主要构件）按「已用最大号百位取整 +1」起编，数量 <50
+按「十位取整 +1」起编，组内连续。2D 建造器与 beam / ps_beam / arch / truss /
+beam_bridge 输出不变。规则与组顺序登记见 BridgeStudio 接入约定文档 §5.1/§5.2。
+
+**数值依据（为什么力学结果逐位不变）**：节点号与单元号只是拓扑标签，
+只出现在 `.dat` 的节点 / 单元 / 连接关系标识字段；它们不进刚度矩阵 K、
+质量矩阵 M、荷载向量 f，也不进任何本构、积分权重或等效荷载公式。求解器
+按节点坐标与单元连接关系组装，编号只用于查表定位，其数值大小与连续性
+不影响任何浮点运算。阶段激活集合与张拉链按元素元数据（线号+段号 / 断面 x）
+定位、不从单元号反解，链的首尾相接与激活覆盖在新编号下重新验证通过。
+
+**冻结证据刷新边界**：
+- 5 个 3D 建造器默认 `.dat` 的编号文本改变 → `BridgeStudio/verify_stage_tension_3d.py`
+  的 `DEFAULT_DAT_SHA` 12 个哈希刷新 5 个（arch_3d / truss_3d / grillage3d /
+  cable_stayed / suspension），其余 7 个不变。
+- `dat_byte_regression` 37/37 不受影响：这 37 份基线是 FEM-Eigen 自带输入、
+  不由 BridgeStudio 建造器生成；本次未改 FEM-Eigen 源码与自带输入，已重跑
+  CTest 37/37 全绿。已归档的 `.dat` / `.result` / benchmark 证据仍按原字节
+  保留，不与新默认输出混用，旧结果无需重算。
+- BridgeStudio 守卫：`verify_stage_tension_3d.py` 85/85、
+  `verify_x20_contract.py` 92/92 全绿。
+
 ## 2026-11-17
 
 ### 修复：跨机环境缺陷 —— 一键可复现构建（`configure_build.ps1`）
