@@ -1,0 +1,25 @@
+{
+  "frozen_sha256": {
+    "dual_susp_case.dat": "081da42c2a835ea4ab151327286bfaca48467f097aea833c3ef8b3735360a2f8",
+    "single_susp_case.dat": "3d2a1c5fe82d6979ebe455f435b462a76fda1c287ed779f81cf7a438abac2a6a"
+  },
+  "dual": {
+    "converged": 1,
+    "susp_plane_count": 2,
+    "plane_1_H_kN": 126953.0,
+    "plane_2_H_kN": 126953.0,
+    "cables": 410,
+    "main_cable_segments": 104,
+    "hanger_count": 101,
+    "sag_m": 100.0
+  },
+  "single": {
+    "converged": 1,
+    "susp_plane_count": 0,
+    "cables": 205,
+    "main_cable_segments": 104,
+    "hanger_count": 101,
+    "H_kN": 226953.0
+  },
+  "note": "1000 m 地锚式悬索桥，同一几何分别建单索面 / 双主缆（y=±B/2），由 BridgeStudio ModelDoc.from_text 生成并按字节冻结。双索面 plane_1/plane_2 独立找形，H 相等；cfg.mainCable 仍保持单链语义，全部索只在 cfg.cables 登记，避免施工阶段 findErectionState 把两链接成一条而误报不连续。"
+}

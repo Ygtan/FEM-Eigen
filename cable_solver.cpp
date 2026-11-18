@@ -260,6 +260,15 @@ struct StabilityCfg {
     std::vector<std::tuple<int, int, double>> incLoads;
 };
 
+// 双索面悬索桥的附加索面。plane 0 始终用 Cfg 原有的 tower1/tower2/
+// mainCable/hangers 字段（旧 .dat 逐字节不变）；planes[i] (i>=1) 来自
+// *SUSP_BRIDGE_PLANE_{i+1} 段，只在 opt-in 时参与找形。
+struct SuspPlane {
+    int tower1 = 0, tower2 = 0;
+    std::vector<int> mainCable;   // 主缆单元，按链序：锚→塔1→塔2→锚
+    std::vector<int> hangers;     // 吊索单元
+};
+
 struct Cfg {
     std::string mode = "COMPLETION";
     int nlSteps = 3;
@@ -295,6 +304,8 @@ struct Cfg {
     int tower1 = 0, tower2 = 0;     // 两个塔顶节点
     std::vector<int> mainCable;     // 主缆单元（按链序：锚→塔1→塔2→锚）
     std::vector<int> hangers;       // 吊索单元
+    // ---- 双索面 opt-in：附加索面（空 = 单索面，既有 .dat 不受影响）----
+    std::vector<SuspPlane> planes;
     double deckE0 = 0.0, deckE1 = 1e300;  // 加劲梁单元号区间（输出轴力用）
     // ---- 悬索桥施工阶段（*ERECTION）----
     bool erection = false;          // 是否做施工阶段模拟
@@ -313,6 +324,21 @@ Cfg readCfg(const std::string& path) {
     std::ifstream in(path);
     if (!in) throw std::runtime_error("无法打开输入文件: " + path);
     std::string line, sec;
+    // 段名可选后缀 _n 表示第 n 个索面（n>=2）；无后缀即 plane 0。
+    auto planeIdx = [](const std::string& s, const char* prefix) -> int {
+        const std::string p = std::string(prefix) + "_";
+        if (s.size() > p.size() && s.compare(0, p.size(), p) == 0) {
+            const int n = std::atoi(s.c_str() + p.size());
+            return n >= 2 ? n - 1 : 0;
+        }
+        return 0;
+    };
+    auto ensurePlane = [&](int idx) -> SuspPlane& {
+        if (idx < 0) idx = 0;
+        if (c.planes.size() <= static_cast<std::size_t>(idx))
+            c.planes.resize(static_cast<std::size_t>(idx) + 1);
+        return c.planes[static_cast<std::size_t>(idx)];
+    };
     while (std::getline(in, line)) {
         if (line.empty() || line[0] == '#' || line[0] == '!') continue;
         if (line[0] == '*') {
@@ -386,7 +412,10 @@ Cfg readCfg(const std::string& path) {
             double val = 0.0;
             if (ss >> nd >> dof >> val)
                 c.stability.incLoads.emplace_back(nd, dof, val);
-        } else if (sec == "SUSP_BRIDGE") {
+        } else if (sec == "SUSP_BRIDGE" ||
+                   sec.rfind("SUSP_BRIDGE_PLANE_", 0) == 0) {
+            const int pi = planeIdx(sec, "SUSP_BRIDGE_PLANE");
+            SuspPlane& pl = ensurePlane(pi);
             std::istringstream ss(line);
             std::string kv;
             while (ss >> kv) {
@@ -394,18 +423,25 @@ Cfg readCfg(const std::string& path) {
                 if (p == std::string::npos) continue;
                 const std::string key = upper(kv.substr(0, p));
                 const std::string val = kv.substr(p + 1);
-                if (key == "SYSTEM") c.system = upper(val);
-                else if (key == "SAG") c.sag = std::stod(val);
-                else if (key == "SAGRATIO") c.sagRatio = std::stod(val);
-                else if (key == "TOWER1") c.tower1 = std::stoi(val);
-                else if (key == "TOWER2") c.tower2 = std::stoi(val);
-                else if (key == "DECKE0") c.deckE0 = std::stod(val);
-                else if (key == "DECKE1") c.deckE1 = std::stod(val);
+                if (key == "SYSTEM") { if (pi == 0) c.system = upper(val); }
+                else if (key == "SAG") { if (pi == 0) c.sag = std::stod(val); }
+                else if (key == "SAGRATIO") { if (pi == 0) c.sagRatio = std::stod(val); }
+                else if (key == "TOWER1") {
+                    pl.tower1 = std::stoi(val); if (pi == 0) c.tower1 = pl.tower1;
+                } else if (key == "TOWER2") {
+                    pl.tower2 = std::stoi(val); if (pi == 0) c.tower2 = pl.tower2;
+                } else if (key == "DECKE0") { if (pi == 0) c.deckE0 = std::stod(val); }
+                else if (key == "DECKE1") { if (pi == 0) c.deckE1 = std::stod(val); }
                 else std::fprintf(stderr, "[警告] *SUSP_BRIDGE 未知关键字: %s\n",
                                   kv.c_str());
             }
-        } else if (sec == "MAINCABLE" || sec == "HANGER") {
-            auto& dst = (sec == "MAINCABLE") ? c.mainCable : c.hangers;
+        } else if (sec == "MAINCABLE" || sec == "HANGER" ||
+                   sec.rfind("MAINCABLE_", 0) == 0 ||
+                   sec.rfind("HANGER_", 0) == 0) {
+            const bool isMain = sec.rfind("MAINCABLE", 0) == 0;
+            const int pi = planeIdx(sec, isMain ? "MAINCABLE" : "HANGER");
+            SuspPlane& pl = ensurePlane(pi);
+            auto& dst = isMain ? pl.mainCable : pl.hangers;
             std::istringstream ss(line);
             int id = 0;
             while (ss >> id) dst.push_back(id);   // 一行多个也可
@@ -424,6 +460,13 @@ Cfg readCfg(const std::string& path) {
             }
             c.erection = true;
         }
+    }
+    // plane 0 同步回兼容字段：无后缀段与带后缀 _1 段走同一条求解路径。
+    if (!c.planes.empty()) {
+        c.tower1 = c.planes[0].tower1;
+        c.tower2 = c.planes[0].tower2;
+        c.mainCable = c.planes[0].mainCable;
+        c.hangers = c.planes[0].hangers;
     }
     return c;
 }
@@ -902,6 +945,9 @@ struct SuspFit {
     std::map<int, double> T;       // 单元 → 目标索力（主缆分段 + 吊索）
     std::map<int, int> hangerDeck; // 吊索单元 → 梁侧节点
     double V0Main = 0.0, V0Side1 = 0.0, V0Side2 = 0.0;
+    // 每个索面各自的 H（N）。单索面只有 1 项；双索面有 2 项。
+    // 原有 fit.H 仍等于 planeH[0]，旧报告段一字不变。
+    std::vector<double> planeH;
 };
 
 // 某节点的竖向荷载合计（向下为正）
@@ -1367,10 +1413,40 @@ int main(int argc, char** argv) {
                     "悬索桥不支持 MODE=STATIC：主缆线形必须由找形确定，"
                     "不能用 .dat 里的几何直接做静力分析。请用 COMPLETION。");
             fit = formFindSuspension(m, cfg);
+            fit.planeH.push_back(fit.H);
+            // 双索面附加平面：每个索面独立找形（各自 H、各自索多边形），
+            // 把索力 / 新高程 / 吊索映射合入同一份 fit；cfg 的索列表同步
+            // 扩充，使后续 *CABLE 填充、索力校核、[MAINCABLE]/[HANGER]
+            // 输出覆盖全部索面。默认单索面不进本循环，逐字节不变。
+            for (std::size_t pi = 1; pi < cfg.planes.size(); ++pi) {
+                const SuspPlane& pl = cfg.planes[pi];
+                if (pl.mainCable.empty() || pl.hangers.empty()) continue;
+                Cfg pc = cfg;
+                pc.tower1 = pl.tower1;
+                pc.tower2 = pl.tower2;
+                pc.mainCable = pl.mainCable;
+                pc.hangers = pl.hangers;
+                SuspFit pf = formFindSuspension(m, pc);
+                fit.T.insert(pf.T.begin(), pf.T.end());
+                fit.zNew.insert(pf.zNew.begin(), pf.zNew.end());
+                fit.hangerDeck.insert(pf.hangerDeck.begin(), pf.hangerDeck.end());
+                fit.planeH.push_back(pf.H);
+                // 不要把附加平面并进 cfg.mainCable / cfg.hangers：下游
+                // findErectionState、[MAINCABLE] 输出与索段校核都把它当作
+                // **一条连续主缆链**，混入第二平面会在两链接缝处误报
+                // "主缆单元 xxx 与链端节点 yyy 不连续"。附加平面的索力只进
+                // fit.T，最后在 cfg.cables 里单独登记。默认单索面不受影响。
+            }
             // 目标索力全部由找形与荷载推出；*CABLE 段里写的力不再采用
             cfg.cables.clear();
             for (int id : cfg.mainCable) cfg.cables.push_back({id, 0, fit.T[id]});
             for (int id : cfg.hangers)   cfg.cables.push_back({id, 0, fit.T[id]});
+            for (std::size_t pi = 1; pi < cfg.planes.size(); ++pi) {
+                for (int id : cfg.planes[pi].mainCable)
+                    cfg.cables.push_back({id, 0, fit.T[id]});
+                for (int id : cfg.planes[pi].hangers)
+                    cfg.cables.push_back({id, 0, fit.T[id]});
+            }
             std::printf("悬索桥找形：H=%.1f kN  矢高 %.3f m（目标 %.3f m，矢跨比 1/%.1f）\n",
                         fit.H / 1e3, fit.sag, fit.sagTarget,
                         fit.sag > 0 ? fit.span / fit.sag : 0.0);
@@ -2114,6 +2190,13 @@ int main(int argc, char** argv) {
                          (cfg.deckLoad - sumV) / 1e3);
 
         if (susp) {
+            // 每索面 H：只在双索面时追加，单索面的既有行顺序逐字不变。
+            if (fit.planeH.size() > 1) {
+                std::fprintf(f, "susp_plane_count=%zu\n", fit.planeH.size());
+                for (std::size_t pi = 0; pi < fit.planeH.size(); ++pi)
+                    std::fprintf(f, "plane_%zu_H_kN=%.6g\n", pi + 1,
+                                 fit.planeH[pi] / 1e3);
+            }
             std::fprintf(f, "susp_system=%s H_kN=%.6g sag_m=%.6g sag_target_m=%.6g\n",
                          cfg.system.c_str(), fit.H / 1e3, fit.sag, fit.sagTarget);
             std::fprintf(f, "span_m=%.6g sag_ratio=%.6f main_cable_segments=%d\n",

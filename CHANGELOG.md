@@ -4,6 +4,35 @@
 
 ## 2026-11-18
 
+### 新增：双索面 3D opt-in 与双主缆悬索找形（Bridge 侧改动 + 内核多平面）
+
+BridgeStudio 侧：自然语言须**同时**出现「三维/空间/偏载/扭转/横向分布」之一与
+「双索面/双主缆」才镜像为双索面；仅写「双索面」仍默认 2D、不建第二索面。
+新增 `dual_plane_3d.mirror_to_dual_plane()`：把既定单索面网格镜像到
+`y=±B/2`，主梁与塔截面分半、荷载与索力分半，索/吊杆/拱肋截面不分半但数量
+翻倍；横梁按对应主梁段的首次激活阶段逐根激活（首阶段一次性全激活会让未安装
+节点只连一根 y 向梁、矩阵奇异）。斜拉 / 悬索 / 拱三桥型均已打通。
+
+FEM 内核：`cable_solver.cpp` 新增 `SuspPlane` 与
+`*SUSP_BRIDGE_PLANE_2` / `*MAINCABLE_2` / `*HANGER_2` 解析，各索面独立找形；
+`input_format_3d.md` 已登记多平面段口径。
+
+**数值依据（为什么默认结果逐位不变）**：单平面时 `cfg.planes` 不含附加平面、
+`fit.planeH.size()==1`，不进入附加索面循环；报告新行由 `fit.planeH.size() > 1`
+门控，单平面 `.dat` 与 `_cable.txt` 行顺序、取值逐字节不变。附加平面的索
+**不并入** `cfg.mainCable` 单链——否则下游施工阶段 `findErectionState` 会把两条
+链当成一条，在接缝处误报「主缆单元 703 与链端节点 303 不连续」（已复现并修复，
+守卫锁住 `cfg.mainCable.insert(...)` 不得回归）。
+
+**冻结证据与回归**：
+- `DEFAULT_DAT_SHA` 12 格不刷新、37 格 `dat_byte_regression` 与既有 CTest 不受影响；
+- 新增第 38 项 CTest（双主缆 1000 m 地锚式）：两平面 H 均为 `126953.0 kN`、
+  `cables=410 = 2×(104+101)`、矢高 `100 m`；单索面对照 `cables=205`、
+  `H=226953.0 kN`、输出不含 `susp_plane_count`；冻结输入 sha256 前 16 位
+  `081da42c2a835ea4` / `3d2a1c5fe82d6979`；
+- BridgeStudio 新增 `verify_dual_plane_3d.py`（45/45），锁住 opt-in 口径、镜像
+  几何、报告分支与默认零污染。
+
 ### 变更：BridgeStudio 建造器切换紧凑分块编号（Bridge 侧改动 / 冻结证据刷新）
 
 BridgeStudio 按用户拍板方案 A，把 5 个 3D 建造器

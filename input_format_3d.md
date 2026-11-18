@@ -456,6 +456,36 @@ SYSTEM=EARTH TOWER1=3007 TOWER2=4007 SAG=30.0 DECKE0=1001 DECKE1=1060
 按这个顺序积分索多边形；顺序错了，找形出来的 H 与线形都是错的。
 `*HANGER` 每根吊索必须一端接主缆、一端接加劲梁。
 
+#### 双主缆 / 多索面（opt-in）
+
+第二索面用带 `_n`（`n≥2`）后缀的段登记，无后缀段永远是 plane 1：
+
+```text
+*SUSP_BRIDGE
+SYSTEM=EARTH TOWER1=... TOWER2=... SAG=... DECKE0=... DECKE1=...
+*MAINCABLE
+301 302 ... 400          ← 第一索面主缆链（单链语义）
+*HANGER
+201 202 ... 280
+*SUSP_BRIDGE_PLANE_2
+TOWER1=... TOWER2=...    ← 第二索面塔顶节点
+*MAINCABLE_2
+701 702 ... 800          ← 第二索面主缆链，同样严格按链序
+*HANGER_2
+601 602 ... 680
+```
+
+- 每个索面**各自找形**：各自的 H、索多边形与吊索映射，结果合并进同一份
+  `[CABLE]` / `[MAINCABLE]` / `[HANGER]` 输出。
+- 结果头部**仅在多平面时**追加 `susp_plane_count=` 与 `plane_n_H_kN=`；
+  单平面的既有行顺序与取值逐字节不变。
+- 实现约束：附加平面的索**不并入** `cfg.mainCable` / `cfg.hangers`。
+  下游施工阶段 `findErectionState`、主缆段校核与 `[MAINCABLE]` 输出都把
+  它们当作**一条连续链**；混入第二平面会在两链接缝处误报"不连续"。
+  全部平面的索力只在 `cfg.cables` 中登记。
+- `*SUSP_BRIDGE_PLANE_n` 只需要 `TOWER1` / `TOWER2`；`SYSTEM` / `SAG` /
+  `DECKE0` / `DECKE1` 仍由 plane 1 段给出，各索面共用。
+
 **两条硬校验**（违反直接报错退出，不静默计算）：
 
 1. `TOWER1` / `TOWER2` 指到的节点上必须有梁单元。主缆若在塔顶旁边另建

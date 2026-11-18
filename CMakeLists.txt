@@ -602,6 +602,22 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(unstressed_curvature_3d_benchmark PROPERTIES
         TIMEOUT 900
         LABELS "benchmark")
+
+    # 第 38 项：双主缆悬索桥 benchmark（双索面 3D opt-in）。
+    # 冻结双/单索面两份 .dat；当前 cable_solver.exe 重放断言两平面独立
+    # 找形、H 相等、全部索登记（2×(主缆段+吊索)）；单索面输出不得出现
+    # susp_plane_count（默认零污染）。源码契约锁住「附加平面索不并入
+    # cfg.mainCable 单链」——否则施工阶段 findErectionState 会把两条链
+    # 当成一条并在接缝处误报不连续。离线，不跑 ANSYS。
+    add_test(NAME dual_plane_suspension_3d_benchmark
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/dual_plane_suspension_3d/compare_dual_plane_suspension_3d.py
+                     --bin ${CMAKE_CURRENT_BINARY_DIR}
+                     --cases ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/dual_plane_suspension_3d/cases
+                     --reference ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/dual_plane_suspension_3d/reference)
+    set_tests_properties(dual_plane_suspension_3d_benchmark PROPERTIES
+        TIMEOUT 900
+        LABELS "benchmark")
 else()
     message(STATUS "未找到 Python3，跳过 .dat 逐字节回归 CTest")
 endif()
