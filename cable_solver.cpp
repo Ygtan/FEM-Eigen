@@ -1105,8 +1105,11 @@ SuspFit formFindSuspension(Model3D& m, const Cfg& cfg) {
     // 也拿不到该拿的力。求解照样收敛、位移与倾角都"看着像座桥"，只有索力
     // 掉到设计值的百分之一、吊索全部松弛、桥面被迫自己受弯。不报错的错最贵，
     // 所以这里直接拦。
+    // 索鞍顶推 opt-in：主缆端节点 C 与塔顶结构节点 T 故意拆开，二者经 CE
+    // 耦合（UX(C)−UX(T)=Δ 等），塔仍通过 CE 参与受力，不违反本校验的本意。
+    // m.ces 为空时判断完全不变——既有算例零污染。
     for (int tn : {cfg.tower1, cfg.tower2})
-        if (!hasBeamAt(m, tn))
+        if (!hasBeamAt(m, tn) && m.ces.empty())
             throw std::runtime_error(
                 "TOWER1/TOWER2 = " + std::to_string(tn) +
                 " 上没有梁单元：主缆必须与桥塔**共用同一个节点**，不能在塔顶旁边"

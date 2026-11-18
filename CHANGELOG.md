@@ -4,6 +4,27 @@
 
 ## 2026-11-18
 
+### 新增：3D 约束方程（索鞍顶推口径 C）——第 39 项 CTest
+
+按用户 `c，c`（口径 C + 全链路）在三维内核补齐约束方程 CE，用于悬索桥
+**索鞍顶推**（主缆端相对塔顶纵向滑移 Δ）。
+
+- **数学**：`Σci·u(ni,di)=b`，罚函数 `Π=½·p·(Σci·ui−b)²`，
+  `K+=p·ck·cj`、`Fint+=p·ck·(Σci·ui−b)`；常数项只进内力侧（曾因同时进
+  `Fext` 导致顶推量翻倍 2b，已修并留回归）。`K0/F0` 同步，支反力含 CE 贡献。
+- **线性 `fem_3d.hpp`**：`Model3D` 增 `ConstraintEquation/Term/ces/cePenalty`，
+  `assembleModel3D` 装配，`parseModel3D` 解析 `*CE_PARAMETER`/`*CE`（dof 1~6）。
+- **非线性 `fem_3d_nl.hpp`**：`solveModel3DNonlinear` 的 assemble 注入 CE 内力
+  与刚度（位置固定、不进单调 pattern，符号分解可复用）；零刚度诊断在 CE 装配后。
+- **找形 `cable_solver.cpp`**：`TOWER1/TOWER2 必须有梁单元`校验在 `m.ces` 非空
+  时豁免（顶推时塔经 CE 受力；空 CE 时判断完全不变）。
+- **`input_format_3d.md`**：新增 3D `*CE` 章节（与 2D §7.10 同语法，dof 上限 6）。
+- **第 39 项 CTest `ce_3d_constraint_equations`**：独立构造三节点模型
+  （塔顶结构 T / 索鞍孤立 S / 主缆端 C），覆盖线性+非线性两路径顶推命中、
+  缆鞍固结、无效 dof 拒绝、重复系数合并、空 CE 确定性。离线、不跑 ANSYS。
+- **零污染**：`ces` 为空时装配早退、`.dat` 无新增段；既有 38 项 CTest 与
+  12+37 格冻结哈希均不受影响。BridgeStudio 侧守卫 `verify_saddle_ce.py` 30/30。
+
 ### 新增：双索面 3D opt-in 与双主缆悬索找形（Bridge 侧改动 + 内核多平面）
 
 BridgeStudio 侧：自然语言须**同时**出现「三维/空间/偏载/扭转/横向分布」之一与

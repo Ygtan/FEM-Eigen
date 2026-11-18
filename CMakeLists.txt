@@ -131,6 +131,15 @@ add_test(NAME analytical_exact_solutions_3d COMMAND test_3d)
 add_test(NAME nonlinear_co_rotational_3d COMMAND test_3d_nl)
 add_test(NAME shape_sensitivity_3d COMMAND test_shape_sensitivity_3d)
 
+# 第 39 项：3D 约束方程（索鞍顶推口径 C）内核验收。
+# 独立构造三节点模型，覆盖线性/非线性两条求解路径的 CE 顶推命中、
+# 缆鞍固结、无效 dof 拒绝、重复系数合并、空 CE 确定性。离线、不跑 ANSYS。
+fem_add_executable(ce_3d_benchmark ce_3d_benchmark.cpp)
+add_test(NAME ce_3d_constraint_equations COMMAND ce_3d_benchmark)
+set_tests_properties(ce_3d_constraint_equations PROPERTIES
+    TIMEOUT 300
+    LABELS "benchmark")
+
 # .dat 逐字节回归比对：用当前构建重算 verify_*.dat，并与其黄金基线逐字节比对。
 # 依赖 Python3；未安装时仅跳过该测试，不影响编译与其它测试。
 find_package(Python3 QUIET COMPONENTS Interpreter)

@@ -1005,6 +1005,44 @@ inline NonlinearResult3D solveModel3DNonlinear(const Model3D& m,
         if (d2 >= 0) Fext(d2) += half;
     }
 
+    // ---- 约束方程 CE（索鞍顶推 opt-in，与线性内核 fem_3d.hpp 同数学）----
+    // Π=½·p·(Σci·ui−b)² ⇒ 内力侧 Fint(d) += p·ck·(Σci·ui−b)，
+    // 刚度侧 K(dk,dj) += p·ck·cj；常数项 p·ck·b 作为外力进 Fext（同源 K0/F0）。
+    // m.ces 为空时本段零开销——既有算例逐位不变。
+    const double cePenalty = [&]() -> double {
+        if (m.ces.empty()) return 0.0;
+        if (m.cePenalty > 0.0) return m.cePenalty;   // 与 effectiveCePenalty3D 一致
+        DofMap3D dmCe = dm;                          // assembleStiffness3D 取非 const 引用
+        const SparseMat3D Kst = assembleStiffness3D(m, dmCe);
+        const double md = Kst.diagonal().cwiseAbs().maxCoeff();
+        return 1e8 * (md > 0.0 ? md : 1.0);
+    }();
+    struct CeDofTerm { int dof; double coef; };
+    struct CeEntry { std::vector<CeDofTerm> terms; double b; };
+    std::vector<CeEntry> ceEntries;
+    if (!m.ces.empty()) {
+        for (const auto& ce : m.ces) {
+            std::map<int, double> cmap;
+            for (const auto& t : ce.terms) {
+                if (t.dof < 1 || t.dof > 6)
+                    throw std::runtime_error("CE " + std::to_string(ce.id)
+                                             + " 自由度必须在 1~6 之间");
+                const int d = dm.safeDof(t.node, t.dof - 1);
+                if (d < 0)
+                    throw std::runtime_error("CE " + std::to_string(ce.id)
+                                             + " 引用了节点 " + std::to_string(t.node)
+                                             + " 不存在的自由度 " + std::to_string(t.dof));
+                cmap[d] += t.coef;
+            }
+            CeEntry en; en.b = ce.constant;
+            // 常数项只进内力侧（见 assemble 的 Σci·ui−b），不要再进 Fext，
+            // 否则平衡时得 Σci·ui=2b（顶推量翻倍）。
+            for (const auto& [d, c] : cmap)
+                if (c != 0.0) en.terms.push_back({d, c});
+            ceEntries.push_back(std::move(en));
+        }
+    }
+
     // Newton 迭代用的可复用分解（整个求解只 compute 一次，其余 refactorize）
     std::unique_ptr<Factorization3D> fac;
 
@@ -1066,12 +1104,25 @@ inline NonlinearResult3D solveModel3DNonlinear(const Model3D& m,
         }
         // 弹性支承：内力侧为 k·u（等效外荷载 k·value 已计入 Fext）
         for (const auto& s : springs) Fint(s.dof) += s.k * u(s.dof);
+        // 约束方程 CE：内力侧 p·ck·(Σci·ui−b)；常数项 p·ck·b 已在 Fext。
+        for (const auto& en : ceEntries) {
+            double sum = -en.b;
+            for (const auto& t : en.terms) sum += t.coef * u(t.dof);
+            for (const auto& t : en.terms)
+                Fint(t.dof) += cePenalty * t.coef * sum;
+        }
         if (wantK) {
             // 注意：K 在这里才被构造，弹簧的对角项必须放在构造之后写入，
             // 否则会写到默认构造的 0×0 矩阵上。
             K = SparseMat3D(nd, nd);
             K.setFromTriplets(trips.begin(), trips.end());
             for (const auto& s : springs) K.coeffRef(s.dof, s.dof) += s.k;
+            // CE 刚度：K(dk,dj) += p·ck·cj（位置固定，不进单调 pattern，
+            // 故 Newton 复用符号分解时结构不变）。
+            for (const auto& en : ceEntries)
+                for (const auto& a : en.terms)
+                    for (const auto& b : en.terms)
+                        K.coeffRef(a.dof, b.dof) += cePenalty * a.coef * b.coef;
             K.makeCompressed();
         }
     };

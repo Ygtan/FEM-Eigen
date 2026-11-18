@@ -294,6 +294,23 @@ struct Model3D {
     std::vector<Constraint3D> constraints;
     std::vector<std::tuple<int, int, double>> loads; // node, dof, value
 
+    // ---- 约束方程 CE（索鞍顶推等相对位移工况；opt-in，默认空 → 逐位不变）----
+    // 语义与 2D 完全一致：sum(coef_i * u(node_i, dof_i)) = constant。
+    // 3D 自由度 dof ∈ 1~6（UX/UY/UZ/ROTX/ROTY/ROTZ）；只有该节点确实拥有该
+    // 自由度时（见 DofMap3D.safeDof）才装配，纯轴向节点的转动项会被拒绝。
+    struct ConstraintEquationTerm {
+        int node = 0;
+        int dof = 0;
+        double coef = 0.0;
+    };
+    struct ConstraintEquation {
+        int id = 0;
+        double constant = 0.0;
+        std::vector<ConstraintEquationTerm> terms;
+    };
+    std::vector<ConstraintEquation> ces;
+    double cePenalty = 1e12;   // CE 罚系数；<=0 时按 max(kdiag)*1e8 自适应
+
     // ---- 3D 单元分布荷载 / 自重（与 fem_2d.hpp 的同类字段同构）----
     // 默认全空 / 全零：不含这些关键字的旧 .dat 结果与改造前逐位一致。
     // 特别注意 g 默认是 0，而 2D 的 gy 默认 -9.81；3D 必须显式写 *GRAVITY
@@ -830,6 +847,13 @@ inline Eigen::VectorXd elementEquivalentLoad3D(const Model3D& m, const Element3D
     return fe;
 }
 
+// CE 罚系数：用户给正值直接用；<=0 时按结构最大对角刚度自适应（与 2D 一致）。
+inline double effectiveCePenalty3D(const SparseMat3D& K, double userPenalty) {
+    if (userPenalty > 0.0) return userPenalty;
+    const double md = K.diagonal().cwiseAbs().maxCoeff();
+    return 1e8 * (md > 0.0 ? md : 1.0);
+}
+
 inline Assembled3D assembleModel3D(const Model3D& m) {
     Assembled3D a;
     a.dm = buildDofMap3D(m);
@@ -924,6 +948,45 @@ inline Assembled3D assembleModel3D(const Model3D& m) {
         a.K0.coeffRef(d, d) += c.k;
         F(d) += c.k * c.value;
         a.F0(d) += c.k * c.value;
+    }
+
+    // ---- CE 约束方程罚函数装配（opt-in：m.ces 为空时整段跳过，逐位不变）----
+    // 每条 CE：sum(coef_i·u_i) = constant。罚函数 Π=½·p·(Σci·ui−b)²，
+    // 对 K 加 p·ci·cj，对 F 加 p·b·ci。必须同时写 K0/F0，否则 K0*U−F0
+    // 算出的支座反力会漏掉 CE 那部分。自由度经 safeDof 取（纯轴向节点无转动
+    // 自由度时返回 -1，直接拒绝并给出 CE 编号，避免静默丢项）。
+    if (!m.ces.empty()) {
+        const double penalty = effectiveCePenalty3D(K, m.cePenalty);
+        for (const auto& ce : m.ces) {
+            struct Term { int dof; double coef; };
+            std::vector<Term> terms;
+            std::map<int, double> cmap;   // 合并同 dof 的重复系数
+            for (const auto& t : ce.terms) {
+                if (t.dof < 1 || t.dof > 6)
+                    throw std::runtime_error("CE " + std::to_string(ce.id)
+                        + " 自由度必须在 1~6 之间");
+                const int d = a.dm.safeDof(t.node, t.dof - 1);
+                if (d < 0)
+                    throw std::runtime_error("CE " + std::to_string(ce.id)
+                        + " 引用了节点 " + std::to_string(t.node)
+                        + " 不存在的自由度 " + std::to_string(t.dof));
+                cmap[d] += t.coef;
+            }
+            for (const auto& [d, coef] : cmap) terms.push_back({d, coef});
+            for (const auto& ti : terms)
+                for (const auto& tj : terms) {
+                    const double v = penalty * ti.coef * tj.coef;
+                    if (v != 0.0) {
+                        K.coeffRef(ti.dof, tj.dof) += v;
+                        a.K0.coeffRef(ti.dof, tj.dof) += v;
+                    }
+                }
+            for (const auto& ti : terms) {
+                const double v = penalty * ce.constant * ti.coef;
+                F(ti.dof) += v;
+                a.F0(ti.dof) += v;
+            }
+        }
     }
 
     // 约束：支持非零指定位移（支座沉降）。
@@ -3129,6 +3192,23 @@ inline Model3D readModel3D(const std::string& path) {
                 section = "*PRESTRESS_LOSS";
                 continue;
             }
+            if (kw == "*CE_PARAMETER") {
+                std::string args = (sep == std::string::npos) ? "" : line.substr(sep + 1);
+                std::replace(args.begin(), args.end(), ',', ' ');
+                std::istringstream ss(args);
+                std::string kv;
+                while (ss >> kv) {
+                    if (kv.rfind("PENALTY=", 0) == 0) m.cePenalty = std::stod(kv.substr(8));
+                    else if (kv.rfind("ALPHA=", 0) == 0) m.cePenalty = std::stod(kv.substr(6));
+                }
+                if (m.cePenalty <= 0.0)
+                    throw std::runtime_error("*CE_PARAMETER PENALTY 必须大于 0");
+                continue;
+            }
+            if (kw == "*CE") {
+                section = "*CE";
+                continue;
+            }
             if (kw == "*INFLUENCE_3D" || kw == "*LANE_3D" || kw == "*LANE_SURFACE_3D" || kw == "*ELEMENT_INFLUENCE_3D") {
                 section = line;
                 continue;
@@ -3380,6 +3460,20 @@ inline Model3D readModel3D(const std::string& path) {
             int node,dof; if (ss >> node >> dof) m.influences.push_back({node,dof});
         } else if (section == "*ELEMENT_INFLUENCE_3D") {
             int elem; if (ss >> elem) m.elementInfluences.push_back({elem});
+        } else if (section == "*CE") {
+            Model3D::ConstraintEquation ce;
+            if (!(ss >> ce.id >> ce.constant))
+                throw std::runtime_error("CE 行格式错误: " + line);
+            int node = 0, dof = 0;
+            double coef = 0.0;
+            while (ss >> node >> dof >> coef) {
+                if (dof < 1 || dof > 6)
+                    throw std::runtime_error("CE 自由度必须在 1~6 之间");
+                ce.terms.push_back({node, dof, coef});
+            }
+            if (ce.terms.empty())
+                throw std::runtime_error("CE 至少需要一个自由度项");
+            m.ces.push_back(ce);
         } else if (section == "*LANE_3D") {
             std::string kv;
             std::string nodes;
