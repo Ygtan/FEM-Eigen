@@ -297,6 +297,11 @@ struct Cfg {
     double sysAdjMax = 1.5;          // 同跨相邻索力比上限
     bool verbose = false;
     std::vector<CableReq> cables;
+    // ---- 协作体系 opt-in（*CABLE_BRIDGE SYSTEM=COOP，默认 false）----
+    // 同一模型含 mainCable/hangers（悬索部分）与 cables（斜拉部分）：
+    // 找形只覆盖主缆/吊索，斜拉索保留 *CABLE 给定目标力。默认 false 时
+    // 所有既有桥型路径逐字节不变；不得用 system 空/非空推断协作。
+    bool cooperative = false;
     // ---- 悬索桥（*SUSP_BRIDGE / *MAINCABLE / *HANGER）----
     std::string system;             // "" = 非悬索桥；"EARTH" 地锚式；"SELF" 自锚式
     double sag = 0.0;               // 主跨矢高 m（>0 时优先于矢跨比）
@@ -378,6 +383,10 @@ Cfg readCfg(const std::string& path) {
                 else if (key == "SYSDECKMAX") c.sysDeckMax = std::stod(val);
                 else if (key == "SYSADJMAX") c.sysAdjMax = std::stod(val);
                 else if (key == "VERBOSE") c.verbose = (std::stod(val) != 0.0);
+                // 协作体系 opt-in：仅 SYSTEM=COOP 置位，其他值不改既有口径。
+                // 悬索锚固类型（EARTH/SELF）仍由 *SUSP_BRIDGE 的 SYSTEM 给，
+                // 两者分属不同段、互不覆盖（规格 §3.1）。
+                else if (key == "SYSTEM") c.cooperative = (upper(val) == "COOP");
                 // ---- B3 [STABILITY] opt-in：全部带独立前缀 / 独立字段 ----
                 else if (key == "STABILITY") c.stability.enabled = (std::stod(val) != 0.0);
                 else if (key == "PATHMETHOD") c.stability.pathMethod = upper(val);
@@ -1409,6 +1418,9 @@ int main(int argc, char** argv) {
         // 找形会改写 m.nodes 的主缆高程（设计线形 = 恒载索形），这是悬索桥
         // 与斜拉桥在求解流程上唯一的实质差别。
         const bool susp = !cfg.system.empty();
+        // 协作体系的悬索索单元集合（主缆 + 吊索，含全部附加索面）。
+        // 非协作时恒为空：下面索力保留分支不进，既有路径逐字节不变。
+        std::set<int> suspElems;
         SuspFit fit;
         if (susp) {
             if (cfg.mode == "STATIC")
@@ -1440,15 +1452,56 @@ int main(int argc, char** argv) {
                 // "主缆单元 xxx 与链端节点 yyy 不连续"。附加平面的索力只进
                 // fit.T，最后在 cfg.cables 里单独登记。默认单索面不受影响。
             }
-            // 目标索力全部由找形与荷载推出；*CABLE 段里写的力不再采用
-            cfg.cables.clear();
-            for (int id : cfg.mainCable) cfg.cables.push_back({id, 0, fit.T[id]});
-            for (int id : cfg.hangers)   cfg.cables.push_back({id, 0, fit.T[id]});
-            for (std::size_t pi = 1; pi < cfg.planes.size(); ++pi) {
-                for (int id : cfg.planes[pi].mainCable)
-                    cfg.cables.push_back({id, 0, fit.T[id]});
-                for (int id : cfg.planes[pi].hangers)
-                    cfg.cables.push_back({id, 0, fit.T[id]});
+            // 协作体系（SYSTEM=COOP）：只清属于悬索部分的索，保留斜拉索
+            // 的 *CABLE 目标索力。两类索都是"给定目标索力"，统一走下面的
+            // 无应力索长反算闭环，无需另造联合迭代（规格 §3.2）。
+            if (cfg.cooperative) {
+                for (int id : cfg.mainCable) suspElems.insert(id);
+                for (int id : cfg.hangers)   suspElems.insert(id);
+                for (const auto& pl : cfg.planes) {
+                    for (int id : pl.mainCable) suspElems.insert(id);
+                    for (int id : pl.hangers)   suspElems.insert(id);
+                }
+                std::vector<CableReq> stay;   // 斜拉索：目标力必须显式给定
+                for (const auto& r : cfg.cables) {
+                    if (suspElems.count(r.elem)) {
+                        // 编号冲突：同一单元既在 *CABLE 又在悬索索列表
+                        throw std::runtime_error(
+                            "协作体系编号冲突：单元 " + std::to_string(r.elem)
+                            + " 同时登记在 *CABLE 与悬索索（主缆/吊索）");
+                    }
+                    if (r.tension <= 0.0)
+                        throw std::runtime_error(
+                            "协作体系斜拉索必须给目标索力: 单元 "
+                            + std::to_string(r.elem));
+                    stay.push_back(r);
+                }
+                if (stay.empty())
+                    throw std::runtime_error(
+                        "协作体系 SYSTEM=COOP 要求 *CABLE 段给出至少一根斜拉索");
+                cfg.cables.clear();
+                for (int id : cfg.mainCable) cfg.cables.push_back({id, 0, fit.T[id]});
+                for (int id : cfg.hangers)   cfg.cables.push_back({id, 0, fit.T[id]});
+                for (std::size_t pi = 1; pi < cfg.planes.size(); ++pi) {
+                    for (int id : cfg.planes[pi].mainCable)
+                        cfg.cables.push_back({id, 0, fit.T[id]});
+                    for (int id : cfg.planes[pi].hangers)
+                        cfg.cables.push_back({id, 0, fit.T[id]});
+                }
+                for (const auto& r : stay) cfg.cables.push_back(r);  // 保留目标力
+                std::printf("协作体系找形：主缆/吊索 %zu 段 + 斜拉索 %zu 根（目标力保留）\n",
+                            suspElems.size(), stay.size());
+            } else {
+                // 目标索力全部由找形与荷载推出；*CABLE 段里写的力不再采用
+                cfg.cables.clear();
+                for (int id : cfg.mainCable) cfg.cables.push_back({id, 0, fit.T[id]});
+                for (int id : cfg.hangers)   cfg.cables.push_back({id, 0, fit.T[id]});
+                for (std::size_t pi = 1; pi < cfg.planes.size(); ++pi) {
+                    for (int id : cfg.planes[pi].mainCable)
+                        cfg.cables.push_back({id, 0, fit.T[id]});
+                    for (int id : cfg.planes[pi].hangers)
+                        cfg.cables.push_back({id, 0, fit.T[id]});
+                }
             }
             std::printf("悬索桥找形：H=%.1f kN  矢高 %.3f m（目标 %.3f m，矢跨比 1/%.1f）\n",
                         fit.H / 1e3, fit.sag, fit.sagTarget,
@@ -1808,6 +1861,64 @@ int main(int argc, char** argv) {
                                      + "（应为 COMPLETION / TENSION / STATIC）");
         }
         elapsed = nowMs() - t0;
+
+        // ---- 协作体系四类残差（规格 §3.3 / §3.7，默认不计算）----
+        // r_main   主缆矢高找形命中：|sag−target|/target
+        // r_stay   斜拉索目标索力命中：max|T−T*|/T*（只对斜拉索）
+        // r_girder 加劲梁变形：closureErr/span（成桥位移/主跨跨度，相对量；
+        //           悬索/协作路径的位移是弹性压缩量级，不能用斜拉桥 TOL=1e-8
+        //           的制造闭合判据，否则 L/7692 的正常压缩会被误判为不合格）
+        // r_tower  塔顶水平力平衡：|ΣH_边跨−ΣH_主跨|/max(ΣH_边跨,ΣH_主跨,eps)
+        // 四类各自报告、各自容差，任一不合格则 coopOk=0（不合并成单一标量）。
+        double rMain = 0.0, rStay = 0.0, rGirder = 0.0, rTower = 0.0;
+        double coopStayHMain = 0.0, coopStayHSide = 0.0;
+        double coopSuspShare = 0.0, coopStayShare = 0.0, coopJointGrad = 0.0;
+        bool coopOk = false;
+        if (cfg.cooperative) {
+            const double tx1 = m.nodes.count(cfg.tower1) ? m.nodes.at(cfg.tower1).x() : 0.0;
+            const double tx2 = m.nodes.count(cfg.tower2) ? m.nodes.at(cfg.tower2).x() : 0.0;
+            const double span = std::abs(tx2 - tx1);
+            rGirder = span > 0.0 ? closureErr / span : 0.0;
+            if (fit.sagTarget > 0.0)
+                rMain = std::abs(fit.sag - fit.sagTarget) / fit.sagTarget;
+            const double spanLo = std::min(tx1, tx2), spanHi = std::max(tx1, tx2);
+            double stayMaxT = 0.0, stayMinT = 1e300, suspV = 0.0, stayV = 0.0;
+            for (std::size_t k = 0; k < nc; ++k) {
+                const Element3D* e = findElem(m, cfg.cables[k].elem);
+                const int A = cfg.cables[k].anchor;
+                const int B = (e->n1 == A) ? e->n2 : e->n1;
+                const Vec3 ev = (m.nodes.at(B) - m.nodes.at(A)).normalized();
+                const double vert = T[k] * ev.z();      // 索对梁的竖向分量（向上为正）
+                if (suspElems.count(cfg.cables[k].elem)) {
+                    suspV += vert;                       // 悬索承担
+                    continue;
+                }
+                // 斜拉索：目标力命中 + 按梁锚点 x 分主跨/边跨，算塔顶水平力
+                const double target = cfg.cables[k].tension;
+                if (target > 0.0) rStay = std::max(rStay, std::abs(T[k] - target) / target);
+                stayMaxT = std::max(stayMaxT, T[k]);
+                stayMinT = std::min(stayMinT, T[k]);
+                stayV += vert;
+                const double Hx = T[k] * std::sqrt(ev.x() * ev.x() + ev.y() * ev.y());
+                const double ax = m.nodes.at(A).x();
+                if (ax >= spanLo && ax <= spanHi) coopStayHMain += Hx;
+                else                                coopStayHSide += Hx;
+            }
+            rTower = std::abs(coopStayHSide - coopStayHMain)
+                     / std::max(std::max(coopStayHMain, coopStayHSide), 1.0);
+            // 恒载份额（索承担的竖向力占索竖向力合计；分母为两者之和）
+            const double totV = suspV + stayV;
+            if (totV > 0.0) {
+                coopSuspShare = 100.0 * suspV / totV;
+                coopStayShare = 100.0 * stayV / totV;
+            }
+            // 交界区索力梯度：斜拉索内 max/min（相邻梯度上界，§3.4）
+            if (stayMinT > 0.0) coopJointGrad = stayMaxT / stayMinT;
+            // 各自容差：主缆矢高 1e-3、斜拉索力 1e-2（内核悬索路径
+            // dev<1e-3 退出，1% 含裕度）、梁变形 1e-3（L/1000）、塔 5%。
+            coopOk = (rMain <= 1e-3 && rStay <= 1e-2
+                      && rGirder <= 1e-3 && rTower <= 0.05);
+        }
 
         std::set<int> hangerSet(cfg.hangers.begin(), cfg.hangers.end());
         double sumT = 0.0, sumV = 0.0, tmin = 1e300, tmax = -1e300;
@@ -2443,6 +2554,27 @@ int main(int argc, char** argv) {
             std::fputs(formatCompletionStabilitySection(
                 useStabilityModel ? stabilityModel : m,
                 u, cfg.stability, converged, dm).c_str(), f);
+        // ---- 协作体系专属段（规格 §3.4，SYSTEM=COOP 时才写）------------
+        // 段头必须登记进 fem_eigen_3d.py::sections，否则会被留在前一段
+        // 污染旧段。非协作不写本段，既有结果文件逐位不变。
+        if (cfg.cooperative) {
+            std::fprintf(f, "[COOPERATIVE]\n");
+            std::fprintf(f, "coop_system=COOP susp_segments=%zu stay_cables=%zu "
+                            "susp_planes=%zu\n",
+                         suspElems.size(),
+                         static_cast<std::size_t>(nc) - suspElems.size(),
+                         cfg.planes.size());
+            std::fprintf(f, "coop_susp_share_pct=%.4f coop_stay_share_pct=%.4f "
+                            "coop_joint_gradient=%.6g\n",
+                         coopSuspShare, coopStayShare, coopJointGrad);
+            std::fprintf(f, "coop_tower_H_main_kN=%.6g coop_tower_H_side_kN=%.6g "
+                            "coop_tower_H_residual_kN=%.6g\n",
+                         coopStayHMain / 1e3, coopStayHSide / 1e3,
+                         rTower * std::max(coopStayHMain, coopStayHSide) / 1e3);
+            std::fprintf(f, "r_main=%.6e r_stay=%.6e r_girder=%.6e r_tower=%.6e "
+                            "coop_ok=%d\n",
+                         rMain, rStay, rGirder, rTower, coopOk ? 1 : 0);
+        }
         std::fprintf(f, "[END]\n");
         std::fclose(f);
 

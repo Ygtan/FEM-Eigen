@@ -1,0 +1,34 @@
+{
+  "_note": "第 40 项 CTest 协作体系 benchmark 冻结值。算例基于 1000 m 地锚式悬索算例加 4 根塔附近斜拉索（601-604），仅作内核机制验证：SYSTEM=COOP 解析、斜拉索目标力保留、四类残差、[COOPERATIVE] 段。斜拉索分担恒载仅 0.13%，非真实均分协作桥；荷载分担比例的真实性属阶段二 combo_3d.py 建造器口径。",
+  "frozen_sha256": {
+    "combo_case.dat": "ad55c4ea112dfddbbc75bdb4d6374972fa6225441b459c764adae2366f1c538b"
+  },
+  "combo": {
+    "converged": 1,
+    "iterations": 17,
+    "H_kN": 226953.0,
+    "sag_m": 100.0,
+    "main_cable_segments": 104,
+    "hanger_count": 101,
+    "cables": 209,
+    "stay_targets_N": {
+      "601": 2000000.0,
+      "602": 3000000.0,
+      "603": 2000000.0,
+      "604": 3000000.0
+    }
+  },
+  "cooperative": {
+    "coop_system": "COOP",
+    "susp_segments": 205,
+    "stay_cables": 4,
+    "susp_planes": 1,
+    "r_main_le": 0.001,
+    "r_stay_le": 0.01,
+    "r_girder_le": 0.001,
+    "r_tower_le": 0.05,
+    "coop_ok": 1,
+    "tower_H_main_kN": 3152.34,
+    "tower_H_side_kN": 3089.84
+  }
+}

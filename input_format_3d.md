@@ -502,6 +502,36 @@ SYSTEM=EARTH TOWER1=3007 TOWER2=4007 SAG=30.0 DECKE0=1001 DECKE1=1060
 | `SAGRATIO` | 矢跨比（`0.1` 表示 1/10）；两者都不给则报错 |
 | `DECKE0` `DECKE1` | 加劲梁单元号区间，只影响 `[GIRDER]` 段的输出范围 |
 
+协作体系（斜拉-悬索）在 `*CABLE_BRIDGE` 段用 `SYSTEM=COOP` 开启：
+
+```text
+*CABLE_BRIDGE
+MODE=COMPLETION
+SYSTEM=COOP
+...
+*SUSP_BRIDGE
+SYSTEM=EARTH TOWER1=... TOWER2=... SAG=... DECKE0=... DECKE1=...
+*MAINCABLE
+...（主缆链，按锚→塔1→塔2→锚）
+*HANGER
+...（吊索）
+*CABLE
+<斜拉索单元号> <锚点节点号> <目标索力 N>   ← 每根必须给正目标索力
+```
+
+- `SYSTEM=COOP` 只属于 `*CABLE_BRIDGE`，表示"斜拉+悬索协作"；`*SUSP_BRIDGE`
+  的 `SYSTEM=EARTH/SELF` 仍表示锚固类型，两者互不覆盖。缺省（不写
+  `SYSTEM=COOP`）走既有纯斜拉/纯悬索路径，输出逐位不变。
+- 斜拉索单元号不得同时出现在 `*MAINCABLE` / `*HANGER`（含 `_n` 附加平面）
+  里，否则报"协作体系编号冲突"；每根 `*CABLE` 必须给正目标索力，否则报
+  "必须给目标索力"。两类错误都显式退出，不静默计算。
+- 悬索找形只覆盖主缆/吊索的目标索力，`*CABLE` 里的斜拉索目标索力**保留**
+  并一起进入既有索长闭环；因此不必另造联合迭代。
+- 结果文件在 `[END]` 前追加 `[COOPERATIVE]` 段（见下），报告四类残差
+  `r_main` / `r_stay` / `r_girder` / `r_tower` 与总判定 `coop_ok`。
+- 该开关为内核 opt-in，BridgeStudio 前处理默认不写；几何/力学口径与阶段二
+  建造器能力见 `BridgeStudio/组合体系接入规格.md`。
+
 `*MAINCABLE` 的单元必须**严格按"锚 → 塔1 → 塔2 → 锚"的链序**排列，内核
 按这个顺序积分索多边形；顺序错了，找形出来的 H 与线形都是错的。
 `*HANGER` 每根吊索必须一端接主缆、一端接加劲梁。
@@ -580,8 +610,16 @@ support_v_sum_kN=... applied_v_kN=... balance_pct=...
 [LENGTH]   KIND/STATUS/ERRKIND/.../I/E/NJ/J（外层索长迭代 / 几何闭合逐轮过程，见下）
 [NEWTON]   KIND/STATUS/STAGE/NSTEP/.../S（内层共转列式 Newton 逐迭代过程，见下）
 [OPT]      KIND/STATUS/OBJECTIVE/.../I/T（带约束成桥目标索力优化，见下）
+[COOPERATIVE] 仅 SYSTEM=COOP 写：coop_system/susp_segments/stay_cables/susp_planes、
+             coop_susp_share_pct/coop_stay_share_pct/coop_joint_gradient、
+             coop_tower_H_main_kN/coop_tower_H_side_kN/coop_tower_H_residual_kN、
+             r_main/r_stay/r_girder/r_tower/coop_ok
 [END]
 ```
+
+`[COOPERATIVE]` 只在协作模式出现；非协作结果文件不含本段，既有段行序与
+取值逐位不变。段头必须登记进 `BridgeStudio/fem_eigen_3d.py::sections`，
+否则四类残差行会被上一段的正则收走、污染旧段。
 
 `[GIRDER]` **只有悬索桥有**，每根加劲梁一行，`N`/`My`/`Vz` **各自**取两端中
 绝对值较大者。它是给曲线和摘要看的——`max|N|` 可能来自 i 端、`max|My|` 来自
@@ -1043,6 +1081,22 @@ T 1 ...            ; <序号> <T0(N)> <T*(N)> <lo(N)> <hi(N)>
 `span_m=` / `sag_ratio=` / `hanger_count` / `girder_N_max_kN` 等。
 悬索桥的 `closure_err` 是**预变形量** `max|u|`（把设计构形放成成桥构形
 需要预加的偏移），不是斜拉桥那个"几何闭合误差"。
+
+协作体系（`SYSTEM=COOP`）另在 `[COOPERATIVE]` 段给四类独立残差，任一
+超容差则 `coop_ok=0`：
+
+| 残差 | 含义 | 容差 |
+|---|---|---|
+| `r_main` | 主缆矢高与水平力找形闭合（`(sag−sag_target)/sag_target`） | `1e-3` |
+| `r_stay` | 斜拉索目标索力命中（各索 `|T−T_target|/T_target` 取最大） | `1e-2` |
+| `r_girder` | 加劲梁变形（相对量 `closure_err/span`，约 L/1000 量级） | `1e-3` |
+| `r_tower` | 塔顶两侧斜拉索水平力不平衡（`|H_side−H_main|/max`） | `0.05` |
+
+`r_girder` 用相对量而非绝对位移：悬索/协作路径的成桥位移是弹性压缩量级，
+不能套斜拉桥几何闭合的 `TOL=1e-8` 绝对判据。`coop_tower_H_residual_kN`
+是塔两侧水平力差的绝对量（kN），供报告直接用；`coop_susp_share_pct` /
+`coop_stay_share_pct` 是暂用的分担比例诊断量，机制验证算例里斜拉索分担
+仅约 0.13%，**不代表真实均分协作桥**，真实比例属阶段二建造器口径。
 
 ---
 

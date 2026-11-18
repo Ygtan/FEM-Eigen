@@ -627,6 +627,22 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(dual_plane_suspension_3d_benchmark PROPERTIES
         TIMEOUT 900
         LABELS "benchmark")
+
+    # 第 40 项：协作体系（斜拉-悬索）benchmark，阶段一内核侧。
+    # 冻结 SYSTEM=COOP 算例：斜拉索目标索力不被悬索找形清空、四类残差
+    # r_main/r_stay/r_girder/r_tower 各自命中、[COOPERATIVE] 段可读、
+    # 缺省目标力与编号冲突显式拒绝；去 SYSTEM=COOP 走既有悬索路径
+    # 输出无该段（默认零污染）。源码契约锁住 cooperative 独立字段与
+    # suspElems 保留集合，并校验 fem_eigen_3d.py::sections 已登记段头。
+    add_test(NAME combo_system_3d_benchmark
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/combo_system_3d/compare_combo_system_3d.py
+                     --bin ${CMAKE_CURRENT_BINARY_DIR}
+                     --cases ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/combo_system_3d/cases
+                     --reference ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/combo_system_3d/reference)
+    set_tests_properties(combo_system_3d_benchmark PROPERTIES
+        TIMEOUT 900
+        LABELS "benchmark")
 else()
     message(STATUS "未找到 Python3，跳过 .dat 逐字节回归 CTest")
 endif()
