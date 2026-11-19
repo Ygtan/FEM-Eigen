@@ -1,0 +1,37 @@
+{
+  "_note": "第 44 项 CTest：梁拱/拱梁组合建造器（阶段二·线性共同受力）端到端冻结证据。由 BridgeStudio beam_arch_3d.py 的 build_beam_arch_3d() 默认参数生成（span=500 m / rise=100 m / n_seg_half=8）：TIED=系杆拱自锚（拱脚与主梁端共用节点，水平推力沿系梁）；EXTERNAL=拱梁组合外部推力（拱脚独立固结，系梁不受轴力）。单位 N/m·N·Pa，线性 3D 内核 example_3d_grillage.exe 重放。",
+  "frozen_sha256": {
+    "beam_arch_tied.dat": "e4124a8a38bf1acd1f43983f54aac57c415ac651a6ed2dd9d631880bd78158b2",
+    "beam_arch_external.dat": "9ec708bbd3d8eda8b9f03779cd213d9f8408b7174256622e663f8c891605128b"
+  },
+  "builder": {
+    "span": 500.0,
+    "rise": 100.0,
+    "n_seg_half": 8,
+    "n_arch_seg": 16,
+    "arch_elems": [1, 16],
+    "deck_elems": [21, 36],
+    "hanger_elems": [41, 55],
+    "hanger_count": 15,
+    "H_theory_kN": 108227.0,
+    "_H_theory_basis": "(q_deck+q2_deck+w_arch)*L^2/(8f)，含拱肋自重；只算桥面恒载会低估约 25%"
+  },
+  "tied": {
+    "deck_N_kN": 109340.0,
+    "arch_foot_N_kN": -135808.0,
+    "arch_mid_N_kN": -109475.0
+  },
+  "external": {
+    "deck_N_kN": 0.0,
+    "arch_foot_N_kN": -136646.0,
+    "arch_mid_N_kN": -108425.0
+  },
+  "tol": {
+    "H_rel_tol": 0.02,
+    "deck_spread_abs_kN": 1.0,
+    "external_deck_abs_kN": 1.0,
+    "symmetry_rel_tol": 0.01,
+    "arch_foot_cross_rel_tol": 0.05,
+    "N_floor_kN": 1000.0
+  }
+}

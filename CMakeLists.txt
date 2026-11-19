@@ -683,6 +683,20 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(combo_3d_builder_benchmark PROPERTIES
         TIMEOUT 900
         LABELS "benchmark")
+
+    # 第 44 项：梁拱 / 拱梁组合建造器（阶段二·线性共同受力）benchmark。
+    # 冻结 beam_arch_3d.py 产出的 TIED / EXTERNAL 两份 .dat，重放线性 3D
+    # 内核：系杆拱系梁受拉 ≈ 含拱肋自重闭式 (q+q2+w)L²/(8f)、拱梁组合
+    # 系梁轴力为 0 而拱脚压力入基础；BUILDERS 仍 12 格、不加内核键。
+    add_test(NAME beam_arch_benchmark
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/beam_arch/compare_beam_arch.py
+                     --bin ${CMAKE_CURRENT_BINARY_DIR}
+                     --cases ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/beam_arch/cases
+                     --reference ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/beam_arch/reference)
+    set_tests_properties(beam_arch_benchmark PROPERTIES
+        TIMEOUT 900
+        LABELS "benchmark")
 else()
     message(STATUS "未找到 Python3，跳过 .dat 逐字节回归 CTest")
 endif()
