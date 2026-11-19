@@ -2795,6 +2795,11 @@ inline std::vector<NLStageResult3D> solveModel3DStagesNonlinear(
     // 单元第一次激活的龄期。规范收缩只计这之后新发展的应变，不把浇筑前的收缩放进平衡。
     std::map<int, double> shrinkBirth;
     int psSeq = 0;
+    // 分级顶推 opt-in：非线性 stage 走全量平衡（loadSum 累加、解总位移 u），
+    // 故 CE constant 必须是累计目标 Δ_i，而 *STAGE 的 CE= 写的是增量 δ_i。
+    // ceB 记录被 CE= 覆盖过的 CE 的历阶段 δ 累加值；未覆盖的 CE 沿用 *CE
+    // 原 constant。默认空 = 不触发、既有算例逐位不变。
+    std::map<int, double> ceB;
     std::vector<NLStageResult3D> out;
 
     for (const auto& st : m.stages) {
@@ -2824,6 +2829,21 @@ inline std::vector<NLStageResult3D> solveModel3DStagesNonlinear(
         Model3D mc;
         mc.nodes = m.nodes;
         mc.constraints = m.constraints;
+        // ---- 分级顶推 opt-in：复制全局 CE，并把历阶段 δ 累加为累计 Δ ----
+        mc.ces = m.ces;
+        mc.cePenalty = m.cePenalty;
+        for (const auto& [cid, d] : st.ceConstants) {
+            ceB[cid] += d;
+            bool found = false;
+            for (const auto& ce : m.ces)
+                if (ce.id == cid) { found = true; break; }
+            if (!found)
+                throw std::runtime_error("非线性 *STAGE " + std::to_string(st.id)
+                    + " 的 CE= 引用了不存在的 CE " + std::to_string(cid));
+        }
+        for (const auto& [cid, b] : ceB)
+            for (auto& ce : mc.ces)
+                if (ce.id == cid) { ce.constant = b; break; }
         // 一次徐变：刚度用 E/(1+χφ)。等效预加力不随 E 变，静定梁位移按 1+χφ 放大。
         mc.creepPhi = m.creepPhi;
         mc.creepChi = m.creepChi;

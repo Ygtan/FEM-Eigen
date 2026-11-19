@@ -393,6 +393,11 @@ struct Model3D {
         // 阶段末龄期（天）。>0 且模型给了 PHI0 时，Δφ 改由 φ(t)−φ(t_prev) 计算，
         // 不再使用 creepDphi。本阶段新加的荷载要到下一龄期才开始徐变。
         double time = 0.0;
+        // ---- 分级顶推 CE constant 覆盖（opt-in，默认空）----
+        // CE id → 本阶段顶推量。线性 stage 解增量，写的是本阶段新增量 δ_i；
+        // 非线性 stage 解全量，内核内部把历阶段 δ 累加为累计 Δ_i 后覆盖 constant。
+        // 空 = 不覆盖：stage 沿用 *CE 原 constant，既有算例逐位不变。
+        std::vector<std::pair<int, double>> ceConstants;
     };
     std::vector<Stage3D> stages;
     // *PRESTRESS_LOSS 表：编号 → JTG 3362-2018 §6.2 分项损失参数。
@@ -1420,12 +1425,22 @@ struct StageResult3D {
 };
 
 // 给未参与任何激活单元的节点补齐约束（否则这些节点自由度零刚度）。
+// 分级顶推 opt-in：CE 引用的节点（如孤立索鞍节点 S）不补硬约束——它们靠 CE
+// 罚刚度获得自由度，硬约束会让 CE 形同虚设（Σci·ui=0 而非 =b）。
+// m.ces 为空时豁免集合为空，逻辑与改造前逐位一致。
 inline void constrainDisconnected3D(Model3D& mc) {
     const DofMap3D dm = buildDofMap3D(mc);
     std::map<int, bool> connected;
     for (const auto& e : mc.elements) { connected[e.n1] = true; connected[e.n2] = true; }
+    std::map<int, bool> ceRef;
+    if (!mc.ces.empty())
+        for (const auto& ce : mc.ces)
+            for (const auto& t : ce.terms)
+                ceRef[t.node] = true;
     for (const auto& [id, x] : mc.nodes) {
+        (void)x;
         if (connected[id]) continue;
+        if (ceRef.count(id)) continue;   // CE 引用节点靠罚刚度，不硬约束
         for (int k = 0; k < dm.count(id); ++k)
             mc.constraints.push_back({id, k + 1, 0.0});
     }
@@ -1488,6 +1503,19 @@ inline std::vector<StageResult3D> solveModel3DStages(const Model3D& m,
         mc.constraints = m.constraints;
         mc.loads = st.loads;
         mc.creepPhi = m.creepPhi; mc.creepChi = m.creepChi; mc.shrinkageEcs = 0.0;
+        // ---- 分级顶推 opt-in ----
+        // 线性 stage 解的是本阶段增量（mc.loads = st.loads），故 CE constant
+        // 直接写本阶段新增量 δ_i。m.ces 为空时覆盖循环不执行，逐位不变。
+        mc.ces = m.ces;
+        mc.cePenalty = m.cePenalty;
+        for (const auto& [cid, b] : st.ceConstants) {
+            bool found = false;
+            for (auto& ce : mc.ces)
+                if (ce.id == cid) { ce.constant = b; found = true; break; }
+            if (!found)
+                throw std::runtime_error("三维 *STAGE " + std::to_string(st.id)
+                    + " 的 CE= 引用了不存在的 CE " + std::to_string(cid));
+        }
         for (std::size_t i = 0; i < m.elements.size(); ++i) {
             if (!active[i]) continue;
             Element3D e = m.elements[i];
@@ -3332,6 +3360,26 @@ inline Model3D readModel3D(const std::string& path) {
                         st.creepDphi = std::stod(kv.substr(5));
                     } else if (kv.rfind("TIME=",0)==0) {
                         st.time = std::stod(kv.substr(5));
+                    } else if (kv.rfind("CE=",0)==0) {
+                        // 分级顶推：CE=<id>:<δ>,<id>:<δ>;... 逐对「CE编号:数值」。
+                        // 分隔符 ',' 与 ';' 都接受（规格允许 ';' 分隔多组），':'
+                        // 分 id 与值。语义：线性 stage 写增量 δ；非线性 stage 由
+                        // 内核累加为累计 Δ（见 solveModel3DStagesNonlinear）。
+                        const std::string body = kv.substr(3);
+                        std::string norm;
+                        for (char ch : body) norm += (ch == ';') ? ',' : ch;
+                        std::stringstream ls(norm); std::string pair;
+                        while (std::getline(ls, pair, ',')) {
+                            if (pair.empty()) continue;
+                            const std::size_t c = pair.find(':');
+                            if (c == std::string::npos)
+                                throw std::runtime_error(
+                                    "三维 *STAGE 的 CE= 需要写成 <CE编号>:<数值>，收到「"
+                                    + pair + "」");
+                            const int cid = std::stoi(pair.substr(0, c));
+                            const double b = std::stod(pair.substr(c + 1));
+                            st.ceConstants.push_back({cid, b});
+                        }
                     } else if (kv.rfind("TENSION=",0)==0 || kv.rfind("L0=",0)==0) {
                         // TENSION=12:3.2e6,13:3.1e6
                         // L0=12:10.234,13:10.301

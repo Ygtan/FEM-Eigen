@@ -1,0 +1,36 @@
+{
+  "_note": "第 43 项 CTest：阶段二 combo_3d.py 建造器端到端冻结证据。由 build_combo_3d(main_span=1000, plane_count=1) 生成：完整悬索主体 + 4 根塔顶斜拉索（主跨侧 2 MN / 边跨侧 3 MN）。§3.7 口径 susp_fraction=0.5 / side_stay_ratio=0.5 / tower_height_ratio=0（自动）/ plane_count=1。与第 40 项手工模板不同，本算例由 Python 建造器产出，验证『自然语言 → 建造器 → 内核』闭环。",
+  "frozen_sha256": {
+    "combo_3d_builder.dat": "d2a95e7454b176dbe23a4cc1ac56cd25e0ae7506292e494a4d9c92a7e720b7e8"
+  },
+  "builder": {
+    "stay_elems": [571, 572, 573, 574],
+    "stay_targets_N": {
+      "571": 2000000.0,
+      "572": 3000000.0,
+      "573": 2000000.0,
+      "574": 3000000.0
+    },
+    "coop_boundary_node": 46,
+    "susp_fraction": 0.5,
+    "side_stay_ratio": 0.5,
+    "plane_count": 1
+  },
+  "combo": {
+    "converged": 1,
+    "H_kN": 130776.0,
+    "H_rel_tol": 0.01,
+    "sag_m": 100.0,
+    "susp_segments": 329,
+    "stay_cables": 4,
+    "susp_planes": 1
+  },
+  "cooperative": {
+    "coop_system": "COOP",
+    "r_main_le": 0.001,
+    "r_stay_le": 0.01,
+    "r_girder_le": 0.001,
+    "r_tower_le": 0.05,
+    "coop_ok": 1
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "name": "stage_ce_jack_3d",
+  "description": "分级顶推 CE 施工阶段端点验证：*STAGE CE= 增量 δ 经非线性内核累加为累计 Δ",
+  "case": {
+    "file": "stage_ce_jack.dat",
+    "sha256": "2dd006e44aa0cdcaf446ca438a284ec2b7584d7dca442adb980fd3bd69c18920"
+  },
+  "model": {
+    "nodes": "1/4 固结；T=2 塔顶(连BEAM 1-2)，C=3 主缆端(连TRUSS 3-4)，S=5 孤立索鞍",
+    "ce": "CE1 UX(S)-UX(T)=b；CE2 UX(C)-UX(S)=0；CE3~6 UY/UZ 固结",
+    "penalty": 1e12
+  },
+  "stages": [
+    {"id": 1, "ce_delta": 0.01, "target_cumulative_slip": 0.01},
+    {"id": 2, "ce_delta": 0.01, "target_cumulative_slip": 0.02},
+    {"id": 3, "ce_delta": 0.01, "target_cumulative_slip": 0.03}
+  ],
+  "slip": {
+    "define": "UX(C) - UX(T) = node3.dof1 - node2.dof1（每阶段全量平衡的累计滑移）",
+    "atol": 5e-5,
+    "note": "罚刚度 1e12 / 结构刚度 ~4e10 → 相对误差 ~4e-4；0.03 级绝对误差 ~1.2e-5，取 5e-5 留余量"
+  },
+  "convergence": {"all_stages": true},
+  "reject": {
+    "description": "CE= 引用不存在的 CE id，或 stage 缺 CE= 但全局 CE 常量与累计口径冲突时由内核裁决",
+    "tested_by": "C++ benchmark stage_ce_benchmark（第41项）直接构造覆盖"
+  },
+  "default_pollution": {
+    "description": "m.ces 为空且 stage 无 CE= 时 stage 路径逐位不变，由 dat_byte_regression（第6项）与 C++ benchmark 空组保证"
+  }
+}

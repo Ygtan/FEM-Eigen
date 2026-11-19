@@ -140,6 +140,16 @@ set_tests_properties(ce_3d_constraint_equations PROPERTIES
     TIMEOUT 300
     LABELS "benchmark")
 
+# 第 41 项：分级顶推 CE 注入施工阶段的内核验收（opt-in，默认零污染）。
+# 线性 stage 解增量（CE= 写 δ_i）、非线性 stage 解全量（内核累加为 Δ_i），
+# 两条路径各自命中逐阶段累计顶推量；并覆盖无覆盖沿用原常量、拒绝路径、
+# CE 引用孤立节点豁免与无 CE stage 的逐位确定性。离线、不跑 ANSYS。
+fem_add_executable(stage_ce_benchmark stage_ce_benchmark.cpp)
+add_test(NAME stage_ce_jacking_3d COMMAND stage_ce_benchmark)
+set_tests_properties(stage_ce_jacking_3d PROPERTIES
+    TIMEOUT 300
+    LABELS "benchmark")
+
 # .dat 逐字节回归比对：用当前构建重算 verify_*.dat，并与其黄金基线逐字节比对。
 # 依赖 Python3；未安装时仅跳过该测试，不影响编译与其它测试。
 find_package(Python3 QUIET COMPONENTS Interpreter)
@@ -641,6 +651,36 @@ if(Python3_Interpreter_FOUND)
                      --cases ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/combo_system_3d/cases
                      --reference ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/combo_system_3d/reference)
     set_tests_properties(combo_system_3d_benchmark PROPERTIES
+        TIMEOUT 900
+        LABELS "benchmark")
+
+    # 第 42 项：分级顶推 CE 施工阶段 benchmark（.dat 解析 → 非线性内核端到端）。
+    # 冻结 .dat 重放：三阶段全收敛，*STAGE CE= 的增量 δ 累加为累计 Δ，
+    # UX(C)-UX(T) 逐阶段命中；';' 尾随分隔符兼容、不存在 CE id 显式拒绝；
+    # 源码契约锁住线性/非线性两处 m.ces 复制、CE 引用节点豁免与 CE= 解析。
+    add_test(NAME stage_ce_jack_3d_benchmark
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/stage_ce_jack_3d/compare_stage_ce_jack.py
+                     --bin ${CMAKE_CURRENT_BINARY_DIR}
+                     --cases ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/stage_ce_jack_3d/cases
+                     --reference ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/stage_ce_jack_3d/reference)
+    set_tests_properties(stage_ce_jack_3d_benchmark PROPERTIES
+        TIMEOUT 900
+        LABELS "benchmark")
+
+    # 第 43 项：组合体系建造器（阶段二）benchmark。
+    # 冻结由 BridgeStudio combo_3d.py 产出的 .dat：SYSTEM=COOP 落盘、
+    # 4 根斜拉索目标力落盘、协作残差 r_main/r_stay/r_girder/r_tower
+    # 命中且 coop_ok=1、塔两侧水平力平衡；去 SYSTEM=COOP 走既有悬索路径
+    # 无 [COOPERATIVE] 段（默认零污染）。源码契约锁住 12 格 BUILDERS
+    # 未被破坏、model_doc 路由与 solver_3d 第 5 键。
+    add_test(NAME combo_3d_builder_benchmark
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/combo_3d_builder/compare_combo_3d_builder.py
+                     --bin ${CMAKE_CURRENT_BINARY_DIR}
+                     --cases ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/combo_3d_builder/cases
+                     --reference ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark/combo_3d_builder/reference)
+    set_tests_properties(combo_3d_builder_benchmark PROPERTIES
         TIMEOUT 900
         LABELS "benchmark")
 else()
